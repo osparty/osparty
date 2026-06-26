@@ -133,16 +133,20 @@ public class PartyApiClient implements PartyService
 	 * stale. PUT (not POST) so it isn't caught by the create rate limit.
 	 */
 	@Override
-	public void heartbeat(String partyId, Consumer<Party> onSuccess, Consumer<Throwable> onError)
+	public void heartbeat(String partyId, int size, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
-		HttpUrl url = baseUrl()
+		HttpUrl.Builder url = baseUrl()
 			.addPathSegment("parties")
 			.addPathSegment(partyId)
-			.addPathSegment("heartbeat")
-			.build();
+			.addPathSegment("heartbeat");
+		// Report the live occupancy so search reflects who's actually in the party.
+		if (size > 0)
+		{
+			url.addQueryParameter("size", Integer.toString(size));
+		}
 
 		RequestBody body = RequestBody.create(JSON, "{}");
-		Request request = new Request.Builder().url(url).put(body).build();
+		Request request = new Request.Builder().url(url.build()).put(body).build();
 		enqueue(request, Party.class, onSuccess, onError);
 	}
 

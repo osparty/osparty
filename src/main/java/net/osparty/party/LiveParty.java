@@ -520,6 +520,23 @@ public class LiveParty
 		return id != 0 && memberId == id;
 	}
 
+	/** @return true if we're hosting and {@code memberId} is still a pending applicant. */
+	public boolean isPendingApplicant(long memberId)
+	{
+		if (!hosting)
+		{
+			return false;
+		}
+		for (RosterMember member : roster())
+		{
+			if (member.getMemberId() == memberId)
+			{
+				return member.getStatus() == Status.PENDING;
+			}
+		}
+		return false;
+	}
+
 	public void onPeerJoined(long memberId)
 	{
 		// Start their presence clock and clear any stale-hide from a previous id.

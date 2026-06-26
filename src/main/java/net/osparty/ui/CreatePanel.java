@@ -45,6 +45,7 @@ import net.runelite.client.ui.FontManager;
 class CreatePanel extends JPanel
 {
 	private final PartyService partyService;
+	private final OSPartyConfig config;
 	private final Supplier<String> playerNameSupplier;
 	private final PartyState partyState;
 	private final LiveParty liveParty;
@@ -75,6 +76,7 @@ class CreatePanel extends JPanel
 		Supplier<int[]> mapRegionsSupplier)
 	{
 		this.partyService = partyService;
+		this.config = config;
 		this.playerNameSupplier = playerNameSupplier;
 		this.partyState = partyState;
 		this.liveParty = liveParty;
@@ -148,6 +150,9 @@ class CreatePanel extends JPanel
 			public void ancestorAdded(AncestorEvent event)
 			{
 				applyRecommendation();
+				// Re-read the configured default each time the tab is shown, so a
+				// changed "default party size" takes effect without a client restart.
+				applyDefaultCapacity();
 			}
 
 			@Override
@@ -252,6 +257,16 @@ class CreatePanel extends JPanel
 		panel.setAlignmentX(Component.LEFT_ALIGNMENT);
 		panel.add(box, BorderLayout.WEST);
 		return panel;
+	}
+
+	/** Reset the party-size spinner to the configured default, clamped to activity bounds. */
+	private void applyDefaultCapacity()
+	{
+		SpinnerNumberModel model = (SpinnerNumberModel) capacitySpinner.getModel();
+		int min = ((Number) model.getMinimum()).intValue();
+		int max = ((Number) model.getMaximum()).intValue();
+		int wanted = Math.max(1, config.defaultCapacity());
+		model.setValue(Math.min(max, Math.max(min, wanted)));
 	}
 
 	private void applyActivityBounds()

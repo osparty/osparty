@@ -202,9 +202,25 @@ class SearchPanel extends JPanel
 	{
 		JPanel panel = cappedRow(new BorderLayout(0, 4));
 
+		// Header: "Activities" label on the left, All/None toggles on the right.
+		JPanel header = new JPanel(new BorderLayout());
+		header.setBackground(ColorScheme.DARK_GRAY_COLOR);
+
 		JLabel label = new JLabel("Activities");
 		label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		panel.add(label, BorderLayout.NORTH);
+		header.add(label, BorderLayout.WEST);
+
+		JPanel toggles = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+		toggles.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		JButton all = miniButton("All");
+		all.addActionListener(e -> setAllActivities(true));
+		JButton none = miniButton("None");
+		none.addActionListener(e -> setAllActivities(false));
+		toggles.add(all);
+		toggles.add(none);
+		header.add(toggles, BorderLayout.EAST);
+
+		panel.add(header, BorderLayout.NORTH);
 
 		activityListPanel.setLayout(new BoxLayout(activityListPanel, BoxLayout.Y_AXIS));
 		activityListPanel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
@@ -255,6 +271,30 @@ class SearchPanel extends JPanel
 		panel.add(label, BorderLayout.NORTH);
 		panel.add(textField, BorderLayout.CENTER);
 		return panel;
+	}
+
+	/** Check or uncheck every activity at once. */
+	private void setAllActivities(boolean selected)
+	{
+		if (selected)
+		{
+			selectedActivities.addAll(EnumSet.allOf(Activity.class));
+		}
+		else
+		{
+			selectedActivities.clear();
+		}
+		rebuildActivityList();
+		reapplyFilters();
+	}
+
+	private JButton miniButton(String text)
+	{
+		JButton button = new JButton(text);
+		button.setFocusPainted(false);
+		button.setMargin(new Insets(0, 6, 0, 6));
+		button.setFont(FontManager.getRunescapeSmallFont());
+		return button;
 	}
 
 	/** Rebuild the checkbox list, recommended activity first and pre-checked. */

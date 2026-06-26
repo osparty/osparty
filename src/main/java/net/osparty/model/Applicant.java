@@ -14,6 +14,9 @@ public class Applicant
 	private String name;
 	private int combatLevel;
 
+	/** The applicant's live-party member id (for admit/decline); 0 when unknown. */
+	private long memberId;
+
 	/** Ordered skill name -> level (Attack, Strength, ...). */
 	private Map<String, Integer> stats;
 

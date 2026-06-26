@@ -38,6 +38,7 @@ import net.runelite.api.widgets.ComponentID;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.SkillIconManager;
+import net.runelite.client.game.chatbox.ChatboxPanelManager;
 import net.runelite.client.game.WorldService;
 import net.runelite.client.util.WorldUtil;
 import net.runelite.http.api.worlds.WorldResult;
@@ -102,6 +103,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private WorldService worldService;
 
 	@Inject
+	private ChatboxPanelManager chatboxPanelManager;
+
+	@Inject
 	private OSPartyConfig config;
 
 	/** Config key storing whether the user has consented to data sharing. */
@@ -135,6 +139,24 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private int quickHopAttempts;
 	/** Give up opening the world switcher after this many ticks. */
 	private static final int QUICK_HOP_MAX_ATTEMPTS = 35;
+
+	/** Applicants awaiting an in-game Accept/Decline prompt (host only). */
+	private final java.util.Deque<PendingPrompt> promptQueue = new java.util.ArrayDeque<>();
+	/** True while one of our chatbox prompts is open, so we show them one at a time. */
+	private boolean promptOpen;
+
+	/** An applicant queued for an in-game accept/decline prompt. */
+	private static final class PendingPrompt
+	{
+		final Applicant applicant;
+		final Activity activity;
+
+		PendingPrompt(Applicant applicant, Activity activity)
+		{
+			this.applicant = applicant;
+			this.activity = activity;
+		}
+	}
 
 	@Override
 	protected void startUp()
@@ -268,6 +290,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			mapRegions = null;
 			accountType = null;
 			quickHopTarget = null;
+			promptQueue.clear();
 		}
 		// Re-arm the rejoin check on a real logout (not a world hop).
 		if (event.getGameState() == GameState.LOGIN_SCREEN)
@@ -301,6 +324,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		// Drive any in-progress world hop (needs the client thread).
 		processQuickHop();
+
+		// Show the next in-game applicant prompt if the chatbox is free.
+		drainApplicantPrompts();
 
 		// Push pending host state / our own live snapshot (client thread).
 		liveParty.tick();
@@ -534,6 +560,82 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		line.append("). Accept or decline in the side panel.");
 
 		gameMessage(line.toString());
+
+		// Also offer an in-game chatbox Accept/Decline (driven on the game tick).
+		if (config.inGamePrompts() && applicant.getMemberId() != 0)
+		{
+			promptQueue.add(new PendingPrompt(applicant, activity));
+		}
+	}
+
+	/**
+	 * Host: show the next queued applicant as an in-game chatbox Accept/Decline
+	 * menu, one at a time and only when the chatbox is free. Runs on the client
+	 * thread (from GameTick).
+	 */
+	private void drainApplicantPrompts()
+	{
+		if (!config.inGamePrompts())
+		{
+			promptQueue.clear();
+			return;
+		}
+		if (promptOpen || promptQueue.isEmpty() || chatboxPanelManager.getCurrentInput() != null)
+		{
+			return;
+		}
+
+		// Skip anyone who's no longer a pending applicant (left, or resolved elsewhere).
+		PendingPrompt next = null;
+		while (!promptQueue.isEmpty())
+		{
+			PendingPrompt candidate = promptQueue.poll();
+			if (liveParty.isPendingApplicant(candidate.applicant.getMemberId()))
+			{
+				next = candidate;
+				break;
+			}
+		}
+		if (next != null)
+		{
+			openApplicantPrompt(next);
+		}
+	}
+
+	private void openApplicantPrompt(PendingPrompt prompt)
+	{
+		Applicant applicant = prompt.applicant;
+		Activity activity = prompt.activity;
+
+		StringBuilder title = new StringBuilder(applicant.getName() + " wants to join");
+		title.append(" (cb ").append(applicant.getCombatLevel());
+		if (applicant.getKillCount() >= 0)
+		{
+			title.append(", ").append(activity.getDisplayName()).append(" KC ").append(applicant.getKillCount());
+		}
+		title.append(')');
+
+		promptOpen = true;
+		chatboxPanelManager.openTextMenuInput(title.toString())
+			.option("Accept", () -> {
+				promptOpen = false;
+				if (liveParty.admit(applicant.getMemberId(), applicant.getName()))
+				{
+					announceResolved(applicant, activity, true);
+				}
+				else
+				{
+					gameMessage("Party is full - couldn't accept " + applicant.getName() + ".");
+				}
+			})
+			.option("Decline", () -> {
+				promptOpen = false;
+				liveParty.reject(applicant.getMemberId());
+				announceResolved(applicant, activity, false);
+			})
+			.option("Decide later", () -> promptOpen = false)
+			.onClose(() -> promptOpen = false)
+			.build();
 	}
 
 	@Override

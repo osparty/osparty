@@ -41,4 +41,15 @@ public interface OSPartyConfig extends Config
 	{
 		return true;
 	}
+
+	@ConfigItem(
+		keyName = "inGamePrompts",
+		name = "In-game join prompts",
+		description = "As a host, show Accept/Decline for new applicants in the in-game chatbox (not just the side panel).",
+		position = 4
+	)
+	default boolean inGamePrompts()
+	{
+		return true;
+	}
 }

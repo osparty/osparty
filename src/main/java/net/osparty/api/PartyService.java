@@ -25,8 +25,12 @@ public interface PartyService
 
 	void createParty(PartyRequest partyRequest, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
-	/** Host keep-alive: tell the bulletin board the advertised party is still live. */
-	void heartbeat(String partyId, Consumer<Party> onSuccess, Consumer<Throwable> onError);
+	/**
+	 * Host keep-alive: tell the bulletin board the advertised party is still live,
+	 * and report the current live member count so search results show the real
+	 * occupancy (the API only tracks the ad; membership is peer-to-peer).
+	 */
+	void heartbeat(String partyId, int size, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
 	/** Submit an application for the logged in player to the given party. */
 	void applyToParty(String partyId, String player, Consumer<Party> onSuccess, Consumer<Throwable> onError);

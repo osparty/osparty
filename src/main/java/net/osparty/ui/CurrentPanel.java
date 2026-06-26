@@ -128,6 +128,8 @@ class CurrentPanel extends JPanel
 	private final Map<Long, Integer> detailTab = new HashMap<>();
 	/** Pending applicants the host has already been notified about (overlay/chat). */
 	private final Set<Long> notifiedPending = new HashSet<>();
+	/** Last occupancy we reported to the ad, to avoid redundant heartbeats. */
+	private int lastReportedSize = -1;
 
 	CurrentPanel(PartyService partyService, Supplier<String> playerNameSupplier,
 		HostApplicationHandler hostApplicationHandler, PartyState partyState, ItemManager itemManager,
@@ -185,15 +187,29 @@ class CurrentPanel extends JPanel
 		}));
 
 		// While we host an advertised party, ping the bulletin board so the backend
-		// doesn't reap our ad as stale. No-op when we're not hosting.
+		// doesn't reap our ad as stale (and report current occupancy). No-op when
+		// we're not hosting.
 		new Timer(30_000, e -> {
 			if (partyState.isHost() && partyState.getCurrentParty() != null)
 			{
-				partyService.heartbeat(partyState.getCurrentParty().getId(), ok -> { }, err -> { });
+				partyService.heartbeat(partyState.getCurrentParty().getId(), currentPartySize(),
+					ok -> { }, err -> { });
 			}
 		}).start();
 
 		refresh();
+	}
+
+	/** The number of admitted members (host + members), as the host sees it. */
+	private int currentPartySize()
+	{
+		if (!liveParty.isConnected())
+		{
+			return 1;
+		}
+		int count = (int) liveParty.roster().stream()
+			.filter(m -> m.getStatus() != Status.PENDING).count();
+		return Math.max(1, count);
 	}
 
 	void refresh()
@@ -206,6 +222,7 @@ class CurrentPanel extends JPanel
 			expanded.clear();
 			detailTab.clear();
 			notifiedPending.clear();
+			lastReportedSize = -1;
 			hostApplicationHandler.setPendingApplicants(java.util.Collections.emptyList(), null);
 			content.revalidate();
 			content.repaint();
@@ -227,6 +244,15 @@ class CurrentPanel extends JPanel
 
 		int admitted = roster == null ? 0
 			: (int) roster.stream().filter(m -> m.getStatus() != Status.PENDING).count();
+
+		// Push the live occupancy to the ad as soon as it changes, so search results
+		// reflect who's actually in the party (not just the host).
+		if (host && admitted > 0 && admitted != lastReportedSize)
+		{
+			lastReportedSize = admitted;
+			partyService.heartbeat(party.getId(), admitted, ok -> { }, err -> { });
+		}
+
 		StringBuilder spots = new StringBuilder();
 		spots.append(party.getCapacity() > 0 ? admitted + "/" + party.getCapacity() + " players" : admitted + " players");
 		if (party.getWorld() != null && !party.getWorld().isEmpty())
@@ -936,6 +962,7 @@ class CurrentPanel extends JPanel
 	private Applicant toApplicant(PlayerUpdate update)
 	{
 		Applicant applicant = new Applicant();
+		applicant.setMemberId(update.getMemberId());
 		applicant.setName(update.getName());
 		applicant.setCombatLevel(update.getCombatLevel());
 		applicant.setStats(update.getStats());
