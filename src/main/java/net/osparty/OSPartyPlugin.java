@@ -380,7 +380,15 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Subscribe
 	public void onMemberCommand(MemberCommand event)
 	{
+		// Check before handling: onMemberCommand makes us leave, after which we're no
+		// longer the local member.
+		boolean kickedUs = event.getAction() == MemberCommand.Action.KICK
+			&& liveParty.isForLocalMember(event.getTargetMemberId());
 		liveParty.onMemberCommand(event);
+		if (kickedUs && config.kickSound())
+		{
+			playResourceSound("/net/osparty/sounds/kicked.wav");
+		}
 	}
 
 	@Subscribe
@@ -403,6 +411,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			fcRequestOverlay.show(event.getHostName(), fc, 3000);
 			gameMessage((event.getHostName() != null ? event.getHostName() : "The host")
 				+ " asks you to join the friends chat \"" + fc + "\".");
+			if (config.friendsChatRequestSound())
+			{
+				playResourceSound("/net/osparty/sounds/friendschatsound.wav");
+			}
 		}
 	}
 
@@ -671,46 +683,55 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			+ " for your " + activity.getDisplayName() + " party.");
 	}
 
-	/** Play the configured ready-check sound (custom .wav, or a default beep). */
+	/** Play the bundled ready-check sound when everyone is ready (if enabled). */
 	private void playReadySound()
 	{
-		if (!config.readyCheckSound())
+		if (config.readyCheckSound())
 		{
-			return;
+			playResourceSound("/net/osparty/sounds/ready.wav");
 		}
-		String file = config.readyCheckSoundFile();
-		if (file == null || file.trim().isEmpty())
-		{
-			java.awt.Toolkit.getDefaultToolkit().beep();
-			return;
-		}
-		String path = file.trim();
+	}
+
+	/** Play a bundled .wav sound resource (e.g. /net/osparty/sounds/kicked.wav). */
+	private void playResourceSound(String resource)
+	{
 		new Thread(() -> {
-			try
+			try (java.io.InputStream raw = getClass().getResourceAsStream(resource))
 			{
-				java.io.File wav = new java.io.File(path);
-				if (!wav.isFile())
+				if (raw == null)
 				{
-					java.awt.Toolkit.getDefaultToolkit().beep();
+					log.warn("OSParty: sound resource not found '{}'", resource);
 					return;
 				}
-				javax.sound.sampled.AudioInputStream in = javax.sound.sampled.AudioSystem.getAudioInputStream(wav);
-				javax.sound.sampled.Clip clip = javax.sound.sampled.AudioSystem.getClip();
-				clip.addLineListener(event -> {
-					if (event.getType() == javax.sound.sampled.LineEvent.Type.STOP)
-					{
-						clip.close();
-					}
-				});
-				clip.open(in);
-				clip.start();
+				try (javax.sound.sampled.AudioInputStream in =
+					javax.sound.sampled.AudioSystem.getAudioInputStream(new java.io.BufferedInputStream(raw)))
+				{
+					playClip(in);
+				}
 			}
 			catch (Exception e)
 			{
-				log.warn("OSParty: failed to play ready sound '{}'", path, e);
-				java.awt.Toolkit.getDefaultToolkit().beep();
+				log.warn("OSParty: failed to play sound '{}'", resource, e);
 			}
-		}, "osparty-ready-sound").start();
+		}, "osparty-sound").start();
+	}
+
+	/**
+	 * Open and start a clip for the given stream. {@code Clip.open} buffers all the
+	 * audio, so the caller may close the source stream afterwards; the line listener
+	 * frees the clip once playback finishes.
+	 */
+	private void playClip(javax.sound.sampled.AudioInputStream in) throws Exception
+	{
+		javax.sound.sampled.Clip clip = javax.sound.sampled.AudioSystem.getClip();
+		clip.addLineListener(event -> {
+			if (event.getType() == javax.sound.sampled.LineEvent.Type.STOP)
+			{
+				clip.close();
+			}
+		});
+		clip.open(in);
+		clip.start();
 	}
 
 	/**

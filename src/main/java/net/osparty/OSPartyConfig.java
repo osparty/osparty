@@ -65,13 +65,24 @@ public interface OSPartyConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "readyCheckSoundFile",
-		name = "Custom ready sound",
-		description = "Path to a .wav file to play on full readiness. Leave blank for a default beep.",
-		position = 6
+		keyName = "kickSound",
+		name = "Kick sound",
+		description = "Play a sound when you are kicked from a party.",
+		position = 7
 	)
-	default String readyCheckSoundFile()
+	default boolean kickSound()
 	{
-		return "";
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "friendsChatRequestSound",
+		name = "Friends-chat request sound",
+		description = "Play a sound when a host asks you to join their friends chat.",
+		position = 8
+	)
+	default boolean friendsChatRequestSound()
+	{
+		return true;
 	}
 }
