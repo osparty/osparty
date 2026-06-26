@@ -48,6 +48,10 @@ final class LocalPlayerSync
 			stats.put(skill.getName(), client.getRealSkillLevel(skill));
 		}
 		update.setStats(stats);
+		if (client.getAccountType() != null)
+		{
+			update.setAccountType(client.getAccountType().name());
+		}
 		return update;
 	}
 

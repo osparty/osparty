@@ -81,6 +81,22 @@ public class PartyApiClient implements PartyService
 	}
 
 	/**
+	 * Fetch a single party by its invite code (works for private parties too).
+	 */
+	@Override
+	public void getPartyByCode(String code, Consumer<Party> onSuccess, Consumer<Throwable> onError)
+	{
+		HttpUrl url = baseUrl()
+			.addPathSegment("parties")
+			.addPathSegment("by-code")
+			.addPathSegment(code)
+			.build();
+
+		Request request = new Request.Builder().url(url).get().build();
+		enqueue(request, Party.class, onSuccess, onError);
+	}
+
+	/**
 	 * Create a new party hosted by the logged in player and enter the queue.
 	 */
 	@Override

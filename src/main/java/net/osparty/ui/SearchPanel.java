@@ -1,14 +1,20 @@
 package net.osparty.ui;
 
 import net.osparty.api.PartyService;
+import net.osparty.model.AccountTypes;
 import net.osparty.model.Activity;
+import net.osparty.model.LootRule;
 import net.osparty.model.Party;
 import net.osparty.party.LiveParty;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
 import java.awt.GridLayout;
+import java.awt.Insets;
+import java.awt.LayoutManager;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -19,18 +25,22 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
+import net.runelite.api.vars.AccountType;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 
 /**
  * "Search" tab: pick an activity, query the queue API for open parties, and
- * apply to one. A player can be in only one party at a time — applying leaves
+ * apply to one. A player can be in only one party at a time - applying leaves
  * the current party first (disbanding it if you were the host). Full parties
  * and your own party aren't appliable.
  *
@@ -48,11 +58,19 @@ class SearchPanel extends JPanel
 	private final IntSupplier worldSupplier;
 	private final PartyState partyState;
 	private final LiveParty liveParty;
+	private final Supplier<AccountType> accountTypeSupplier;
 
 	private final JComboBox<Activity> activityDropdown = new JComboBox<>(Activity.values());
+	private final JComboBox<String> lootFilter = new JComboBox<>(new String[]{"Any loot", "FFA", "Split"});
+	private final JCheckBox ironmanFilter = new JCheckBox("Ironman parties only");
+	private final JTextField codeField = new JTextField();
 	private final JButton searchButton = new JButton("Search");
 	private final JLabel statusLabel = new JLabel();
 	private final JPanel resultsPanel = new JPanel();
+
+	/** Last raw search results, kept so the filters can re-apply without re-querying. */
+	private List<Party> lastResults;
+	private Activity lastActivity;
 
 	// Application banner (visible only while applied to a party as a member).
 	private final JPanel applicationPanel = new JPanel();
@@ -71,7 +89,7 @@ class SearchPanel extends JPanel
 
 	SearchPanel(PartyService partyService, Supplier<String> playerNameSupplier,
 		Supplier<String> friendsChatOwnerSupplier, IntSupplier worldSupplier, PartyState partyState,
-		LiveParty liveParty)
+		LiveParty liveParty, Supplier<AccountType> accountTypeSupplier)
 	{
 		this.partyService = partyService;
 		this.playerNameSupplier = playerNameSupplier;
@@ -79,6 +97,7 @@ class SearchPanel extends JPanel
 		this.worldSupplier = worldSupplier;
 		this.partyState = partyState;
 		this.liveParty = liveParty;
+		this.accountTypeSupplier = accountTypeSupplier;
 
 		setLayout(new BorderLayout(0, 8));
 		setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
@@ -88,6 +107,8 @@ class SearchPanel extends JPanel
 		north.setLayout(new BoxLayout(north, BoxLayout.Y_AXIS));
 		north.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		north.add(buildControls());
+		north.add(buildFilters());
+		north.add(buildJoinByCode());
 		north.add(buildApplicationPanel());
 		add(north, BorderLayout.NORTH);
 
@@ -146,6 +167,157 @@ class SearchPanel extends JPanel
 		return controls;
 	}
 
+	private JPanel buildFilters()
+	{
+		lootFilter.addActionListener(e -> reapplyFilters());
+
+		ironmanFilter.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		ironmanFilter.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		ironmanFilter.setFocusPainted(false);
+		ironmanFilter.addActionListener(e -> reapplyFilters());
+
+		// GridBagLayout centres each control within a full-width cell (weightx=1 +
+		// anchor CENTER) - robust regardless of the surrounding BoxLayout.
+		JPanel panel = cappedRow(new GridBagLayout());
+		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
+
+		GridBagConstraints c = new GridBagConstraints();
+		c.gridx = 0;
+		c.weightx = 1.0;
+		c.anchor = GridBagConstraints.CENTER;
+		c.gridy = 0;
+		c.insets = new Insets(0, 0, 4, 0);
+		panel.add(lootFilter, c);
+		c.gridy = 1;
+		c.insets = new Insets(0, 0, 0, 0);
+		panel.add(ironmanFilter, c);
+		return panel;
+	}
+
+	private JPanel buildJoinByCode()
+	{
+		JPanel panel = cappedRow(new BorderLayout(6, 4));
+		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
+
+		JLabel label = new JLabel("Join private party by code");
+		label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		label.setFont(FontManager.getRunescapeSmallFont());
+
+		JButton join = new JButton("Join");
+		join.setFocusPainted(false);
+		join.addActionListener(e -> joinByCode());
+		codeField.addActionListener(e -> joinByCode());
+
+		panel.add(label, BorderLayout.NORTH);
+		panel.add(codeField, BorderLayout.CENTER);
+		panel.add(join, BorderLayout.EAST);
+		return panel;
+	}
+
+	private static JPanel cappedRow(LayoutManager layout)
+	{
+		JPanel panel = new JPanel(layout)
+		{
+			@Override
+			public Dimension getMaximumSize()
+			{
+				return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+			}
+		};
+		panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+		return panel;
+	}
+
+	private void reapplyFilters()
+	{
+		if (lastResults != null && lastActivity != null)
+		{
+			showResults(lastActivity, lastResults);
+		}
+	}
+
+	private void joinByCode()
+	{
+		String code = codeField.getText().trim();
+		if (code.isEmpty())
+		{
+			setStatus("Enter an invite code.");
+			return;
+		}
+		if (playerNameSupplier.get() == null)
+		{
+			setStatus("Log in before joining.");
+			return;
+		}
+		setStatus("Looking up code " + code + "...");
+		partyService.getPartyByCode(code,
+			party -> SwingUtilities.invokeLater(() -> joinFetched(party)),
+			error -> SwingUtilities.invokeLater(() -> setStatus("No party found for code " + code + ".")));
+	}
+
+	private void joinFetched(Party party)
+	{
+		if (party == null)
+		{
+			setStatus("No party found for that code.");
+			return;
+		}
+		if (isOwnParty(party))
+		{
+			setStatus("That's your own party.");
+			return;
+		}
+		if (!meetsIronmanRule(party))
+		{
+			setStatus("That party is for ironman accounts.");
+			return;
+		}
+		codeField.setText("");
+		leaveCurrentThen(() -> doApply(party));
+	}
+
+	/** Whether the local account satisfies a party's ironman-only requirement. */
+	private boolean meetsIronmanRule(Party party)
+	{
+		return !party.isIronmanOnly() || AccountTypes.isIronman(accountTypeSupplier.get());
+	}
+
+	private LootRule lootFilterValue()
+	{
+		String selected = (String) lootFilter.getSelectedItem();
+		if ("FFA".equals(selected))
+		{
+			return LootRule.FFA;
+		}
+		if ("Split".equals(selected))
+		{
+			return LootRule.SPLIT;
+		}
+		return null; // "Any loot"
+	}
+
+	/** A combined "Split , Ironman only , Host HCIM" tag line for a card, or null. */
+	private String tagLine(Party party)
+	{
+		List<String> tags = new ArrayList<>();
+		LootRule loot = LootRule.fromName(party.getLootRule());
+		if (loot != LootRule.UNSPECIFIED)
+		{
+			tags.add(loot.getDisplayName());
+		}
+		if (party.isIronmanOnly())
+		{
+			tags.add("Ironman only");
+		}
+		String hostTag = AccountTypes.tag(AccountTypes.fromName(party.getHostAccountType()));
+		if (hostTag != null)
+		{
+			tags.add("Host " + hostTag);
+		}
+		return tags.isEmpty() ? null : String.join(", ", tags);
+	}
+
 	private JPanel buildApplicationPanel()
 	{
 		applicationPanel.setLayout(new GridLayout(0, 1));
@@ -194,21 +366,36 @@ class SearchPanel extends JPanel
 
 	private void showResults(Activity activity, List<Party> parties)
 	{
+		lastActivity = activity;
+		lastResults = parties;
+
 		searchButton.setEnabled(true);
 		resultsPanel.removeAll();
 		applyButtons.clear();
 		partiesById.clear();
 
-		// Hide parties that are already full — only show ones you could join.
+		LootRule wantLoot = lootFilterValue();
+		boolean ironOnly = ironmanFilter.isSelected();
+
+		// Show only joinable, filter-matching parties (full ones are hidden).
 		List<Party> visible = new ArrayList<>();
 		if (parties != null)
 		{
 			for (Party party : parties)
 			{
-				if (!party.isFull())
+				if (party.isFull())
 				{
-					visible.add(party);
+					continue;
 				}
+				if (wantLoot != null && LootRule.fromName(party.getLootRule()) != wantLoot)
+				{
+					continue;
+				}
+				if (ironOnly && !party.isIronmanOnly())
+				{
+					continue;
+				}
+				visible.add(party);
 			}
 		}
 
@@ -260,7 +447,7 @@ class SearchPanel extends JPanel
 		StringBuilder sub = new StringBuilder(capacity).append(" players");
 		if (party.getWorld() != null && !party.getWorld().isEmpty())
 		{
-			sub.append("  •  W").append(party.getWorld());
+			sub.append(", W").append(party.getWorld());
 		}
 		JLabel meta = new JLabel(sub.toString());
 		meta.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
@@ -268,6 +455,15 @@ class SearchPanel extends JPanel
 
 		info.add(host);
 		info.add(meta);
+
+		String tagLine = tagLine(party);
+		if (tagLine != null)
+		{
+			JLabel tags = new JLabel(tagLine);
+			tags.setForeground(ColorScheme.BRAND_ORANGE);
+			tags.setFont(FontManager.getRunescapeSmallFont());
+			info.add(tags);
+		}
 
 		String requirement = requirementText(activity, party);
 		if (requirement != null)
@@ -364,6 +560,11 @@ class SearchPanel extends JPanel
 			setStatus("You can't apply to your own party.");
 			return;
 		}
+		if (!meetsIronmanRule(party))
+		{
+			setStatus("This party is for ironman accounts.");
+			return;
+		}
 		if (cooldownRemainingSeconds(party.getId()) > 0)
 		{
 			setStatus("On cooldown for this party.");
@@ -414,7 +615,7 @@ class SearchPanel extends JPanel
 
 		liveParty.joinParty(passphrase);
 		partyState.setMember(party);
-		setStatus("Joined " + party.getHost() + "'s room — awaiting host approval.");
+		setStatus("Joined " + party.getHost() + "'s room - awaiting host approval.");
 		updateAllButtons();
 	}
 
@@ -453,7 +654,7 @@ class SearchPanel extends JPanel
 		{
 			button.setText("Your party");
 			button.setEnabled(false);
-			button.setToolTipText("You host this party — manage it on the Current tab");
+			button.setToolTipText("You host this party - manage it on the Current tab");
 			return;
 		}
 		if (isActive(party))
@@ -461,6 +662,13 @@ class SearchPanel extends JPanel
 			button.setText("Cancel");
 			button.setEnabled(true);
 			button.setToolTipText("Withdraw your application");
+			return;
+		}
+		if (!meetsIronmanRule(party))
+		{
+			button.setText("Iron only");
+			button.setEnabled(false);
+			button.setToolTipText("This party is for ironman accounts");
 			return;
 		}
 		if (party.isFull())

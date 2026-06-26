@@ -28,4 +28,16 @@ public class PartyRequest
 	 * so applicants can join the actual party; the API itself tracks no membership.
 	 */
 	private String passphrase;
+
+	/** Hide from public search; reachable only by the invite code. */
+	private boolean privateParty;
+
+	/** Loot rule: FFA / SPLIT / UNSPECIFIED. */
+	private String lootRule;
+
+	/** Restrict the party to ironman accounts. */
+	private boolean ironmanOnly;
+
+	/** The host's account type name, for display on the ad. */
+	private String hostAccountType;
 }

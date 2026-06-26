@@ -20,18 +20,33 @@ The plugin uses a **two-layer split**:
 
 The panel has up to three tabs:
 
-- **Search** — pick an activity from the dropdown, hit *Search*, and apply to an
-  open party. Full parties and your own party aren't shown/appliable.
-- **Create** — host a new party: choose activity, party size, min KC, optional
-  world and description, then *Create party* to enter it as host.
-- **Current** — only shown while you're in a party. Lists the roster (click a
-  member to expand a **Skills / Gear / Inventory** inspection view — combat stats
-  + killcount, worn equipment laid out like the in-game screen, and their 28-slot
-  inventory, all with real item icons), and offers host controls (simulate
-  applicant, kick, disband) or, for a member, leave.
+- **Search** — pick an activity, hit *Search*, and apply to an open party.
+  Filter by **loot rule** and **ironman-only**, or **Join a private party by
+  code**. Full parties and your own party aren't shown/appliable.
+- **Create** — host a new party: activity, party size, **loot rule** (FFA /
+  Split), min KC, optional world and description, plus **Private** (join-by-code
+  only) and **Ironmen only** toggles, then *Create party* to enter it as host.
+- **Current** — only shown while you're in a party. Shows the party type tags
+  (loot rule / private + invite code / ironman-only) and lists the roster (click
+  a member to expand a **Skills / Gear / Inventory** inspection view), and offers
+  host controls (simulate applicant, admit/decline, kick, disband) or leave.
 
 You can be in **only one party at a time** (hosting or joined). Applying to a
 party leaves your current one first; you must leave/disband before creating.
+
+## Party types
+
+- **Private** — hidden from public search; the host shares a short **invite
+  code** (shown on the Current tab) and others join via *Join private party by
+  code* on the Search tab.
+- **Loot rule** — `FFA` / `Split` / `Unspecified`, set by the host and shown on
+  search cards, with a Search-tab filter.
+- **Ironman-only** — restricts the party to ironman accounts. The plugin reads
+  your account type (`Client.getAccountType()`), blocks mains from applying
+  (button shows *Iron only*), broadcasts each member's account type so the
+  roster shows an **iron tag** (`[IM]` / `[HCIM]` / `[UIM]` / `[GIM]` / `[HCGIM]`),
+  and warns the host of a *Not an ironman* applicant. Self-reported (cooperative
+  trust, like KC/gear); RuneWatch remains the backstop for bad actors.
 
 ## RuneWatch warnings
 
@@ -69,6 +84,7 @@ All endpoints are under the versioned base path **`/api/v1`**.
 | Method | Path                             | Body / Query                   | Returns   |
 |--------|----------------------------------|--------------------------------|-----------|
 | GET    | `/api/v1/parties`                | `?activity={id}&player={name}` | `Party[]` |
+| GET    | `/api/v1/parties/by-code/{code}` | —                              | `Party`   |
 | POST   | `/api/v1/parties`                | `PartyRequest`                 | `Party`   |
 | PUT    | `/api/v1/parties/{id}/heartbeat` | —                              | `Party`   |
 | DELETE | `/api/v1/parties/{id}`           | —                              | `Party`   |
@@ -91,16 +107,20 @@ same host and rate-limits `POST` to 1/5s per IP. See `osrs-party-api`.
 ```json
 { "activity": "cox", "host": "Zezima", "description": "...", "capacity": 4,
   "world": "420", "minKillCount": 500, "minHardModeKillCount": 50,
-  "passphrase": "wine-of-zamorak-…" }
+  "passphrase": "wine-of-zamorak-…",
+  "privateParty": false, "lootRule": "SPLIT", "ironmanOnly": false,
+  "hostAccountType": "NORMAL" }
 ```
 
-`Party`:
+`Party` (adds a server-generated `inviteCode`):
 
 ```json
 { "id": "abc", "activity": "cox", "host": "Zezima", "description": "...",
   "size": 2, "capacity": 4, "world": "420", "createdAt": 0,
   "minKillCount": 500, "minHardModeKillCount": 50,
-  "passphrase": "wine-of-zamorak-…", "members": ["Zezima"] }
+  "passphrase": "wine-of-zamorak-…", "members": ["Zezima"],
+  "privateParty": false, "inviteCode": "Y2Y3D9", "lootRule": "SPLIT",
+  "ironmanOnly": false, "hostAccountType": "NORMAL" }
 ```
 
 ## Live party (peer-to-peer)

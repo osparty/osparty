@@ -8,6 +8,7 @@ import net.osparty.runewatch.RuneWatchService;
 import java.awt.BorderLayout;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
+import net.runelite.api.vars.AccountType;
 import javax.swing.BorderFactory;
 import javax.swing.JPanel;
 import net.runelite.client.game.ItemManager;
@@ -33,7 +34,7 @@ public class OSPartyPanel extends PluginPanel
 	public OSPartyPanel(PartyService partyService, OSPartyConfig config, Supplier<String> playerNameSupplier,
 		HostApplicationHandler hostApplicationHandler, Supplier<String> friendsChatOwnerSupplier,
 		IntSupplier worldSupplier, ItemManager itemManager, LiveParty liveParty,
-		RuneWatchService runeWatchService)
+		RuneWatchService runeWatchService, Supplier<AccountType> accountTypeSupplier)
 	{
 		super(false);
 
@@ -44,8 +45,9 @@ public class OSPartyPanel extends PluginPanel
 		setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
 		SearchPanel searchPanel = new SearchPanel(partyService, playerNameSupplier,
-			friendsChatOwnerSupplier, worldSupplier, partyState, liveParty);
-		CreatePanel createPanel = new CreatePanel(partyService, config, playerNameSupplier, partyState, liveParty);
+			friendsChatOwnerSupplier, worldSupplier, partyState, liveParty, accountTypeSupplier);
+		CreatePanel createPanel = new CreatePanel(partyService, config, playerNameSupplier, partyState, liveParty,
+			accountTypeSupplier);
 		CurrentPanel currentPanel = new CurrentPanel(partyService, playerNameSupplier,
 			hostApplicationHandler, partyState, itemManager, liveParty, runeWatchService);
 

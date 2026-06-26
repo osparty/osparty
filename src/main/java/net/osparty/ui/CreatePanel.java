@@ -2,7 +2,9 @@ package net.osparty.ui;
 
 import net.osparty.OSPartyConfig;
 import net.osparty.api.PartyService;
+import net.osparty.model.AccountTypes;
 import net.osparty.model.Activity;
+import net.osparty.model.LootRule;
 import net.osparty.model.Party;
 import net.osparty.model.PartyRequest;
 import net.osparty.party.LiveParty;
@@ -15,6 +17,7 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -24,6 +27,7 @@ import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
+import net.runelite.api.vars.AccountType;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 
@@ -39,11 +43,15 @@ class CreatePanel extends JPanel
 	private final Supplier<String> playerNameSupplier;
 	private final PartyState partyState;
 	private final LiveParty liveParty;
+	private final Supplier<AccountType> accountTypeSupplier;
 
 	private final JComboBox<Activity> activityDropdown = new JComboBox<>(Activity.values());
+	private final JComboBox<LootRule> lootDropdown = new JComboBox<>(LootRule.values());
 	private final JSpinner capacitySpinner;
 	private final JTextField worldField = new JTextField();
 	private final JTextArea descriptionArea = new JTextArea(3, 0);
+	private final JCheckBox privateCheck = new JCheckBox("Private (join by code only)");
+	private final JCheckBox ironmanCheck = new JCheckBox("Ironman only");
 	private final JButton createButton = new JButton("Create party");
 	private final JLabel statusLabel = new JLabel();
 
@@ -53,12 +61,13 @@ class CreatePanel extends JPanel
 	private JPanel hardKcField;
 
 	CreatePanel(PartyService partyService, OSPartyConfig config, Supplier<String> playerNameSupplier,
-		PartyState partyState, LiveParty liveParty)
+		PartyState partyState, LiveParty liveParty, Supplier<AccountType> accountTypeSupplier)
 	{
 		this.partyService = partyService;
 		this.playerNameSupplier = playerNameSupplier;
 		this.partyState = partyState;
 		this.liveParty = liveParty;
+		this.accountTypeSupplier = accountTypeSupplier;
 
 		int defaultCapacity = Math.max(1, config.defaultCapacity());
 		this.capacitySpinner = new JSpinner(new SpinnerNumberModel(defaultCapacity, 1, 100, 1));
@@ -69,6 +78,7 @@ class CreatePanel extends JPanel
 
 		add(field("Activity", activityDropdown));
 		add(field("Party size", capacitySpinner));
+		add(field("Loot rule", lootDropdown));
 		add(field("Minimum KC", minKcSpinner));
 
 		hardKcField = field(hardKcLabel, hardKcSpinner);
@@ -81,6 +91,19 @@ class CreatePanel extends JPanel
 		descriptionArea.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		descriptionArea.setForeground(Color.WHITE);
 		add(field("Description (optional)", new JScrollPane(descriptionArea)));
+
+		add(checkBoxRow(privateCheck));
+		add(checkBoxRow(ironmanCheck));
+
+		// Only ironman accounts may host an ironman-only party - bounce the toggle
+		// (and explain) if a main tries to tick it.
+		ironmanCheck.addActionListener(e -> {
+			if (ironmanCheck.isSelected() && !AccountTypes.isIronman(accountTypeSupplier.get()))
+			{
+				ironmanCheck.setSelected(false);
+				setStatus("Only ironman accounts can host an ironman-only party.");
+			}
+		});
 
 		createButton.setFocusPainted(false);
 		createButton.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -125,6 +148,27 @@ class CreatePanel extends JPanel
 		label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		panel.add(label, BorderLayout.NORTH);
 		panel.add(input, BorderLayout.CENTER);
+		return panel;
+	}
+
+	private JPanel checkBoxRow(JCheckBox box)
+	{
+		box.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		box.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		box.setFocusPainted(false);
+
+		JPanel panel = new JPanel(new BorderLayout())
+		{
+			@Override
+			public Dimension getMaximumSize()
+			{
+				return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+			}
+		};
+		panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		panel.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
+		panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+		panel.add(box, BorderLayout.WEST);
 		return panel;
 	}
 
@@ -194,6 +238,19 @@ class CreatePanel extends JPanel
 		String world = worldField.getText().trim();
 		int minKc = (Integer) minKcSpinner.getValue();
 
+		LootRule loot = (LootRule) lootDropdown.getSelectedItem();
+		String lootRule = (loot == null ? LootRule.UNSPECIFIED : loot).name();
+		boolean privateParty = privateCheck.isSelected();
+		boolean ironmanOnly = ironmanCheck.isSelected();
+		AccountType accountType = accountTypeSupplier.get();
+		String hostAccountType = accountType != null ? accountType.name() : null;
+
+		if (ironmanOnly && !AccountTypes.isIronman(accountType))
+		{
+			setStatus("Only ironman accounts can host an ironman-only party.");
+			return;
+		}
+
 		createButton.setEnabled(false);
 		setStatus("Creating party...");
 
@@ -201,7 +258,8 @@ class CreatePanel extends JPanel
 		// names to build it), so this is async; advertise once we have it.
 		liveParty.generatePassphrase(passphrase -> {
 			PartyRequest request = new PartyRequest(
-				activityId, player, description, capacity, world, minKc, minHardKc, passphrase);
+				activityId, player, description, capacity, world, minKc, minHardKc, passphrase,
+				privateParty, lootRule, ironmanOnly, hostAccountType);
 
 			partyService.createParty(request,
 				party -> SwingUtilities.invokeLater(() -> onCreated(party, passphrase, player, capacity)),
@@ -219,7 +277,14 @@ class CreatePanel extends JPanel
 		// Host the live room now that the ad is up; applicants who join are pending
 		// until admitted from the Current tab.
 		liveParty.hostParty(passphrase, host, capacity, false);
-		setStatus("Party created — manage it on the Current tab.");
+		if (party.isPrivateParty() && party.getInviteCode() != null)
+		{
+			setStatus("Private party created - invite code " + party.getInviteCode() + " (also on Current tab).");
+		}
+		else
+		{
+			setStatus("Party created - manage it on the Current tab.");
+		}
 		partyState.setHosting(party);
 	}
 

@@ -39,6 +39,21 @@ public class Party
 	 */
 	private int minHardModeKillCount;
 
+	/** Private parties aren't listed in search — joined via {@link #inviteCode}. */
+	private boolean privateParty;
+
+	/** Short code used to find this party (shown to the host to share). */
+	private String inviteCode;
+
+	/** Loot rule: FFA / SPLIT / UNSPECIFIED (see {@link LootRule}). */
+	private String lootRule;
+
+	/** When true, only ironman accounts should join. */
+	private boolean ironmanOnly;
+
+	/** The host's account type name (NORMAL / IRONMAN / ...). */
+	private String hostAccountType;
+
 	public boolean isFull()
 	{
 		return capacity > 0 && size >= capacity;

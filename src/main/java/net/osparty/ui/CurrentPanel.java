@@ -3,9 +3,11 @@ package net.osparty.ui;
 import net.osparty.HostApplicationHandler;
 import net.osparty.api.MockApplicants;
 import net.osparty.api.PartyService;
+import net.osparty.model.AccountTypes;
 import net.osparty.model.Activity;
 import net.osparty.model.Applicant;
 import net.osparty.model.Applicant.EquipmentSlot;
+import net.osparty.model.LootRule;
 import net.osparty.model.Party;
 import net.osparty.party.LiveParty;
 import net.osparty.party.LiveParty.RosterMember;
@@ -24,8 +26,11 @@ import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Insets;
 import java.awt.LayoutManager;
+import java.awt.Toolkit;
+import java.awt.datatransfer.StringSelection;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -118,7 +123,7 @@ class CurrentPanel extends JPanel
 		add(statusLabel, BorderLayout.SOUTH);
 
 		partyState.addListener(this::refresh);
-		// Live roster/data changes arrive off the EDT — marshal back before redraw.
+		// Live roster/data changes arrive off the EDT - marshal back before redraw.
 		liveParty.addListener(() -> SwingUtilities.invokeLater(this::refresh));
 		// Re-render once the RuneWatch watchlist has loaded so badges appear.
 		runeWatch.addListener(() -> SwingUtilities.invokeLater(this::refresh));
@@ -177,7 +182,7 @@ class CurrentPanel extends JPanel
 		spots.append(party.getCapacity() > 0 ? admitted + "/" + party.getCapacity() + " players" : admitted + " players");
 		if (party.getWorld() != null && !party.getWorld().isEmpty())
 		{
-			spots.append("  •  W").append(party.getWorld());
+			spots.append(", W").append(party.getWorld());
 		}
 		content.add(subLabel(spots.toString()));
 
@@ -189,7 +194,46 @@ class CurrentPanel extends JPanel
 			content.add(reqLabel);
 		}
 
-		// Host can share the passphrase to invite directly (outside the bulletin board).
+		// Party type tags: loot rule, ironman-only, private.
+		List<String> tags = new ArrayList<>();
+		LootRule loot = LootRule.fromName(party.getLootRule());
+		if (loot != LootRule.UNSPECIFIED)
+		{
+			tags.add("Loot: " + loot.getDisplayName());
+		}
+		if (party.isIronmanOnly())
+		{
+			tags.add("Ironman only");
+		}
+		if (party.isPrivateParty())
+		{
+			tags.add("Private");
+		}
+		if (!tags.isEmpty())
+		{
+			content.add(subLabel(String.join(", ", tags)));
+		}
+
+		// Host can share the invite code / passphrase to invite directly.
+		if (host && party.getInviteCode() != null)
+		{
+			String inviteCode = party.getInviteCode();
+			JLabel code = subLabel("Invite code: " + inviteCode + " (copy)");
+			code.setForeground(ColorScheme.BRAND_ORANGE);
+			code.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+			code.setToolTipText("Click to copy");
+			code.addMouseListener(new MouseAdapter()
+			{
+				@Override
+				public void mousePressed(MouseEvent e)
+				{
+					Toolkit.getDefaultToolkit().getSystemClipboard()
+						.setContents(new StringSelection(inviteCode), null);
+					setStatus("Invite code copied to clipboard.");
+				}
+			});
+			content.add(code);
+		}
 		if (host && liveParty.passphrase() != null)
 		{
 			content.add(subLabel("Passphrase: " + liveParty.passphrase()));
@@ -199,7 +243,7 @@ class CurrentPanel extends JPanel
 
 		if (roster == null || roster.isEmpty())
 		{
-			content.add(subLabel("Connecting to live room…"));
+			content.add(subLabel("Connecting to live room..."));
 		}
 		else
 		{
@@ -230,7 +274,7 @@ class CurrentPanel extends JPanel
 			}
 			else if (!host && isLocalPending(roster))
 			{
-				content.add(subLabel("Awaiting host approval…"));
+				content.add(subLabel("Awaiting host approval..."));
 			}
 
 			if (host && activity != null)
@@ -297,17 +341,12 @@ class CurrentPanel extends JPanel
 		JPanel headerRow = new JPanel(new BorderLayout(6, 0));
 		headerRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		headerRow.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-
-		// Caret in its own cell so it can't overlap the name; ▼/▶ are widely supported.
-		JLabel caret = new JLabel(isExpanded ? "▼" : "▶");
-		caret.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		caret.setFont(FontManager.getRunescapeSmallFont());
-		caret.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 6));
-		headerRow.add(caret, BorderLayout.WEST);
+		headerRow.setToolTipText("Click to inspect gear & stats");
 
 		String tag = status == Status.HOST ? " (host)" : status == Status.PENDING ? " (pending)" : "";
 		String you = member.isLocal() ? " (you)" : "";
-		JLabel name = new JLabel(member.getName() + tag + you);
+		String ironTag = ironTag(member);
+		JLabel name = new JLabel(member.getName() + ironTag + tag + you);
 		name.setForeground(status == Status.HOST ? ColorScheme.BRAND_ORANGE
 			: status == Status.PENDING ? ColorScheme.PROGRESS_INPROGRESS_COLOR : Color.WHITE);
 		headerRow.add(name, BorderLayout.CENTER);
@@ -329,16 +368,36 @@ class CurrentPanel extends JPanel
 			}
 		});
 
-		// Name on top, an optional RuneWatch warning in the middle, and the action
-		// buttons (Admit/Decline/Kick) on their own row below.
+		// Name on top, optional warnings (RuneWatch / non-ironman) in the middle, and
+		// the action buttons (Admit/Decline/Kick) on their own row below.
 		JPanel top = new JPanel(new BorderLayout(0, 4));
 		top.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		top.add(headerRow, BorderLayout.NORTH);
+
+		List<JComponent> notes = new ArrayList<>();
 		RuneWatchCase flagged = runeWatch.get(member.getName());
 		if (flagged != null)
 		{
-			top.add(runeWatchBadge(flagged), BorderLayout.CENTER);
+			notes.add(runeWatchBadge(flagged));
 		}
+		if (party.isIronmanOnly() && status != Status.HOST && member.getData() != null
+			&& !AccountTypes.isIronman(AccountTypes.fromName(member.getData().getAccountType())))
+		{
+			notes.add(warnBadge("Not an ironman"));
+		}
+		if (!notes.isEmpty())
+		{
+			JPanel notesPanel = new JPanel();
+			notesPanel.setLayout(new BoxLayout(notesPanel, BoxLayout.Y_AXIS));
+			notesPanel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+			for (JComponent note : notes)
+			{
+				note.setAlignmentX(Component.LEFT_ALIGNMENT);
+				notesPanel.add(note);
+			}
+			top.add(notesPanel, BorderLayout.CENTER);
+		}
+
 		JComponent actions = buildMemberActions(activity, member, host);
 		if (actions != null)
 		{
@@ -401,7 +460,7 @@ class CurrentPanel extends JPanel
 			JPanel waiting = new JPanel(new BorderLayout());
 			waiting.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 			waiting.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
-			waiting.add(detailLeft("Waiting for live data…"), BorderLayout.CENTER);
+			waiting.add(detailLeft("Waiting for live data..."), BorderLayout.CENTER);
 			return waiting;
 		}
 
@@ -607,7 +666,7 @@ class CurrentPanel extends JPanel
 	{
 		if (!liveParty.admit(member.getMemberId(), member.getName()))
 		{
-			setStatus("Party is full — can't admit " + member.getName() + ".");
+			setStatus("Party is full - can't admit " + member.getName() + ".");
 			return;
 		}
 		notifiedPending.remove(member.getMemberId());
@@ -665,7 +724,7 @@ class CurrentPanel extends JPanel
 	private void disband(Party party, JButton button)
 	{
 		button.setEnabled(false);
-		setStatus("Disbanding party…");
+		setStatus("Disbanding party...");
 		// Remove the ad (fire-and-forget) and close the live room.
 		partyService.disbandParty(party.getId(), party.getHost(), ignored -> { }, error -> { });
 		liveParty.leave();
@@ -675,7 +734,7 @@ class CurrentPanel extends JPanel
 	private void leave(JButton button)
 	{
 		button.setEnabled(false);
-		setStatus("Leaving party…");
+		setStatus("Leaving party...");
 		liveParty.leave();
 		partyState.clear();
 	}
@@ -713,13 +772,34 @@ class CurrentPanel extends JPanel
 		return button;
 	}
 
+	/** Account-type suffix for the roster name (e.g. " [HCIM]"), or "" for a main/unknown. */
+	private String ironTag(RosterMember member)
+	{
+		if (member.getData() == null)
+		{
+			return "";
+		}
+		String tag = AccountTypes.tag(AccountTypes.fromName(member.getData().getAccountType()));
+		return tag == null ? "" : " [" + tag + "]";
+	}
+
+	/** A generic red warning badge (e.g. for a non-ironman in an ironman-only party). */
+	private JLabel warnBadge(String text)
+	{
+		JLabel label = new JLabel("(!) " + text);
+		label.setForeground(ColorScheme.PROGRESS_ERROR_COLOR);
+		label.setFont(FontManager.getRunescapeSmallFont());
+		label.setBorder(BorderFactory.createEmptyBorder(2, 16, 0, 0));
+		return label;
+	}
+
 	/** A red RuneWatch / WDR warning shown under a flagged member's name. */
 	private JLabel runeWatchBadge(RuneWatchCase flagged)
 	{
 		String reason = flagged.getReason() == null || flagged.getReason().isEmpty()
 			? "listed" : flagged.getReason();
 		// HTML width-caps the label so a long reason wraps instead of widening the card.
-		JLabel label = new JLabel("<html><div style='width:150px'>⚠ "
+		JLabel label = new JLabel("<html><div style='width:150px'>(!) "
 			+ flagged.sourceName() + ": " + escape(reason) + "</div></html>");
 		label.setForeground(ColorScheme.PROGRESS_ERROR_COLOR);
 		label.setFont(FontManager.getRunescapeSmallFont());
@@ -732,7 +812,7 @@ class CurrentPanel extends JPanel
 		}
 		if (flagged.getRating() != null)
 		{
-			tip.append(" — evidence rating ").append(escape(flagged.getRating()));
+			tip.append(" - evidence rating ").append(escape(flagged.getRating()));
 		}
 		if (flagged.getDate() != null)
 		{

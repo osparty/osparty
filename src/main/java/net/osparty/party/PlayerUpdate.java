@@ -40,4 +40,7 @@ public class PlayerUpdate extends PartyMemberMessage
 
 	/** Kills of the harder variant (CM/HM/Expert); {@code -1} when unknown/N/A. */
 	private int hardModeKillCount = -1;
+
+	/** The member's account type name (NORMAL / IRONMAN / ...); null when unknown. */
+	private String accountType;
 }
