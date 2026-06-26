@@ -132,16 +132,22 @@ public class KillcountService
 				return HiscoreSkill.NIGHTMARE;
 			case CORPOREAL_BEAST:
 				return HiscoreSkill.CORPOREAL_BEAST;
-			case WINTERTODT:
-				return HiscoreSkill.WINTERTODT;
-			case TEMPOROSS:
-				return HiscoreSkill.TEMPOROSS;
 			case ZALCANO:
 				return HiscoreSkill.ZALCANO;
-			case INFERNO:
-				return HiscoreSkill.TZKAL_ZUK;
+			case HUEYCOATL:
+				return HiscoreSkill.THE_HUEYCOATL;
+			case YAMA:
+				return HiscoreSkill.YAMA;
+			case KREEARRA:
+				return HiscoreSkill.KREEARRA;
+			case GENERAL_GRAARDOR:
+				return HiscoreSkill.GENERAL_GRAARDOR;
+			case KRIL_TSUTSAROTH:
+				return HiscoreSkill.KRIL_TSUTSAROTH;
+			case COMMANDER_ZILYANA:
+				return HiscoreSkill.COMMANDER_ZILYANA;
 			default:
-				return null; // BA, GotR, Soul Wars, Pest Control, Castle Wars
+				return null; // BA has no boss killcount
 		}
 	}
 

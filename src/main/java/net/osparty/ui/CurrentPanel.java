@@ -429,7 +429,13 @@ class CurrentPanel extends JPanel
 		stack.setLayout(new BoxLayout(stack, BoxLayout.Y_AXIS));
 		stack.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 
-		// Line 1: name (click it - or the chevron - to inspect gear & stats).
+		// Line 1: a presence dot, then the name (click either - or the chevron - to
+		// inspect gear & stats).
+		boolean online = member.isOnline();
+		JLabel dot = new JLabel(online ? StatusIcons.ONLINE : StatusIcons.OFFLINE);
+		dot.setToolTipText(online ? "Online" : "Offline");
+		dot.addMouseListener(expandOnClick(member));
+
 		String tag = status == Status.HOST ? " (host)" : status == Status.PENDING ? " (pending)" : "";
 		String you = member.isLocal() ? " (you)" : "";
 		JLabel name = new JLabel(member.getName() + tag + you);
@@ -439,7 +445,12 @@ class CurrentPanel extends JPanel
 		name.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 		name.setToolTipText("Click to inspect gear & stats");
 		name.addMouseListener(expandOnClick(member));
-		addLine(stack, name, 0);
+
+		JPanel nameRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+		nameRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		nameRow.add(dot);
+		nameRow.add(name);
+		addLine(stack, nameRow, 0);
 
 		// Line 2: world + friends-chat indicator.
 		JComponent meta = buildMemberMeta(member, hostName);
@@ -604,6 +615,13 @@ class CurrentPanel extends JPanel
 
 		if (showFc)
 		{
+			// The friends-chat channel logo, then a check/cross for membership.
+			if (StatusIcons.FRIENDS_CHAT != null)
+			{
+				JLabel fcLogo = new JLabel(StatusIcons.FRIENDS_CHAT);
+				fcLogo.setToolTipText(hostName + "'s friends chat");
+				row.add(fcLogo);
+			}
 			JLabel fcIcon = new JLabel(inFc ? StatusIcons.CHECK : StatusIcons.CROSS);
 			fcIcon.setToolTipText(inFc
 				? "In " + hostName + "'s friends chat"

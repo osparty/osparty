@@ -24,12 +24,14 @@ import java.util.function.Supplier;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.DefaultListCellRenderer;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextField;
@@ -62,8 +64,13 @@ class SearchPanel extends JPanel
 	private final PartyState partyState;
 	private final LiveParty liveParty;
 	private final Supplier<AccountType> accountTypeSupplier;
+	private final Supplier<int[]> mapRegionsSupplier;
 
 	private final JComboBox<Activity> activityDropdown = new JComboBox<>(Activity.values());
+	/** The activity we're currently standing near (suggested at the top of the list). */
+	private Activity recommended;
+	/** True while we're programmatically rebuilding the dropdown (suppress search). */
+	private boolean rebuildingDropdown;
 	private final JComboBox<String> lootFilter = new JComboBox<>(new String[]{"Any loot", "FFA", "Split"});
 	private final JCheckBox ironmanFilter = new JCheckBox("Ironman parties only");
 	private final JTextField codeField = new JTextField();
@@ -95,7 +102,7 @@ class SearchPanel extends JPanel
 
 	SearchPanel(PartyService partyService, Supplier<String> playerNameSupplier,
 		Supplier<String> friendsChatOwnerSupplier, IntSupplier worldSupplier, PartyState partyState,
-		LiveParty liveParty, Supplier<AccountType> accountTypeSupplier)
+		LiveParty liveParty, Supplier<AccountType> accountTypeSupplier, Supplier<int[]> mapRegionsSupplier)
 	{
 		this.partyService = partyService;
 		this.playerNameSupplier = playerNameSupplier;
@@ -104,6 +111,7 @@ class SearchPanel extends JPanel
 		this.partyState = partyState;
 		this.liveParty = liveParty;
 		this.accountTypeSupplier = accountTypeSupplier;
+		this.mapRegionsSupplier = mapRegionsSupplier;
 
 		setLayout(new BorderLayout(0, 8));
 		setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
@@ -138,16 +146,27 @@ class SearchPanel extends JPanel
 		statusLabel.setFont(FontManager.getRunescapeSmallFont());
 		add(statusLabel, BorderLayout.SOUTH);
 
+		// Mark the nearby activity with a "(nearby)" suffix in the dropdown.
+		activityDropdown.setRenderer(new ActivityRenderer());
+
 		searchButton.setToolTipText("Refresh the list for the selected activity");
 		searchButton.addActionListener(e -> search());
 
-		// Selecting a different activity searches it immediately.
-		activityDropdown.addActionListener(e -> search());
+		// Selecting a different activity searches it immediately (but not while we're
+		// programmatically reordering the list to surface a nearby activity).
+		activityDropdown.addActionListener(e -> {
+			if (!rebuildingDropdown)
+			{
+				search();
+			}
+		});
 
-		// Auto-refresh the selected activity every 10s while the tab is visible.
+		// Auto-refresh the selected activity every 10s while the tab is visible, and
+		// re-check whether we've moved near a different activity.
 		autoRefreshTimer = new Timer(10_000, e -> {
 			if (isShowing())
 			{
+				applyRecommendation();
 				search();
 			}
 		});
@@ -159,6 +178,7 @@ class SearchPanel extends JPanel
 			@Override
 			public void ancestorAdded(AncestorEvent event)
 			{
+				applyRecommendation();
 				search();
 			}
 
@@ -375,6 +395,51 @@ class SearchPanel extends JPanel
 		applicationPanel.add(friendsChatLabel);
 		applicationPanel.add(worldLabel);
 		return applicationPanel;
+	}
+
+	/**
+	 * If the player is standing near an activity, float it to the top of the
+	 * dropdown and select it. No-op when the nearby activity hasn't changed, so it
+	 * doesn't fight the user's manual selection.
+	 */
+	private void applyRecommendation()
+	{
+		Activity near = Activity.nearby(mapRegionsSupplier.get());
+		if (near == recommended)
+		{
+			return;
+		}
+		recommended = near;
+		rebuildDropdown(near);
+	}
+
+	/** Reorder the dropdown so {@code near} (if any) is first; keep the rest in order. */
+	private void rebuildDropdown(Activity near)
+	{
+		Activity current = (Activity) activityDropdown.getSelectedItem();
+
+		rebuildingDropdown = true;
+		activityDropdown.removeAllItems();
+		if (near != null)
+		{
+			activityDropdown.addItem(near);
+		}
+		for (Activity activity : Activity.values())
+		{
+			if (activity != near)
+			{
+				activityDropdown.addItem(activity);
+			}
+		}
+		// Arriving at an activity selects it; otherwise keep the prior choice.
+		Activity select = near != null ? near : current;
+		if (select != null)
+		{
+			activityDropdown.setSelectedItem(select);
+		}
+		rebuildingDropdown = false;
+
+		search();
 	}
 
 	private void search()
@@ -877,5 +942,24 @@ class SearchPanel extends JPanel
 	private void setStatus(String text)
 	{
 		statusLabel.setText(text);
+	}
+
+	/** Dropdown renderer that appends "(nearby)" to the recommended activity. */
+	private class ActivityRenderer extends DefaultListCellRenderer
+	{
+		@Override
+		public java.awt.Component getListCellRendererComponent(JList<?> list, Object value, int index,
+			boolean isSelected, boolean cellHasFocus)
+		{
+			super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+			if (value instanceof Activity)
+			{
+				Activity activity = (Activity) value;
+				setText(activity == recommended
+					? activity.getDisplayName() + "  (nearby)"
+					: activity.getDisplayName());
+			}
+			return this;
+		}
 	}
 }

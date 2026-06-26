@@ -34,6 +34,7 @@ import net.runelite.api.vars.AccountType;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.api.World;
+import net.runelite.api.widgets.ComponentID;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.SkillIconManager;
@@ -121,10 +122,19 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private volatile String friendsChatOwner;
 	/** Current world, or 0 when not logged in. */
 	private volatile int world;
+	/** Currently loaded map regions (for location-aware activity suggestions). */
+	private volatile int[] mapRegions;
 	/** Local player's account type, or null when not logged in. */
 	private volatile AccountType accountType;
 	/** Whether we've checked for a resumable hosted party since this login. */
 	private boolean rejoinChecked;
+
+	/** Pending quick-hop target (driven on game ticks), or null when not hopping. */
+	private volatile net.runelite.http.api.worlds.World quickHopTarget;
+	/** How many ticks we've waited for the world switcher widget to appear. */
+	private int quickHopAttempts;
+	/** Give up opening the world switcher after this many ticks. */
+	private static final int QUICK_HOP_MAX_ATTEMPTS = 35;
 
 	@Override
 	protected void startUp()
@@ -148,7 +158,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		panel = new OSPartyPanel(partyService, config, this::getPlayerName, this,
 			this::getFriendsChatOwner, this::getCurrentWorld, itemManager, liveParty, runeWatchService,
-			this::getAccountType, killcountService, skillIconManager, this::hopTo);
+			this::getAccountType, killcountService, skillIconManager, this::hopTo, this::getMapRegions);
 
 		navButton = NavigationButton.builder()
 			.tooltip("OSParty")
@@ -247,7 +257,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			playerName = null;
 			friendsChatOwner = null;
 			world = 0;
+			mapRegions = null;
 			accountType = null;
+			quickHopTarget = null;
 		}
 		// Re-arm the rejoin check on a real logout (not a world hop).
 		if (event.getGameState() == GameState.LOGIN_SCREEN)
@@ -273,10 +285,14 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 
 		world = client.getWorld();
+		mapRegions = client.getMapRegions();
 		accountType = client.getAccountType();
 
 		FriendsChatManager fcm = client.getFriendsChatManager();
 		friendsChatOwner = fcm != null ? fcm.getOwner() : null;
+
+		// Drive any in-progress world hop (needs the client thread).
+		processQuickHop();
 
 		// Push pending host state / our own live snapshot (client thread).
 		liveParty.tick();
@@ -393,6 +409,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		return world;
 	}
 
+	/** @return the currently loaded map regions, or null when not logged in. Safe from the EDT. */
+	public int[] getMapRegions()
+	{
+		return mapRegions;
+	}
+
 	/** @return the local player's account type, or null when not logged in. Safe from the EDT. */
 	public AccountType getAccountType()
 	{
@@ -400,9 +422,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	}
 
 	/**
-	 * Hop the client to {@code worldNum} (a party member's world). Looks the world
-	 * up in the world list and performs the change on the client thread. Safe to
-	 * call from the EDT.
+	 * Hop the client to {@code worldNum} (a party member's world). Safe to call
+	 * from the EDT. At the login screen we can switch directly; while logged in the
+	 * actual hop is driven over game ticks (see {@link #processQuickHop()}), which
+	 * - following RuneLite's World Hopper - opens the world switcher first so
+	 * {@code hopToWorld} works from anywhere without the player opening it manually.
 	 */
 	public void hopTo(int worldNum)
 	{
@@ -419,26 +443,62 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			return;
 		}
 
-		clientThread.invoke(() -> {
-			World rsWorld = client.createWorld();
-			rsWorld.setActivity(target.getActivity());
-			rsWorld.setAddress(target.getAddress());
-			rsWorld.setId(target.getId());
-			rsWorld.setPlayerCount(target.getPlayers());
-			rsWorld.setLocation(target.getLocation());
-			rsWorld.setTypes(WorldUtil.toWorldTypes(target.getTypes()));
+		if (client.getGameState() == GameState.LOGIN_SCREEN)
+		{
+			clientThread.invoke(() -> client.changeWorld(toRsWorld(target)));
+			return;
+		}
 
-			// changeWorld() only takes effect at the login screen; while logged in
-			// we must hopToWorld() to actually perform the in-game world hop.
-			if (client.getGameState() == GameState.LOGIN_SCREEN)
+		// Queue it; the game-tick handler opens the switcher then hops.
+		quickHopAttempts = 0;
+		quickHopTarget = target;
+	}
+
+	/**
+	 * Progress a queued world hop. RuneLite's {@code hopToWorld} only works once the
+	 * world-switcher widget has been built, so we open it first and retry over a few
+	 * ticks until it exists, then hop. Runs on the client thread (from GameTick).
+	 */
+	private void processQuickHop()
+	{
+		net.runelite.http.api.worlds.World target = quickHopTarget;
+		if (target == null)
+		{
+			return;
+		}
+		if (client.getWorld() == target.getId() || client.getGameState() != GameState.LOGGED_IN)
+		{
+			quickHopTarget = null;
+			return;
+		}
+
+		if (client.getWidget(ComponentID.WORLD_SWITCHER_WORLD_LIST) == null)
+		{
+			// Switcher not built yet - open it and try again next tick.
+			client.openWorldHopper();
+			if (++quickHopAttempts >= QUICK_HOP_MAX_ATTEMPTS)
 			{
-				client.changeWorld(rsWorld);
+				quickHopTarget = null;
+				gameMessage("Could not open the world switcher to hop to world " + target.getId() + ".");
 			}
-			else
-			{
-				client.hopToWorld(rsWorld);
-			}
-		});
+			return;
+		}
+
+		client.hopToWorld(toRsWorld(target));
+		quickHopTarget = null;
+	}
+
+	/** Build a client {@link World} from the world-list entry. */
+	private World toRsWorld(net.runelite.http.api.worlds.World source)
+	{
+		World rsWorld = client.createWorld();
+		rsWorld.setActivity(source.getActivity());
+		rsWorld.setAddress(source.getAddress());
+		rsWorld.setId(source.getId());
+		rsWorld.setPlayerCount(source.getPlayers());
+		rsWorld.setLocation(source.getLocation());
+		rsWorld.setTypes(WorldUtil.toWorldTypes(source.getTypes()));
+		return rsWorld;
 	}
 
 	@Override

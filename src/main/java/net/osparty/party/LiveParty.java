@@ -58,7 +58,13 @@ public class LiveParty
 		Status status;
 		PlayerUpdate data; // nullable until they sync
 		boolean local;
+		boolean online; // recently heard from (or ourselves)
 	}
+
+	/** Consider a member offline if we haven't heard from them in this long. */
+	private static final long ONLINE_TIMEOUT_MS = 20_000;
+	/** The host drops a member from the roster after this long with no contact. */
+	private static final long PRUNE_TIMEOUT_MS = 60_000;
 
 	private final PartyService partyService;
 	private final WSClient wsClient;
@@ -71,6 +77,8 @@ public class LiveParty
 	private volatile int currentTeamSize;
 
 	private final Map<Long, PlayerUpdate> playerData = new ConcurrentHashMap<>();
+	/** memberId -> epoch millis we last heard from them (presence + stale pruning). */
+	private final Map<Long, Long> lastSeen = new ConcurrentHashMap<>();
 	private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
 
 	// Host-authoritative state (only meaningful while hosting).
@@ -209,6 +217,7 @@ public class LiveParty
 		locked = false;
 		admitted.clear();
 		playerData.clear();
+		lastSeen.clear();
 		leaving.clear();
 		ticksSinceLocalBroadcast = 0;
 		currentActivityId = null;
@@ -330,6 +339,7 @@ public class LiveParty
 		{
 			return;
 		}
+		pruneStaleMembers();
 		flushState();
 		// Periodically re-announce ourselves so a peer who joined after our last
 		// broadcast still converges on our gear/stats (the relay has no replay).
@@ -346,6 +356,53 @@ public class LiveParty
 				update.setPbSeconds(PersonalBests.read(configManager, currentActivityId, currentTeamSize));
 				broadcastLocal(update);
 			}
+		}
+	}
+
+	/**
+	 * Host: drop members we haven't heard from in a while (e.g. they closed their
+	 * client without the relay reporting a clean part). This frees the slot and
+	 * removes the ghost so the player can rejoin fresh. We only hide them locally
+	 * and via the broadcast roster; if they do come back the next update un-hides
+	 * them (see {@link #onPlayerUpdate}).
+	 */
+	private void pruneStaleMembers()
+	{
+		if (!hosting)
+		{
+			return;
+		}
+		long now = System.currentTimeMillis();
+		long localId = localId();
+		boolean changed = false;
+		for (PartyMember member : partyService.getMembers())
+		{
+			long id = member.getMemberId();
+			if (id == localId || leaving.contains(id))
+			{
+				continue;
+			}
+			Long seen = lastSeen.get(id);
+			if (seen == null)
+			{
+				// First sighting without a presence stamp yet - start the clock.
+				lastSeen.put(id, now);
+				continue;
+			}
+			if (now - seen > PRUNE_TIMEOUT_MS)
+			{
+				leaving.add(id);
+				playerData.remove(id);
+				if (admitted.remove(id) != null)
+				{
+					changed = true;
+				}
+			}
+		}
+		if (changed)
+		{
+			stateDirty = true;
+			fire();
 		}
 	}
 
@@ -403,7 +460,11 @@ public class LiveParty
 
 	public void onPlayerUpdate(PlayerUpdate update)
 	{
-		playerData.put(update.getMemberId(), update);
+		long id = update.getMemberId();
+		playerData.put(id, update);
+		lastSeen.put(id, System.currentTimeMillis());
+		// A fresh update means they're alive - un-hide if we'd pruned them as stale.
+		leaving.remove(id);
 		fire();
 	}
 
@@ -439,6 +500,9 @@ public class LiveParty
 
 	public void onPeerJoined(long memberId)
 	{
+		// Start their presence clock and clear any stale-hide from a previous id.
+		lastSeen.put(memberId, System.currentTimeMillis());
+		leaving.remove(memberId);
 		// Re-announce ourselves so the newcomer sees our data, and (if host) push
 		// the current state so they learn who's admitted.
 		localDirty = true;
@@ -453,6 +517,7 @@ public class LiveParty
 	{
 		playerData.remove(memberId);
 		leaving.remove(memberId);
+		lastSeen.remove(memberId);
 		if (hosting && admitted.remove(memberId) != null)
 		{
 			stateDirty = true;
@@ -498,23 +563,31 @@ public class LiveParty
 		}
 
 		long localId = localId();
+		long now = System.currentTimeMillis();
 		List<RosterMember> out = new ArrayList<>();
 		for (PartyMember member : partyService.getMembers())
 		{
 			long id = member.getMemberId();
 			if (leaving.contains(id))
 			{
-				continue; // kicked/declined — don't show until they actually leave
+				continue; // kicked/declined/stale — don't show until they actually leave
 			}
 			Status status = id == hostId ? Status.HOST
 				: admittedIds.contains(id) ? Status.MEMBER : Status.PENDING;
 			PlayerUpdate data = playerData.get(id);
 			String name = data != null && data.getName() != null ? data.getName() : member.getDisplayName();
-			out.add(new RosterMember(id, name, status, data, id == localId));
+			boolean online = id == localId || isRecent(now, id);
+			out.add(new RosterMember(id, name, status, data, id == localId, online));
 		}
 		out.sort(Comparator.comparingInt((RosterMember m) -> m.getStatus().ordinal())
 			.thenComparing(RosterMember::getName, Comparator.nullsLast(String::compareToIgnoreCase)));
 		return out;
+	}
+
+	private boolean isRecent(long now, long memberId)
+	{
+		Long seen = lastSeen.get(memberId);
+		return seen != null && now - seen < ONLINE_TIMEOUT_MS;
 	}
 
 	private long localId()

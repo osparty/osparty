@@ -1,7 +1,6 @@
 package net.osparty.model;
 
 import lombok.Getter;
-import lombok.RequiredArgsConstructor;
 
 /**
  * The set of group activities a player can queue for. Each value carries a
@@ -13,26 +12,28 @@ import lombok.RequiredArgsConstructor;
  * Challenge Mode for Chambers of Xeric) where one exists, so parties can set a
  * separate minimum requirement for it; it is {@code null} for activities with
  * no such variant.
+ *
+ * <p>{@link #regionIds} lists the map region(s) at (or inside) the activity's
+ * location, used to surface the activity in the Search tab when the player is
+ * standing nearby (see {@link #nearby(int[])}).
  */
 @Getter
-@RequiredArgsConstructor
 public enum Activity
 {
-	CHAMBERS_OF_XERIC("cox", "Chambers of Xeric", 1, 100, "CM"),
-	THEATRE_OF_BLOOD("tob", "Theatre of Blood", 1, 5, "HM"),
-	TOMBS_OF_AMASCUT("toa", "Tombs of Amascut", 1, 8, "Expert"),
-	NEX("nex", "Nex", 1, 40, null),
-	NIGHTMARE("nightmare", "The Nightmare", 1, 80, null),
-	CORPOREAL_BEAST("corp", "Corporeal Beast", 1, 30, null),
-	BARBARIAN_ASSAULT("ba", "Barbarian Assault", 4, 5, null),
-	WINTERTODT("wintertodt", "Wintertodt", 1, 30, null),
-	TEMPOROSS("tempoross", "Tempoross", 1, 30, null),
-	ZALCANO("zalcano", "Zalcano", 1, 30, null),
-	GUARDIANS_OF_THE_RIFT("gotr", "Guardians of the Rift", 1, 30, null),
-	SOUL_WARS("soulwars", "Soul Wars", 1, 40, null),
-	PEST_CONTROL("pestcontrol", "Pest Control", 1, 25, null),
-	CASTLE_WARS("castlewars", "Castle Wars", 1, 100, null),
-	INFERNO("inferno", "The Inferno", 1, 1, null),
+	CHAMBERS_OF_XERIC("cox", "Chambers of Xeric", 1, 100, "CM", 4919),
+	THEATRE_OF_BLOOD("tob", "Theatre of Blood", 1, 5, "HM", 14642),
+	TOMBS_OF_AMASCUT("toa", "Tombs of Amascut", 1, 8, "Expert", 13354),
+	NEX("nex", "Nex", 1, 40, null, 11601),
+	NIGHTMARE("nightmare", "The Nightmare", 1, 80, null, 15515, 15155),
+	CORPOREAL_BEAST("corp", "Corporeal Beast", 1, 30, null, 12857),
+	BARBARIAN_ASSAULT("ba", "Barbarian Assault", 4, 5, null, 10039),
+	ZALCANO("zalcano", "Zalcano", 1, 30, null, 13150),
+	HUEYCOATL("hueycoatl", "The Hueycoatl", 1, 10, null, 5939),
+	YAMA("yama", "Yama", 1, 2, null, 6045),
+	KREEARRA("kreearra", "Kree'arra", 1, 8, null, 11346),
+	GENERAL_GRAARDOR("graardor", "General Graardor", 1, 8, null, 11347),
+	KRIL_TSUTSAROTH("kril", "K'ril Tsutsaroth", 1, 8, null, 11603),
+	COMMANDER_ZILYANA("zilyana", "Commander Zilyana", 1, 8, null, 11602),
 	;
 
 	private final String id;
@@ -40,6 +41,18 @@ public enum Activity
 	private final int minPartySize;
 	private final int maxPartySize;
 	private final String hardModeLabel;
+	private final int[] regionIds;
+
+	Activity(String id, String displayName, int minPartySize, int maxPartySize, String hardModeLabel,
+		int... regionIds)
+	{
+		this.id = id;
+		this.displayName = displayName;
+		this.minPartySize = minPartySize;
+		this.maxPartySize = maxPartySize;
+		this.hardModeLabel = hardModeLabel;
+		this.regionIds = regionIds;
+	}
 
 	public boolean hasHardMode()
 	{
@@ -59,6 +72,32 @@ public enum Activity
 			if (activity.id.equals(id))
 			{
 				return activity;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * @return the first activity whose area is among the currently-loaded map
+	 * regions (i.e. the player is standing at/inside it), or {@code null} if none.
+	 */
+	public static Activity nearby(int[] mapRegions)
+	{
+		if (mapRegions == null || mapRegions.length == 0)
+		{
+			return null;
+		}
+		for (Activity activity : values())
+		{
+			for (int region : activity.regionIds)
+			{
+				for (int loaded : mapRegions)
+				{
+					if (region == loaded)
+					{
+						return activity;
+					}
+				}
 			}
 		}
 		return null;

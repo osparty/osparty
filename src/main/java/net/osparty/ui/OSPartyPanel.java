@@ -40,7 +40,8 @@ public class OSPartyPanel extends PluginPanel
 		HostApplicationHandler hostApplicationHandler, Supplier<String> friendsChatOwnerSupplier,
 		IntSupplier worldSupplier, ItemManager itemManager, LiveParty liveParty,
 		RuneWatchService runeWatchService, Supplier<AccountType> accountTypeSupplier,
-		KillcountService killcountService, SkillIconManager skillIconManager, IntConsumer worldHopper)
+		KillcountService killcountService, SkillIconManager skillIconManager, IntConsumer worldHopper,
+		Supplier<int[]> mapRegionsSupplier)
 	{
 		super(false);
 
@@ -53,7 +54,8 @@ public class OSPartyPanel extends PluginPanel
 		setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
 		SearchPanel searchPanel = new SearchPanel(partyService, playerNameSupplier,
-			friendsChatOwnerSupplier, worldSupplier, partyState, liveParty, accountTypeSupplier);
+			friendsChatOwnerSupplier, worldSupplier, partyState, liveParty, accountTypeSupplier,
+			mapRegionsSupplier);
 		CreatePanel createPanel = new CreatePanel(partyService, config, playerNameSupplier, partyState, liveParty,
 			accountTypeSupplier);
 		CurrentPanel currentPanel = new CurrentPanel(partyService, playerNameSupplier,

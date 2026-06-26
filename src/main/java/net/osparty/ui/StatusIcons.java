@@ -3,9 +3,11 @@ package net.osparty.ui;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Graphics2D;
+import java.awt.Image;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import javax.swing.ImageIcon;
+import net.runelite.client.util.ImageUtil;
 
 /**
  * Small status glyphs drawn at load time: a green check and a red cross used to
@@ -19,6 +21,11 @@ final class StatusIcons
 	static final ImageIcon CROSS = new ImageIcon(cross());
 	static final ImageIcon CHEVRON_DOWN = new ImageIcon(chevron(true));
 	static final ImageIcon CHEVRON_UP = new ImageIcon(chevron(false));
+	/** The in-game friends-chat channel icon (from the OSRS wiki). */
+	static final ImageIcon FRIENDS_CHAT = loadFriendsChat();
+	/** Green/red presence dots shown beside a member's name. */
+	static final ImageIcon ONLINE = new ImageIcon(dot(new Color(0x4C, 0xD1, 0x37)));
+	static final ImageIcon OFFLINE = new ImageIcon(dot(new Color(0xD1, 0x3A, 0x3A)));
 
 	private static final int SIZE = 14;
 
@@ -72,6 +79,31 @@ final class StatusIcons
 		}
 		g.dispose();
 		return img;
+	}
+
+	/** A small filled presence dot in the given colour. */
+	private static BufferedImage dot(Color color)
+	{
+		BufferedImage img = base();
+		Graphics2D g = img.createGraphics();
+		hints(g);
+		g.setColor(color);
+		g.fillOval(3, 3, 8, 8);
+		g.dispose();
+		return img;
+	}
+
+	private static ImageIcon loadFriendsChat()
+	{
+		try
+		{
+			BufferedImage img = ImageUtil.loadImageResource(StatusIcons.class, "/net/osparty/icons/fc.png");
+			return new ImageIcon(img.getScaledInstance(12, 14, Image.SCALE_SMOOTH));
+		}
+		catch (Exception e)
+		{
+			return null;
+		}
 	}
 
 	private static BufferedImage base()
