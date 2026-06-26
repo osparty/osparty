@@ -390,7 +390,7 @@ public class LiveParty
 		beginReadyCheck(id, localName(), localId());
 
 		ReadyCheckMessage message = new ReadyCheckMessage();
-		message.setType(ReadyCheckMessage.Type.START);
+		message.setKind(ReadyCheckMessage.Type.START);
 		message.setCheckId(id);
 		message.setStarter(readyCheckStarter);
 		partyService.send(message);
@@ -406,7 +406,7 @@ public class LiveParty
 		}
 		readyMembers.add(localId());
 		ReadyCheckMessage message = new ReadyCheckMessage();
-		message.setType(ReadyCheckMessage.Type.READY);
+		message.setKind(ReadyCheckMessage.Type.READY);
 		message.setCheckId(readyCheckId);
 		partyService.send(message);
 		checkAllReady();
@@ -415,7 +415,7 @@ public class LiveParty
 
 	public void onReadyCheck(ReadyCheckMessage message)
 	{
-		if (message.getType() == ReadyCheckMessage.Type.START)
+		if (message.getKind() == ReadyCheckMessage.Type.START)
 		{
 			beginReadyCheck(message.getCheckId(), message.getStarter(), message.getMemberId());
 			Consumer<String> cb = onReadyCheckStarted;

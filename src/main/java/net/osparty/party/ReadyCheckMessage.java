@@ -24,7 +24,9 @@ public class ReadyCheckMessage extends PartyMemberMessage
 		READY,
 	}
 
-	private Type type;
+	// NB: not named "type" - RuneLite's party serialization reserves a "type" field
+	// as its message-class discriminator, and a collision throws at send time.
+	private Type kind;
 	private long checkId;
 
 	/** Display name of the player who started the check (START only). */
