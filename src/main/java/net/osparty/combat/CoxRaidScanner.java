@@ -2,7 +2,11 @@ package net.osparty.combat;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import net.runelite.api.Client;
@@ -11,31 +15,26 @@ import net.runelite.api.GameState;
 import net.runelite.api.InstanceTemplates;
 import net.runelite.api.NullObjectID;
 import net.runelite.api.Point;
-import net.runelite.api.Scene;
 import net.runelite.api.Tile;
 import net.runelite.api.Varbits;
-import net.runelite.api.coords.WorldPoint;
-import net.runelite.client.plugins.raids.Raid;
 import net.runelite.client.plugins.raids.RaidRoom;
 import net.runelite.client.plugins.raids.RoomType;
-import net.runelite.client.plugins.raids.solver.Layout;
-import net.runelite.client.plugins.raids.solver.LayoutSolver;
-import net.runelite.client.plugins.raids.solver.Room;
 
 /**
  * Resolves the full Chambers of Xeric room layout while in a raid.
  *
- * <p>A single scene scan only sees the rooms loaded around the player, so we
- * can't read the whole raid directly. Instead — exactly like RuneLite's core
- * Raids plugin — we scan what's visible into a {@link Raid}, build a partial
- * room-type code, and match it against a database of known layouts
- * ({@link LayoutSolver}) to recover every room's position. The combat-room
- * rotation is then solved from the known rooms via the four fixed CoX rotations.
- * Rooms not yet identified read as "Unknown (combat/puzzle)".
+ * <p>A single scene scan only sees the rooms loaded around the player, so the
+ * whole raid can't be read directly. Like RuneLite's core Raids plugin, we scan
+ * what's visible into a 16-slot grid, build a partial room-type code, and match
+ * it against a database of all known layouts to recover every room's position.
+ * The combat-room rotation is then solved from the known rooms via the four
+ * fixed CoX rotations; rooms still not identified read as "Unknown (...)".
  *
- * <p>The scan/solve logic is adapted from RuneLite's Raids plugin (BSD-2). The
- * package-private solver steps are reimplemented here against the public API
- * because an external plugin can't call them directly (different classloader).
+ * <p>The layout database and matcher are reimplemented here (rather than reusing
+ * RuneLite's {@code LayoutSolver}) on purpose: that class keeps its layouts in a
+ * mutable static list rebuilt on every construction, so instantiating our own
+ * would duplicate the entries the Raids plugin already built and break its
+ * single-match guarantee. The matcher is the WooxSolo raids-layout algorithm.
  */
 @Singleton
 public class CoxRaidScanner
@@ -45,7 +44,27 @@ public class CoxRaidScanner
 	private static final int ROOMS_PER_PLANE = 8;
 	private static final int ROOMS_PER_X = 4;
 	private static final int ROOM_MAX_SIZE = 32;
+	private static final int ROOM_COUNT = 16;
 	private static final int SCENE_SIZE = Constants.SCENE_SIZE;
+
+	/** Known CoX layouts, "floor0.floor1 - #dirs0#dirs1" (WooxSolo raids-layout data). */
+	private static final String[] CODES =
+	{
+		"FSCCP.PCSCF - #WNWSWN#ESEENW", "FSCCS.PCPSF - #WSEEEN#WSWNWS",
+		"FSCPC.CSCPF - #WNWWSE#EENWWW", "SCCFC.PSCSF - #EEENWW#WSEEEN",
+		"SCCFP.CCSPF - #NESEEN#WSWNWS", "SCFCP.CCSPF - #ESEENW#ESWWNW",
+		"SCFCP.CSCFS - #ENEESW#ENWWSW", "SCFCPC.CSPCSF - #ESWWNWS#NESENES",
+		"SCFPC.CSPCF - #WSWWNE#WSEENE", "SCFPC.PCCSF - #WSEENE#WWWSEE",
+		"SCFPC.SCPCF - #NESENE#WSWWNE", "SCPFC.CCPSF - #NWWWSE#WNEESE",
+		"SCPFC.CSPCF - #NEEESW#WWNEEE", "SCPFC.CSPSF - #WWSEEE#NWSWWN",
+		"SCSPF.CCSPF - #ESWWNW#ESENES", "SFCCP.CSCPF - #WNEESE#NWSWWN",
+		"SFCCS.PCPSF - #ENWWSW#ENESEN", "SPCFC.CSPCF - #WWNEEE#WSWNWS",
+		"SPCFC.SCCPF - #ESENES#WWWNEE", "SPSFP.CCCSF - #NWSWWN#ESEENW",
+		"SCFCP.CSCPF - #ENESEN#WWWSEE", "SCPFC.PCSCF - #WNEEES#NWSWNW",
+		"SFCCPC.PCSCPF - #WSEENES#WWWNEEE", "FSPCC.PSCCF - #WWWSEE#ENWWSW",
+		"FSCCP.PCSCF - #ENWWWS#NEESEN", "SCPFC.CCSSF - #NEESEN#WSWWNE",
+	};
+	private static final Pattern REGEX = Pattern.compile("^([A-Z]*)\\.([A-Z]*) - #([A-Z]*)#([A-Z]*)$");
 
 	/** The four fixed CoX combat-room rotations, used to fill unscouted combat rooms. */
 	private static final List<List<RaidRoom>> ROTATIONS = Arrays.asList(
@@ -58,55 +77,71 @@ public class CoxRaidScanner
 		Arrays.asList(RaidRoom.MYSTICS, RaidRoom.VANGUARDS, RaidRoom.VASA, RaidRoom.SHAMANS,
 			RaidRoom.VESPULA, RaidRoom.GUARDIANS, RaidRoom.MUTTADILES, RaidRoom.TEKTON));
 
-	private final Client client;
-	private final LayoutSolver layoutSolver = new LayoutSolver();
+	/** A known layout: room positions (0-15) in raid order, each with a type symbol. */
+	private static final class CoxLayout
+	{
+		final List<int[]> ordered = new ArrayList<>(); // {position, symbol}
+		final Map<Integer, Character> byPosition = new HashMap<>();
 
-	private Raid raid;
-	private Layout solvedLayout;
+		void add(int position, char symbol)
+		{
+			ordered.add(new int[]{position, symbol});
+			byPosition.put(position, symbol);
+		}
+	}
+
+	private final Client client;
+	private final List<CoxLayout> layouts = new ArrayList<>();
+
+	/** Accumulated rooms by grid index (null = not yet scanned). */
+	private final RaidRoom[] rooms = new RaidRoom[ROOM_COUNT];
+	private boolean haveBase;
+	/** Lobby south-west tile in world coordinates (stable anchor for the grid). */
+	private int lobbyBaseX;
+	private int lobbyBaseY;
+	private int baseX;
+	private int baseY;
+	private CoxLayout solvedLayout;
 	private String cachedLayout;
 
 	@Inject
 	private CoxRaidScanner(Client client)
 	{
 		this.client = client;
+		buildLayouts();
 	}
 
 	/** Scan the scene and (re)solve the layout; resets when not in a raid. Client thread. */
 	public void update()
 	{
-		if (client.getVarbitValue(Varbits.IN_RAID) != 1 || client.getGameState() != GameState.LOGGED_IN)
+		if (client.getVarbitValue(Varbits.IN_RAID) != 1 || client.getGameState() != GameState.LOGGED_IN
+			|| client.getScene() == null)
 		{
 			reset();
 			return;
 		}
-		if (client.getScene() == null)
+
+		if (!haveBase && !locateLobby())
 		{
 			return;
 		}
-
-		raid = buildRaid(raid);
-		if (raid == null)
-		{
-			return; // lobby not located yet
-		}
+		scanRooms();
 
 		if (solvedLayout == null)
 		{
-			Layout layout = layoutSolver.findLayout(raid.toCode());
+			CoxLayout layout = findLayout(toCode());
 			if (layout == null)
 			{
-				return; // not enough scanned to match a layout yet - keep accumulating
+				return; // not enough scanned to uniquely match yet - keep accumulating
 			}
 			solvedLayout = layout;
-			fillUnsolvedRooms(raid, layout);
+			fillUnsolvedRooms(layout);
 		}
 
-		// Solve the combat rotation from the rooms we know each pass (more get known
-		// as the player explores), then render the ordered rotation.
-		RaidRoom[] combat = combatRooms(raid, solvedLayout);
+		RaidRoom[] combat = combatRooms(solvedLayout);
 		solveRotation(combat);
-		setCombatRooms(raid, solvedLayout, combat);
-		cachedLayout = orderedRooms(raid, solvedLayout);
+		setCombatRooms(solvedLayout, combat);
+		cachedLayout = orderedRooms(solvedLayout);
 	}
 
 	/** @return the solved raid rotation (combat + puzzle rooms in order), or null. */
@@ -117,44 +152,51 @@ public class CoxRaidScanner
 
 	private void reset()
 	{
-		raid = null;
+		if (!haveBase && cachedLayout == null && solvedLayout == null)
+		{
+			return;
+		}
+		haveBase = false;
 		solvedLayout = null;
 		cachedLayout = null;
+		Arrays.fill(rooms, null);
 	}
 
-	// ---- scan (adapted from RaidsPlugin#buildRaid) ---------------------------
+	// ---- scanning (adapted from RaidsPlugin) ---------------------------------
 
-	private Raid buildRaid(Raid from)
+	private boolean locateLobby()
 	{
-		Raid result = from;
-		if (result == null)
+		Point base = findLobbyBase();
+		if (base == null)
 		{
-			Point gridBase = findLobbyBase();
-			if (gridBase == null)
-			{
-				return null;
-			}
-			Integer lobbyIndex = findLobbyIndex(gridBase);
-			if (lobbyIndex == null)
-			{
-				return null;
-			}
-			result = new Raid(new WorldPoint(client.getBaseX() + gridBase.getX(),
-				client.getBaseY() + gridBase.getY(), LOBBY_PLANE), lobbyIndex);
+			return false;
 		}
-
-		int baseX = result.getLobbyIndex() % ROOMS_PER_X;
-		int baseY = result.getLobbyIndex() % ROOMS_PER_PLANE > (ROOMS_PER_X - 1) ? 1 : 0;
-		Tile[][][] tiles = client.getScene().getTiles();
-
-		for (int i = 0; i < result.getRooms().length; i++)
+		Integer lobbyIndex = findLobbyIndex(base);
+		if (lobbyIndex == null)
 		{
-			int x = i % ROOMS_PER_X;
-			int y = i % ROOMS_PER_PLANE > (ROOMS_PER_X - 1) ? 1 : 0;
+			return false;
+		}
+		// Store the lobby anchor in scene-relative grid terms; rooms are scanned each
+		// tick relative to the player so the world base shifting doesn't matter.
+		this.lobbyBaseX = client.getBaseX() + base.getX();
+		this.lobbyBaseY = client.getBaseY() + base.getY();
+		this.baseX = lobbyIndex % ROOMS_PER_X;
+		this.baseY = lobbyIndex % ROOMS_PER_PLANE > (ROOMS_PER_X - 1) ? 1 : 0;
+		haveBase = true;
+		return true;
+	}
+
+	private void scanRooms()
+	{
+		Tile[][][] tiles = client.getScene().getTiles();
+		for (int i = 0; i < ROOM_COUNT; i++)
+		{
+			int gx = i % ROOMS_PER_X;
+			int gy = i % ROOMS_PER_PLANE > (ROOMS_PER_X - 1) ? 1 : 0;
 			int plane = i > (ROOMS_PER_PLANE - 1) ? SECOND_FLOOR_PLANE : LOBBY_PLANE;
 
-			x = result.getGridBase().getX() + (x - baseX) * ROOM_MAX_SIZE - client.getBaseX();
-			y = result.getGridBase().getY() - (y - baseY) * ROOM_MAX_SIZE - client.getBaseY();
+			int x = lobbyBaseX + (gx - baseX) * ROOM_MAX_SIZE - client.getBaseX();
+			int y = lobbyBaseY - (gy - baseY) * ROOM_MAX_SIZE - client.getBaseY();
 
 			if (x < (1 - ROOM_MAX_SIZE) || x >= SCENE_SIZE)
 			{
@@ -172,9 +214,13 @@ public class CoxRaidScanner
 			{
 				continue;
 			}
-			result.setRoom(determineRoom(tile), i);
+			RaidRoom scanned = determineRoom(tile);
+			// Don't let a stray EMPTY clobber a room we already know.
+			if (rooms[i] == null || scanned != RaidRoom.EMPTY)
+			{
+				rooms[i] = scanned;
+			}
 		}
-		return result;
 	}
 
 	private Point findLobbyBase()
@@ -197,16 +243,16 @@ public class CoxRaidScanner
 		return null;
 	}
 
-	private Integer findLobbyIndex(Point gridBase)
+	private Integer findLobbyIndex(Point base)
 	{
-		if (SCENE_SIZE <= gridBase.getX() + ROOM_MAX_SIZE || SCENE_SIZE <= gridBase.getY() + ROOM_MAX_SIZE)
+		if (SCENE_SIZE <= base.getX() + ROOM_MAX_SIZE || SCENE_SIZE <= base.getY() + ROOM_MAX_SIZE)
 		{
 			return null;
 		}
 		Tile[][] tiles = client.getScene().getTiles()[LOBBY_PLANE];
-		int y = tiles[gridBase.getX()][gridBase.getY() + ROOM_MAX_SIZE] == null ? 0 : 1;
+		int y = tiles[base.getX()][base.getY() + ROOM_MAX_SIZE] == null ? 0 : 1;
 		int x;
-		if (tiles[gridBase.getX() + ROOM_MAX_SIZE][gridBase.getY()] == null)
+		if (tiles[base.getX() + ROOM_MAX_SIZE][base.getY()] == null)
 		{
 			x = 3;
 		}
@@ -214,8 +260,8 @@ public class CoxRaidScanner
 		{
 			for (x = 0; x < 3; x++)
 			{
-				int sceneX = gridBase.getX() - 1 - ROOM_MAX_SIZE * x;
-				if (sceneX < 0 || tiles[sceneX][gridBase.getY()] == null)
+				int sceneX = base.getX() - 1 - ROOM_MAX_SIZE * x;
+				if (sceneX < 0 || tiles[sceneX][base.getY()] == null)
 				{
 					break;
 				}
@@ -275,64 +321,106 @@ public class CoxRaidScanner
 		}
 	}
 
-	// ---- solve (reimplemented from Raid / RotationSolver) --------------------
+	// ---- layout solving ------------------------------------------------------
 
-	/** Fill every layout position we haven't scanned with its unsolved placeholder. */
-	private void fillUnsolvedRooms(Raid raid, Layout layout)
+	private String toCode()
 	{
-		for (int i = 0; i < raid.getRooms().length; i++)
+		StringBuilder sb = new StringBuilder(ROOM_COUNT);
+		for (RaidRoom room : rooms)
 		{
-			Room room = layout.getRoomAt(i);
-			if (room != null && raid.getRoom(i) == null)
+			sb.append(room == null ? ' ' : room.getType().getCode());
+		}
+		return sb.toString();
+	}
+
+	/** @return the unique layout matching the (partial) code, or null if 0 or many match. */
+	private CoxLayout findLayout(String code)
+	{
+		CoxLayout solution = null;
+		int matches = 0;
+		for (CoxLayout layout : layouts)
+		{
+			boolean match = true;
+			for (int i = 0; i < code.length(); i++)
 			{
-				raid.setRoom(unsolvedRoom(room.getSymbol()), i);
+				Character symbol = layout.byPosition.get(i);
+				char c = code.charAt(i);
+				if (symbol != null && c != ' ' && c != symbol)
+				{
+					match = false;
+					break;
+				}
+			}
+			if (match)
+			{
+				solution = layout;
+				matches++;
+			}
+		}
+		return matches == 1 ? solution : null;
+	}
+
+	private void fillUnsolvedRooms(CoxLayout layout)
+	{
+		for (int[] entry : layout.ordered)
+		{
+			int position = entry[0];
+			if (position < ROOM_COUNT && rooms[position] == null)
+			{
+				rooms[position] = unsolvedRoom((char) entry[1]);
 			}
 		}
 	}
 
-	private RaidRoom[] combatRooms(Raid raid, Layout layout)
+	private RaidRoom[] combatRooms(CoxLayout layout)
 	{
 		List<RaidRoom> combat = new ArrayList<>();
-		for (Room room : layout.getRooms())
+		for (int[] entry : layout.ordered)
 		{
-			RaidRoom rr = raid.getRoom(room.getPosition());
-			if (rr != null && rr.getType() == RoomType.COMBAT)
+			RaidRoom room = roomAt(entry[0]);
+			if (room != null && room.getType() == RoomType.COMBAT)
 			{
-				combat.add(rr);
+				combat.add(room);
 			}
 		}
 		return combat.toArray(new RaidRoom[0]);
 	}
 
-	private void setCombatRooms(Raid raid, Layout layout, RaidRoom[] combat)
+	private void setCombatRooms(CoxLayout layout, RaidRoom[] combat)
 	{
 		int index = 0;
-		for (Room room : layout.getRooms())
+		for (int[] entry : layout.ordered)
 		{
-			RaidRoom rr = raid.getRoom(room.getPosition());
-			if (rr != null && rr.getType() == RoomType.COMBAT && index < combat.length)
+			int position = entry[0];
+			RaidRoom room = roomAt(position);
+			if (room != null && room.getType() == RoomType.COMBAT && index < combat.length)
 			{
-				raid.setRoom(combat[index++], room.getPosition());
+				rooms[position] = combat[index++];
 			}
 		}
 	}
 
-	private String orderedRooms(Raid raid, Layout layout)
+	private String orderedRooms(CoxLayout layout)
 	{
 		StringBuilder sb = new StringBuilder();
-		for (Room room : layout.getRooms())
+		for (int[] entry : layout.ordered)
 		{
-			RaidRoom rr = raid.getRoom(room.getPosition());
-			if (rr == null)
+			RaidRoom room = roomAt(entry[0]);
+			if (room == null)
 			{
 				continue;
 			}
-			if (rr.getType() == RoomType.COMBAT || rr.getType() == RoomType.PUZZLE)
+			if (room.getType() == RoomType.COMBAT || room.getType() == RoomType.PUZZLE)
 			{
-				sb.append(rr.getName()).append(", ");
+				sb.append(room.getName()).append(", ");
 			}
 		}
 		return sb.length() < 2 ? null : sb.substring(0, sb.length() - 2);
+	}
+
+	private RaidRoom roomAt(int position)
+	{
+		return position >= 0 && position < ROOM_COUNT ? rooms[position] : null;
 	}
 
 	private static RaidRoom unsolvedRoom(char symbol)
@@ -357,17 +445,17 @@ public class CoxRaidScanner
 	}
 
 	/** Fill unknown combat rooms by matching the known ones against the four rotations. */
-	private static void solveRotation(RaidRoom[] rooms)
+	private static void solveRotation(RaidRoom[] combat)
 	{
-		if (rooms == null)
+		if (combat == null)
 		{
 			return;
 		}
 		Integer start = null;
 		int known = 0;
-		for (int i = 0; i < rooms.length; i++)
+		for (int i = 0; i < combat.length; i++)
 		{
-			if (rooms[i] == null || rooms[i].getType() != RoomType.COMBAT || rooms[i] == RaidRoom.UNKNOWN_COMBAT)
+			if (combat[i] == null || combat[i].getType() != RoomType.COMBAT || combat[i] == RaidRoom.UNKNOWN_COMBAT)
 			{
 				continue;
 			}
@@ -377,7 +465,7 @@ public class CoxRaidScanner
 			}
 			known++;
 		}
-		if (known < 2 || known == rooms.length)
+		if (known < 2 || known == combat.length)
 		{
 			return;
 		}
@@ -389,15 +477,15 @@ public class CoxRaidScanner
 			compare:
 			for (int i = 0; i < rotation.size(); i++)
 			{
-				if (rooms[start] == rotation.get(i))
+				if (combat[start] == rotation.get(i))
 				{
-					for (int j = start + 1; j < rooms.length; j++)
+					for (int j = start + 1; j < combat.length; j++)
 					{
-						if (rooms[j].getType() != RoomType.COMBAT || rooms[j] == RaidRoom.UNKNOWN_COMBAT)
+						if (combat[j].getType() != RoomType.COMBAT || combat[j] == RaidRoom.UNKNOWN_COMBAT)
 						{
 							continue;
 						}
-						if (rooms[j] != rotation.get(Math.floorMod(i + j - start, rotation.size())))
+						if (combat[j] != rotation.get(Math.floorMod(i + j - start, rotation.size())))
 						{
 							break compare;
 						}
@@ -415,16 +503,80 @@ public class CoxRaidScanner
 		{
 			return;
 		}
-		for (int i = 0; i < rooms.length; i++)
+		for (int i = 0; i < combat.length; i++)
 		{
-			if (rooms[i] == null)
+			if (combat[i] == null)
 			{
 				continue;
 			}
-			if (rooms[i].getType() != RoomType.COMBAT || rooms[i] == RaidRoom.UNKNOWN_COMBAT)
+			if (combat[i].getType() != RoomType.COMBAT || combat[i] == RaidRoom.UNKNOWN_COMBAT)
 			{
-				rooms[i] = match.get(Math.floorMod(index + i, match.size()));
+				combat[i] = match.get(Math.floorMod(index + i, match.size()));
 			}
+		}
+	}
+
+	// ---- layout database (WooxSolo raids-layout algorithm) -------------------
+
+	private void buildLayouts()
+	{
+		for (String code : CODES)
+		{
+			Matcher matcher = REGEX.matcher(code);
+			if (!matcher.find())
+			{
+				continue;
+			}
+			int position = calcStart(matcher.group(3));
+			CoxLayout layout = new CoxLayout();
+			for (int floor = 0; floor < 2; floor++)
+			{
+				String symbols = matcher.group(1 + floor);
+				String directions = matcher.group(3 + floor);
+				for (int i = 0; i < directions.length(); i++)
+				{
+					char symbol = i == 0 ? '#' : symbols.charAt(i - 1);
+					layout.add(position, symbol);
+					position += dirToPosDelta(directions.charAt(i));
+				}
+				layout.add(position, '¤');
+				position += 8;
+			}
+			layouts.add(layout);
+		}
+	}
+
+	private int calcStart(String directions)
+	{
+		int startPos = 0;
+		int position = 0;
+		for (int i = 0; i < directions.length(); i++)
+		{
+			int delta = dirToPosDelta(directions.charAt(i));
+			position += delta;
+			if (position < 0 || position >= 8 || (position == 3 && delta == -1) || (position == 4 && delta == 1))
+			{
+				position -= delta;
+				startPos -= delta;
+			}
+		}
+		return startPos;
+	}
+
+	private int dirToPosDelta(char direction)
+	{
+		switch (direction)
+		{
+			case 'N':
+				return -4;
+			case 'E':
+				return 1;
+			case 'S':
+				return 4;
+			case 'W':
+				return -1;
+			default:
+				return 0;
 		}
 	}
 }
