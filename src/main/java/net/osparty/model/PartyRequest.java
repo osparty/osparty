@@ -1,5 +1,6 @@
 package net.osparty.model;
 
+import java.util.List;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 
@@ -46,4 +47,13 @@ public class PartyRequest
 
 	/** ToA invocation level (0 = unset); changes the title to "ToA (n)". */
 	private int invocation;
+
+	/**
+	 * The team composition the host wants, as role ids (a multiset). Empty/null for
+	 * activities without roles.
+	 */
+	private List<String> requiredRoles;
+
+	/** The role id the host fills themselves, or null when roles don't apply. */
+	private String hostRole;
 }

@@ -32,6 +32,9 @@ public class Applicant
 	/** The applicant's account type name (NORMAL / IRONMAN / ...); null when unknown. */
 	private String accountType;
 
+	/** The role id the applicant chose to fill (raids only); null when none/unknown. */
+	private String role;
+
 	/**
 	 * Worn equipment as OSRS item ids, indexed by {@link EquipmentSlot#ordinal()}
 	 * (length {@link EquipmentSlot#COUNT}). A value {@code <= 0} means the slot is

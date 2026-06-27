@@ -1,5 +1,9 @@
 package net.osparty.model;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import lombok.Getter;
 
 /**
@@ -21,7 +25,7 @@ import lombok.Getter;
 public enum Activity
 {
 	CHAMBERS_OF_XERIC("cox", "Chambers of Xeric", 1, 100, "CM", 4919),
-	THEATRE_OF_BLOOD("tob", "Theatre of Blood", 1, 5, "HM", 14642),
+	THEATRE_OF_BLOOD("tob", "Theatre of Blood", 3, 5, "HM", 14642),
 	TOMBS_OF_AMASCUT("toa", "Tombs of Amascut", 1, 8, "Expert", 13354),
 	NEX("nex", "Nex", 1, 40, null, 11601),
 	NIGHTMARE("nightmare", "The Nightmare", 1, 80, null, 15515, 15155),
@@ -77,6 +81,100 @@ public enum Activity
 	public boolean usesInvocation()
 	{
 		return this == TOMBS_OF_AMASCUT;
+	}
+
+	/**
+	 * The roles a player can <em>be</em> in this activity (the "my role" dropdown
+	 * and the apply prompt), in display order. Theatre of Blood is Melee / Ranged /
+	 * Mage; Chambers of Xeric is Melee hand / Skip / Runner / Fill. Activities
+	 * without roles return an empty list.
+	 */
+	public List<Role> roles()
+	{
+		switch (this)
+		{
+			case THEATRE_OF_BLOOD:
+				return Arrays.asList(Role.TOB_MELEE, Role.TOB_RANGED, Role.TOB_MAGE);
+			case CHAMBERS_OF_XERIC:
+				return Arrays.asList(Role.COX_MELEE_HAND, Role.COX_SKIP, Role.COX_RUNNER, Role.COX_FILL);
+			default:
+				return Collections.emptyList();
+		}
+	}
+
+	/**
+	 * The roles shown in the Search filter for this activity: the normal
+	 * {@link #roles()} plus a "Fill / Any" wildcard (ToB has no Fill slot in a
+	 * composition, but you can still search as "I'll do any role").
+	 */
+	public List<Role> filterRoles()
+	{
+		switch (this)
+		{
+			case THEATRE_OF_BLOOD:
+				return Arrays.asList(Role.TOB_MELEE, Role.TOB_RANGED, Role.TOB_MAGE, Role.TOB_FILL);
+			case CHAMBERS_OF_XERIC:
+				return roles(); // COX_FILL already doubles as the "any" option
+			default:
+				return Collections.emptyList();
+		}
+	}
+
+	/** The "I'll do any role" wildcard for this activity's Search box, or null. */
+	public Role anyRole()
+	{
+		switch (this)
+		{
+			case THEATRE_OF_BLOOD:
+				return Role.TOB_FILL;
+			case CHAMBERS_OF_XERIC:
+				return Role.COX_FILL;
+			default:
+				return null;
+		}
+	}
+
+	/**
+	 * Theatre of Blood's fixed team composition (a role multiset) for a given party
+	 * size: 3 = 1 melee / 1 ranged / 1 mage, 4 = 1 / 1 / 2, 5 = 2 / 1 / 2 (smaller
+	 * sizes degrade sensibly). Returns null for activities whose composition the
+	 * host configures by hand (e.g. Chambers of Xeric).
+	 */
+	public List<Role> fixedComposition(int partySize)
+	{
+		if (this != THEATRE_OF_BLOOD)
+		{
+			return null;
+		}
+		List<Role> comp = new ArrayList<>();
+		int melee = partySize >= 5 ? 2 : (partySize >= 2 ? 1 : 0);
+		int ranged = partySize >= 3 ? 1 : 0;
+		int mage = partySize - melee - ranged; // the remainder (the freezers)
+		for (int i = 0; i < melee; i++)
+		{
+			comp.add(Role.TOB_MELEE);
+		}
+		for (int i = 0; i < ranged; i++)
+		{
+			comp.add(Role.TOB_RANGED);
+		}
+		for (int i = 0; i < Math.max(0, mage); i++)
+		{
+			comp.add(Role.TOB_MAGE);
+		}
+		return comp;
+	}
+
+	/** True when this activity's composition is fixed by party size (i.e. ToB). */
+	public boolean hasFixedComposition()
+	{
+		return this == THEATRE_OF_BLOOD;
+	}
+
+	/** True when this activity uses roles (i.e. Theatre of Blood / Chambers of Xeric). */
+	public boolean hasRoles()
+	{
+		return !roles().isEmpty();
 	}
 
 	/**

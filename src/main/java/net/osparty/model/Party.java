@@ -60,6 +60,22 @@ public class Party
 	/** The host's account type name (NORMAL / IRONMAN / ...). */
 	private String hostAccountType;
 
+	/**
+	 * The full team composition the host wants, as {@link Role#getId()} values (a
+	 * multiset — two "Range" slots appear twice). Empty/null for activities
+	 * without roles.
+	 */
+	private List<String> requiredRoles;
+
+	/** The role id the host fills themselves, or null when roles don't apply. */
+	private String hostRole;
+
+	/**
+	 * Roles still open, as role ids (kept live by the host via heartbeat as members
+	 * join/leave). Applicants choose one of these when applying.
+	 */
+	private List<String> neededRoles;
+
 	public boolean isFull()
 	{
 		return capacity > 0 && size >= capacity;

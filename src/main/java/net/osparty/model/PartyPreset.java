@@ -1,5 +1,6 @@
 package net.osparty.model;
 
+import java.util.List;
 import lombok.Data;
 
 /**
@@ -24,4 +25,8 @@ public class PartyPreset
 	private boolean includeLayout;
 	private boolean hardMode;
 	private int invocation;
+	/** Saved team composition, as role ids; null for non-role activities. */
+	private List<String> requiredRoles;
+	/** Saved host role id; null for non-role activities. */
+	private String hostRole;
 }
