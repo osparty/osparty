@@ -2,6 +2,7 @@ package net.osparty;
 
 import net.osparty.api.PartyApiClient;
 import net.osparty.api.PartyService;
+import net.osparty.combat.CoxLayout;
 import net.osparty.combat.DefenceTracker;
 import net.osparty.model.Activity;
 import net.osparty.model.Applicant;
@@ -35,6 +36,7 @@ import net.runelite.api.GameState;
 import net.runelite.api.Player;
 import net.runelite.api.Skill;
 import net.runelite.api.Tile;
+import net.runelite.api.Varbits;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
@@ -136,6 +138,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private PluginManager pluginManager;
 
 	@Inject
+	private ConfigManager configManager;
+
+	@Inject
 	private OSPartyConfig config;
 
 	private OSPartyPanel panel;
@@ -195,6 +200,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private volatile int world;
 	/** Currently loaded map regions (for location-aware activity suggestions). */
 	private volatile int[] mapRegions;
+	/** The current CoX raid layout (readable string), or null when not in a raid. */
+	private volatile String coxLayout;
 	/** Local player's account type, or null when not logged in. */
 	private volatile AccountType accountType;
 	/** Whether we've checked for a resumable hosted party since this login. */
@@ -282,7 +289,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		panel = new OSPartyPanel(partyService, config, this::getPlayerName, this,
 			this::getFriendsChatOwner, this::getCurrentWorld, itemManager, liveParty, runeWatchService,
 			this::getAccountType, killcountService, skillIconManager, this::hopTo, this::getMapRegions,
-			this::regionForWorld);
+			this::regionForWorld, this::getCoxLayout, configManager);
 
 		navButton = NavigationButton.builder()
 			.tooltip("OSParty")
@@ -379,6 +386,20 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		FriendsChatManager fcm = client.getFriendsChatManager();
 		friendsChatOwner = fcm != null ? fcm.getOwner() : null;
+
+		// Read the CoX raid layout once per raid (the scene scan is comparatively
+		// heavy); clear it when we leave the raid so a new raid recomputes.
+		if (client.getVarbitValue(Varbits.IN_RAID) == 1)
+		{
+			if (coxLayout == null)
+			{
+				coxLayout = CoxLayout.compute(client);
+			}
+		}
+		else if (coxLayout != null)
+		{
+			coxLayout = null;
+		}
 
 		// Drive any in-progress world hop (needs the client thread).
 		processQuickHop();
@@ -606,6 +627,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	public int[] getMapRegions()
 	{
 		return mapRegions;
+	}
+
+	/** @return the current CoX raid layout string, or null when not in a raid. Safe from the EDT. */
+	public String getCoxLayout()
+	{
+		return coxLayout;
 	}
 
 	/**

@@ -139,14 +139,15 @@ public class PartyApiClient implements PartyService
 	 * stale. PUT (not POST) so it isn't caught by the create rate limit.
 	 */
 	@Override
-	public void heartbeat(String partyId, int size, int world, Consumer<Party> onSuccess, Consumer<Throwable> onError)
+	public void heartbeat(String partyId, int size, int world, String layout,
+		Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
 		HttpUrl.Builder url = baseUrl()
 			.addPathSegment("parties")
 			.addPathSegment(partyId)
 			.addPathSegment("heartbeat");
-		// Report the live occupancy and host world so search reflects who's actually
-		// in the party and where the host is.
+		// Report the live occupancy, host world and (CoX) raid layout so search
+		// reflects who's in the party, where the host is, and the raid rotation.
 		if (size > 0)
 		{
 			url.addQueryParameter("size", Integer.toString(size));
@@ -154,6 +155,10 @@ public class PartyApiClient implements PartyService
 		if (world > 0)
 		{
 			url.addQueryParameter("world", Integer.toString(world));
+		}
+		if (layout != null && !layout.isEmpty())
+		{
+			url.addQueryParameter("layout", layout);
 		}
 
 		RequestBody body = RequestBody.create(JSON, "{}");

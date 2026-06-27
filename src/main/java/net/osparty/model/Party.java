@@ -18,6 +18,12 @@ public class Party
 	private int size;
 	private int capacity;
 	private String world;
+	/** Live CoX raid layout the host is advertising, or null. */
+	private String layout;
+	/** Raid run as the harder variant: CoX CM / ToB HMT. */
+	private boolean hardMode;
+	/** ToA invocation level (0 = unset/normal), shown in the title as "ToA (n)". */
+	private int invocation;
 	private long createdAt;
 
 	/**

@@ -657,6 +657,8 @@ class SearchPanel extends JPanel
 			sb.append(party.getId()).append(':').append(party.getSize())
 				.append('/').append(party.getCapacity())
 				.append('w').append(party.getWorld() == null ? "" : party.getWorld())
+				.append('L').append(party.getLayout() == null ? "" : party.getLayout())
+				.append('d').append(party.isHardMode() ? "h" : "").append(party.getInvocation())
 				.append('@').append(ageMinutes(now, party.getCreatedAt())).append(';');
 		}
 		return sb.toString();
@@ -705,8 +707,11 @@ class SearchPanel extends JPanel
 		JPanel info = new JPanel(new GridLayout(0, 1));
 		info.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 
-		// Activity name first, since the list now mixes activities.
-		JLabel activityLabel = new JLabel(activity != null ? activity.getDisplayName() : party.getActivity());
+		// Activity name first, since the list now mixes activities. The title reflects
+		// the raid difficulty (CoX CM / HMT / ToA invocation) when set.
+		JLabel activityLabel = new JLabel(activity != null
+			? activity.displayName(party.isHardMode(), party.getInvocation())
+			: party.getActivity());
 		activityLabel.setForeground(Color.WHITE);
 
 		JLabel host = new JLabel(party.getHost() == null ? "Unknown host" : party.getHost());
@@ -765,6 +770,15 @@ class SearchPanel extends JPanel
 			desc.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 			desc.setFont(FontManager.getRunescapeSmallFont());
 			info.add(desc);
+		}
+
+		// CoX raid layout the host is advertising (kept live via heartbeat).
+		if (party.getLayout() != null && !party.getLayout().isEmpty())
+		{
+			JLabel layout = new JLabel("Layout: " + party.getLayout());
+			layout.setForeground(ColorScheme.PROGRESS_INPROGRESS_COLOR);
+			layout.setFont(FontManager.getRunescapeSmallFont());
+			info.add(layout);
 		}
 
 		JButton applyButton = new JButton("Apply");

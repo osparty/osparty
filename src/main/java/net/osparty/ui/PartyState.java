@@ -16,6 +16,8 @@ class PartyState
 {
 	private Party currentParty;
 	private boolean host;
+	/** Host opted to advertise the live CoX raid layout (sent via heartbeat). */
+	private boolean advertiseLayout;
 	private final List<Runnable> listeners = new ArrayList<>();
 
 	Party getCurrentParty()
@@ -26,6 +28,16 @@ class PartyState
 	boolean isHost()
 	{
 		return host;
+	}
+
+	boolean isAdvertiseLayout()
+	{
+		return advertiseLayout;
+	}
+
+	void setAdvertiseLayout(boolean advertiseLayout)
+	{
+		this.advertiseLayout = advertiseLayout;
 	}
 
 	boolean isInParty()
@@ -51,6 +63,7 @@ class PartyState
 	{
 		currentParty = party;
 		host = false;
+		advertiseLayout = false;
 		fire();
 	}
 
@@ -66,6 +79,7 @@ class PartyState
 	{
 		currentParty = null;
 		host = false;
+		advertiseLayout = false;
 		fire();
 	}
 

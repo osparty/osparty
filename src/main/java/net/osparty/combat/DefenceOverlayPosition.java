@@ -14,8 +14,6 @@ import lombok.RequiredArgsConstructor;
 public enum DefenceOverlayPosition
 {
 	ABOVE_HP_BAR("Above HP bar", 1.0, 55, 0),
-	BESIDE_HP_BAR("Beside HP bar", 1.0, 30, 32),
-	BELOW_HP_BAR("Below HP bar", 1.0, 15, 0),
 	CENTRE_OF_NPC("Centre of NPC", 0.5, 0, 0),
 	AT_NPC_FEET("At NPC feet", 0.0, 0, 0);
 

@@ -91,6 +91,7 @@ class CurrentPanel extends JPanel
 	private final IntSupplier currentWorld;
 	private final IntConsumer worldHopper;
 	private final Supplier<String> friendsChatOwnerSupplier;
+	private final Supplier<String> coxLayoutSupplier;
 
 	/** Skills in the in-game skills-tab layout (row-major, 3 columns), total last. */
 	private static final Skill[] SKILL_LAYOUT = {
@@ -138,7 +139,7 @@ class CurrentPanel extends JPanel
 		HostApplicationHandler hostApplicationHandler, PartyState partyState, ItemManager itemManager,
 		LiveParty liveParty, RuneWatchService runeWatch, KillcountService killcounts,
 		SkillIconManager skillIcons, IntSupplier currentWorld, IntConsumer worldHopper,
-		Supplier<String> friendsChatOwnerSupplier)
+		Supplier<String> friendsChatOwnerSupplier, Supplier<String> coxLayoutSupplier)
 	{
 		this.partyService = partyService;
 		this.playerNameSupplier = playerNameSupplier;
@@ -152,6 +153,7 @@ class CurrentPanel extends JPanel
 		this.currentWorld = currentWorld;
 		this.worldHopper = worldHopper;
 		this.friendsChatOwnerSupplier = friendsChatOwnerSupplier;
+		this.coxLayoutSupplier = coxLayoutSupplier;
 
 		setLayout(new BorderLayout(0, 8));
 		setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
@@ -196,7 +198,7 @@ class CurrentPanel extends JPanel
 			if (partyState.isHost() && partyState.getCurrentParty() != null)
 			{
 				partyService.heartbeat(partyState.getCurrentParty().getId(), currentPartySize(),
-					currentWorld.getAsInt(), ok -> { }, err -> { });
+					currentWorld.getAsInt(), currentLayout(), ok -> { }, err -> { });
 			}
 		}).start();
 
@@ -213,6 +215,21 @@ class CurrentPanel extends JPanel
 		int count = (int) liveParty.roster().stream()
 			.filter(m -> m.getStatus() != Status.PENDING).count();
 		return Math.max(1, count);
+	}
+
+	/**
+	 * The live CoX raid layout to advertise, or null. Only when we host a Chambers
+	 * of Xeric party and opted in; the supplier itself is null outside a raid.
+	 */
+	private String currentLayout()
+	{
+		Party party = partyState.getCurrentParty();
+		if (party == null || !partyState.isHost() || !partyState.isAdvertiseLayout()
+			|| !"cox".equals(party.getActivity()))
+		{
+			return null;
+		}
+		return coxLayoutSupplier.get();
 	}
 
 	void refresh()
@@ -234,7 +251,9 @@ class CurrentPanel extends JPanel
 
 		boolean host = partyState.isHost();
 		Activity activity = Activity.fromId(party.getActivity());
-		String activityName = activity != null ? activity.getDisplayName() : party.getActivity();
+		String activityName = activity != null
+			? activity.displayName(party.isHardMode(), party.getInvocation())
+			: party.getActivity();
 
 		JLabel header = new JLabel(host
 			? "Your " + activityName + " party"
@@ -253,7 +272,8 @@ class CurrentPanel extends JPanel
 		if (host && admitted > 0 && admitted != lastReportedSize)
 		{
 			lastReportedSize = admitted;
-			partyService.heartbeat(party.getId(), admitted, currentWorld.getAsInt(), ok -> { }, err -> { });
+			partyService.heartbeat(party.getId(), admitted, currentWorld.getAsInt(), currentLayout(),
+				ok -> { }, err -> { });
 		}
 
 		StringBuilder spots = new StringBuilder();

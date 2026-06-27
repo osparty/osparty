@@ -25,6 +25,7 @@ import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingConstants;
+import net.runelite.client.config.ConfigManager;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.SkillIconManager;
 import net.runelite.client.ui.ColorScheme;
@@ -59,7 +60,8 @@ public class OSPartyPanel extends PluginPanel
 		IntSupplier worldSupplier, ItemManager itemManager, LiveParty liveParty,
 		RuneWatchService runeWatchService, Supplier<AccountType> accountTypeSupplier,
 		KillcountService killcountService, SkillIconManager skillIconManager, IntConsumer worldHopper,
-		Supplier<int[]> mapRegionsSupplier, IntFunction<WorldRegion> worldRegionResolver)
+		Supplier<int[]> mapRegionsSupplier, IntFunction<WorldRegion> worldRegionResolver,
+		Supplier<String> coxLayoutSupplier, ConfigManager configManager)
 	{
 		super(false);
 
@@ -75,10 +77,10 @@ public class OSPartyPanel extends PluginPanel
 			friendsChatOwnerSupplier, worldSupplier, partyState, liveParty, accountTypeSupplier,
 			mapRegionsSupplier, worldRegionResolver);
 		CreatePanel createPanel = new CreatePanel(partyService, config, playerNameSupplier, partyState, liveParty,
-			accountTypeSupplier, mapRegionsSupplier);
+			accountTypeSupplier, mapRegionsSupplier, coxLayoutSupplier, configManager);
 		CurrentPanel currentPanel = new CurrentPanel(partyService, playerNameSupplier,
 			hostApplicationHandler, partyState, itemManager, liveParty, runeWatchService, killcountService,
-			skillIconManager, worldSupplier, worldHopper, friendsChatOwnerSupplier);
+			skillIconManager, worldSupplier, worldHopper, friendsChatOwnerSupplier, coxLayoutSupplier);
 
 		JPanel display = new JPanel(new BorderLayout());
 		display.setBackground(ColorScheme.DARK_GRAY_COLOR);

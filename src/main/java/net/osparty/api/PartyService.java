@@ -30,9 +30,11 @@ public interface PartyService
 	 * and report the current live member count and the host's current {@code world}
 	 * so search results show the real occupancy and location (the API only tracks
 	 * the ad; membership and the host's whereabouts are peer-to-peer). A non-positive
-	 * {@code size}/{@code world} is treated as "unknown" and left unchanged.
+	 * {@code size}/{@code world} is treated as "unknown" and left unchanged, as is a
+	 * null/blank {@code layout} (the live CoX raid layout, advertised by the host).
 	 */
-	void heartbeat(String partyId, int size, int world, Consumer<Party> onSuccess, Consumer<Throwable> onError);
+	void heartbeat(String partyId, int size, int world, String layout,
+		Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
 	/** Submit an application for the logged in player to the given party. */
 	void applyToParty(String partyId, String player, Consumer<Party> onSuccess, Consumer<Throwable> onError);

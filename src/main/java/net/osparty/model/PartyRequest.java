@@ -40,4 +40,10 @@ public class PartyRequest
 
 	/** The host's account type name, for display on the ad. */
 	private String hostAccountType;
+
+	/** Run the harder variant (CoX CM / ToB HMT); changes the title. */
+	private boolean hardMode;
+
+	/** ToA invocation level (0 = unset); changes the title to "ToA (n)". */
+	private int invocation;
 }

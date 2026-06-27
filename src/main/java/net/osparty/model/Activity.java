@@ -59,6 +59,39 @@ public enum Activity
 		return hardModeLabel != null;
 	}
 
+	/** The CM/HMT title for the hard-mode toggle (Chambers of Xeric / Theatre of Blood). */
+	public String getHardModeName()
+	{
+		switch (this)
+		{
+			case CHAMBERS_OF_XERIC:
+				return "CoX CM";
+			case THEATRE_OF_BLOOD:
+				return "HMT";
+			default:
+				return displayName;
+		}
+	}
+
+	/** True for ToA, where difficulty is an invocation level rather than a CM/HM toggle. */
+	public boolean usesInvocation()
+	{
+		return this == TOMBS_OF_AMASCUT;
+	}
+
+	/**
+	 * @return the title to show for an ad: the CM/HMT name when {@code hardMode} is
+	 * set, or "ToA (level)" when an {@code invocation} is given, else the plain name.
+	 */
+	public String displayName(boolean hardMode, int invocation)
+	{
+		if (usesInvocation())
+		{
+			return invocation > 0 ? "ToA (" + invocation + ")" : displayName;
+		}
+		return hardMode && hasHardMode() ? getHardModeName() : displayName;
+	}
+
 	@Override
 	public String toString()
 	{
