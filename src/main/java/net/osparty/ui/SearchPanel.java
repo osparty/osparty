@@ -136,6 +136,8 @@ class SearchPanel extends JPanel
 	/** Collapsible content: the role tabs plus the separate learner mark. */
 	private final JPanel roleContent = new JPanel();
 	private final Set<WorldRegion> selectedRegions = EnumSet.allOf(WorldRegion.class);
+	/** Keeps a handle to each region checkbox so Reset can sync their visual state. */
+	private final Map<WorldRegion, JCheckBox> regionCheckboxes = new HashMap<>();
 	private boolean regionsExpanded;
 	private final JButton regionToggle = new JButton();
 	private final JPanel regionContent = new JPanel();
@@ -744,6 +746,7 @@ class SearchPanel extends JPanel
 				updateRegionToggleText();
 				filtersChanged();
 			});
+			regionCheckboxes.put(region, check);
 			grid.add(check);
 		}
 
@@ -1973,6 +1976,11 @@ class SearchPanel extends JPanel
 		for (WorldRegion r : KNOWN_REGIONS)
 		{
 			selectedRegions.add(r);
+			JCheckBox cb = regionCheckboxes.get(r);
+			if (cb != null)
+			{
+				cb.setSelected(true);
+			}
 		}
 		lootFilter.setSelectedIndex(0);        // "Any loot"
 		ironmanFilter.setSelected(false);
