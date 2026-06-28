@@ -69,7 +69,7 @@ class CreatePanel extends JPanel
 	private final Supplier<int[]> mapRegionsSupplier;
 	private final Supplier<String> coxLayoutSupplier;
 	private final ConfigManager configManager;
-	private final Gson gson = new Gson();
+	private final Gson gson;
 
 	private final JComboBox<Activity> activityDropdown = new JComboBox<>(Activity.values());
 	/** The activity we're currently standing near (suggested at the top of the list). */
@@ -113,8 +113,10 @@ class CreatePanel extends JPanel
 
 	CreatePanel(PartyService partyService, OSPartyConfig config, Supplier<String> playerNameSupplier,
 		PartyState partyState, LiveParty liveParty, Supplier<AccountType> accountTypeSupplier,
-		Supplier<int[]> mapRegionsSupplier, Supplier<String> coxLayoutSupplier, ConfigManager configManager)
+		Supplier<int[]> mapRegionsSupplier, Supplier<String> coxLayoutSupplier, ConfigManager configManager,
+		Gson gson)
 	{
+		this.gson = gson;
 		this.partyService = partyService;
 		this.config = config;
 		this.playerNameSupplier = playerNameSupplier;

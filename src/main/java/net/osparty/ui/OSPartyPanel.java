@@ -6,6 +6,7 @@ import net.osparty.KillcountService;
 import net.osparty.api.PartyService;
 import net.osparty.model.Party;
 import net.osparty.party.LiveParty;
+import com.google.gson.Gson;
 import net.osparty.runewatch.RuneWatchService;
 import java.awt.BorderLayout;
 import java.awt.Cursor;
@@ -60,7 +61,7 @@ public class OSPartyPanel extends PluginPanel
 		RuneWatchService runeWatchService, Supplier<AccountType> accountTypeSupplier,
 		KillcountService killcountService, SkillIconManager skillIconManager, IntConsumer worldHopper,
 		Supplier<int[]> mapRegionsSupplier, IntFunction<WorldRegion> worldRegionResolver,
-		Supplier<String> coxLayoutSupplier, ConfigManager configManager)
+		Supplier<String> coxLayoutSupplier, ConfigManager configManager, Gson gson)
 	{
 		super(false);
 
@@ -76,7 +77,7 @@ public class OSPartyPanel extends PluginPanel
 			friendsChatOwnerSupplier, worldSupplier, partyState, liveParty, accountTypeSupplier,
 			mapRegionsSupplier, worldRegionResolver, killcountService, configManager);
 		CreatePanel createPanel = new CreatePanel(partyService, config, playerNameSupplier, partyState, liveParty,
-			accountTypeSupplier, mapRegionsSupplier, coxLayoutSupplier, configManager);
+			accountTypeSupplier, mapRegionsSupplier, coxLayoutSupplier, configManager, gson);
 		CurrentPanel currentPanel = new CurrentPanel(partyService, playerNameSupplier,
 			hostApplicationHandler, partyState, itemManager, liveParty, runeWatchService, killcountService,
 			skillIconManager, worldSupplier, worldHopper, friendsChatOwnerSupplier, coxLayoutSupplier);
