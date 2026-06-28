@@ -15,12 +15,10 @@ import net.runelite.client.party.messages.PartyMemberMessage;
 @EqualsAndHashCode(callSuper = true)
 public class FcRequestMessage extends PartyMemberMessage
 {
-	/** The member this request is aimed at; ignored by everyone else. */
+	/** Ignored by everyone but this member. */
 	private long targetMemberId;
 
-	/** Display name of the host making the request. */
 	private String hostName;
 
-	/** Owner (name) of the friends chat to join. */
 	private String friendsChat;
 }

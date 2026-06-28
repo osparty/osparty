@@ -65,19 +65,14 @@ import net.runelite.client.util.ImageUtil;
 /**
  * "Current" tab: the live party the player is in. The roster, statuses and each
  * member's gear/inventory/stats come from the peer-to-peer party
- * ({@link LiveParty}); the API only advertised the room. Click a member to
- * inspect their Skills / Gear / Inventory. The host additionally sees pending
- * applicants with Admit / Decline and can Kick admitted members or Disband; a
- * member gets Leave.
+ * ({@link LiveParty}); the API only advertised the room.
  */
 class CurrentPanel extends JPanel
 {
-	/** Inspection sub-tabs shown when a member is expanded. */
 	private static final int TAB_SKILLS = 0;
 	private static final int TAB_GEAR = 1;
 	private static final int TAB_INVENTORY = 2;
 
-	/** Size of an item icon tile in the gear/inventory views. */
 	private static final Dimension SLOT_SIZE = new Dimension(36, 32);
 
 	private final PartyService partyService;
@@ -124,15 +119,10 @@ class CurrentPanel extends JPanel
 	private final JPanel content = new JPanel();
 	private final JLabel statusLabel = new JLabel();
 
-	/** Member ids whose inspection view is currently expanded. */
 	private final Set<Long> expanded = new HashSet<>();
-	/** Selected inspection sub-tab per expanded member (defaults to Skills). */
 	private final Map<Long, Integer> detailTab = new HashMap<>();
-	/** Pending applicants the host has already been notified about (overlay/chat). */
 	private final Set<Long> notifiedPending = new HashSet<>();
-	/** Last occupancy we reported to the ad, to avoid redundant heartbeats. */
 	private int lastReportedSize = -1;
-	/** Last CoX layout we reported, so we push an extra heartbeat when it changes. */
 	private String lastReportedLayout;
 	/** memberId -> epoch millis until which the "Request FC" button is on cooldown. */
 	private final Map<Long, Long> fcRequestCooldown = new HashMap<>();
@@ -224,7 +214,6 @@ class CurrentPanel extends JPanel
 		refresh();
 	}
 
-	/** The number of admitted members (host + members), as the host sees it. */
 	private int currentPartySize()
 	{
 		if (!liveParty.isConnected())
@@ -236,10 +225,6 @@ class CurrentPanel extends JPanel
 		return Math.max(1, count);
 	}
 
-	/**
-	 * The live CoX raid layout to advertise, or null. Only when we host a Chambers
-	 * of Xeric party and opted in; the supplier itself is null outside a raid.
-	 */
 	private String currentLayout()
 	{
 		Party party = partyState.getCurrentParty();
@@ -251,10 +236,6 @@ class CurrentPanel extends JPanel
 		return coxLayoutSupplier.get();
 	}
 
-	/**
-	 * The still-open roles to advertise via the heartbeat (host + role activity),
-	 * comma-separated, or null. Computed live from the roster (who's filling what).
-	 */
 	private String currentNeededRolesParam()
 	{
 		Party party = partyState.getCurrentParty();
@@ -275,11 +256,6 @@ class CurrentPanel extends JPanel
 		return String.join(",", needed);
 	}
 
-	/**
-	 * A "Needs: North freeze, Range x2" summary of the still-open roles, or null
-	 * when the activity has no roles / nothing's open. The host computes this live
-	 * from the roster; members read the advertised {@code neededRoles}.
-	 */
 	private String neededRolesText(Activity activity, Party party)
 	{
 		if (activity == null || !activity.hasRoles())
@@ -376,8 +352,11 @@ class CurrentPanel extends JPanel
 			content.add(needsLabel);
 		}
 
-		// Party type tags: loot rule, ironman-only, private.
 		List<String> tags = new ArrayList<>();
+		if (party.isLearnerRaid())
+		{
+			tags.add(party.learnerLabel());
+		}
 		LootRule loot = LootRule.fromName(party.getLootRule());
 		if (loot != LootRule.UNSPECIFIED)
 		{
@@ -396,7 +375,6 @@ class CurrentPanel extends JPanel
 			content.add(subLabel(String.join(", ", tags)));
 		}
 
-		// Host can share the invite code / passphrase to invite directly.
 		if (host && party.getInviteCode() != null)
 		{
 			String inviteCode = party.getInviteCode();
@@ -469,7 +447,6 @@ class CurrentPanel extends JPanel
 			}
 		}
 
-		// Keep the in-game applicant overlay in sync with the pending list.
 		if (host && roster != null)
 		{
 			updatePendingApplicants(roster, activity);
@@ -505,10 +482,6 @@ class CurrentPanel extends JPanel
 		return false;
 	}
 
-	/**
-	 * Push the full pending-applicant list to the in-game overlay (with killcounts
-	 * filled in), and chat-ping each one the first time it appears.
-	 */
 	private void updatePendingApplicants(List<RosterMember> roster, Activity activity)
 	{
 		List<Applicant> pending = new ArrayList<>();
@@ -530,7 +503,6 @@ class CurrentPanel extends JPanel
 		hostApplicationHandler.setPendingApplicants(pending, activity);
 	}
 
-	/** Fill an applicant's killcount from the hiscores cache (looking up if needed). */
 	private void fillKillcount(Applicant applicant, Activity activity)
 	{
 		if (applicant.getKillCount() >= 0 || activity == null || applicant.getName() == null)
@@ -560,11 +532,6 @@ class CurrentPanel extends JPanel
 		entry.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
 		entry.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-		// A vertical stack of lines:
-		//   1. name
-		//   2. world  friends-chat indicator
-		//   3. action buttons (Admit/Decline/Kick, Hop to, Request FC)
-		//   4. expand/collapse chevron
 		JPanel stack = new JPanel();
 		stack.setLayout(new BoxLayout(stack, BoxLayout.Y_AXIS));
 		stack.setBackground(ColorScheme.DARKER_GRAY_COLOR);
@@ -606,6 +573,17 @@ class CurrentPanel extends JPanel
 				roleLabel.setFont(FontManager.getRunescapeSmallFont());
 				addLine(stack, roleLabel, 16);
 			}
+		}
+
+		boolean memberLearner = member.isLocal()
+			? liveParty.isLocalLearner()
+			: (member.getData() != null && member.getData().isLearner());
+		if (memberLearner && activity != null && activity.isRaid())
+		{
+			JLabel learnerLabel = new JLabel("Learner");
+			learnerLabel.setForeground(ColorScheme.BRAND_ORANGE);
+			learnerLabel.setFont(FontManager.getRunescapeSmallFont());
+			addLine(stack, learnerLabel, 16);
 		}
 
 		// Line 2: world + friends-chat indicator.
@@ -651,7 +629,6 @@ class CurrentPanel extends JPanel
 		return entry;
 	}
 
-	/** Add one left-aligned, height-capped line to a vertical BoxLayout stack. */
 	private void addLine(JPanel stack, JComponent content, int indent)
 	{
 		JPanel row = cappedPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
@@ -662,7 +639,6 @@ class CurrentPanel extends JPanel
 		stack.add(row);
 	}
 
-	/** A click handler that toggles a member's expanded inspection view. */
 	private MouseAdapter expandOnClick(RosterMember member)
 	{
 		return new MouseAdapter()
@@ -680,7 +656,6 @@ class CurrentPanel extends JPanel
 		};
 	}
 
-	/** Host/member action buttons: Admit/Decline/Kick, Hop to, and Request FC. */
 	private JComponent buildActionsRow(Activity activity, RosterMember member, boolean host, String hostName)
 	{
 		if (member.isLocal())
@@ -752,10 +727,9 @@ class CurrentPanel extends JPanel
 	}
 
 	/**
-	 * The world / friends-chat indicator row: the member's world, and a check/cross
-	 * showing whether they're in the <b>host's own</b> friends chat (the chat owned
-	 * by the host, matched on the host's name). Buttons live on the actions row.
-	 * @return the row, or {@code null} when there's nothing to show.
+	 * The world / friends-chat indicator row: a check/cross shows whether the member
+	 * is in the <b>host's own</b> friends chat (the chat owned by the host, matched
+	 * on the host's name), or {@code null} when there's nothing to show.
 	 */
 	private JComponent buildMemberMeta(RosterMember member, String hostName)
 	{
@@ -779,7 +753,6 @@ class CurrentPanel extends JPanel
 
 		if (showFc)
 		{
-			// The friends-chat channel logo, then a check/cross for membership.
 			if (StatusIcons.FRIENDS_CHAT != null)
 			{
 				JLabel fcLogo = new JLabel(StatusIcons.FRIENDS_CHAT);
@@ -809,10 +782,6 @@ class CurrentPanel extends JPanel
 		return name.replace(' ', ' ').trim();
 	}
 
-	/**
-	 * The expanded inspection view: a Skills / Gear / Inventory sub-tab strip plus
-	 * the selected view's body, built from the member's live self-report.
-	 */
 	private JComponent buildDetail(Activity activity, RosterMember member)
 	{
 		PlayerUpdate data = member.getData();
@@ -878,7 +847,6 @@ class CurrentPanel extends JPanel
 		JPanel panel = new JPanel(new BorderLayout(0, 6));
 		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 
-		// The in-game skills grid (3 columns), each cell a skill icon + level.
 		JPanel grid = new JPanel(new GridLayout(0, 3, 1, 1));
 		grid.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		Map<String, Integer> levels = stats.getStats();
@@ -891,7 +859,6 @@ class CurrentPanel extends JPanel
 		}
 		panel.add(grid, BorderLayout.NORTH);
 
-		// Total level (with icon) below the grid, then combat + KC.
 		JPanel bottom = new JPanel(new BorderLayout(0, 4));
 		bottom.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		bottom.add(totalRow(total), BorderLayout.NORTH);
@@ -1011,7 +978,6 @@ class CurrentPanel extends JPanel
 		return detail;
 	}
 
-	/** Worn equipment laid out like the in-game equipment screen (3-wide). */
 	private JPanel buildEquipment(Applicant stats)
 	{
 		int[] equip = stats.getEquipment();
@@ -1050,7 +1016,6 @@ class CurrentPanel extends JPanel
 		grid.add(itemSlot(equip[slot.ordinal()]), c);
 	}
 
-	/** The 28-slot inventory grid (4 wide), in game order. */
 	private JPanel buildInventory(Applicant stats)
 	{
 		int[] inv = stats.getInventory();
@@ -1071,7 +1036,6 @@ class CurrentPanel extends JPanel
 		return center(grid);
 	}
 
-	/** A single fixed-size item tile; resolves a real icon when {@code itemId > 0}. */
 	private JLabel itemSlot(int itemId)
 	{
 		JLabel slot = new JLabel();
@@ -1111,6 +1075,7 @@ class CurrentPanel extends JPanel
 		applicant.setPbSeconds(update.getPbSeconds());
 		applicant.setAccountType(update.getAccountType());
 		applicant.setRole(update.getRole());
+		applicant.setLearner(update.isLearner());
 		return applicant;
 	}
 
@@ -1165,7 +1130,6 @@ class CurrentPanel extends JPanel
 		refresh();
 	}
 
-	/** The ready-check control: Start when idle, Ready up when one's running, else status. */
 	private JComponent buildReadyCheck()
 	{
 		LiveParty.ReadyCheckStatus status = liveParty.readyCheck();
@@ -1281,7 +1245,6 @@ class CurrentPanel extends JPanel
 		return button;
 	}
 
-	/** Put the player's ironman badge (if any) before their name. */
 	private void applyAccountIcon(JLabel label, PlayerUpdate data)
 	{
 		if (data == null)
@@ -1317,7 +1280,6 @@ class CurrentPanel extends JPanel
 		}
 	}
 
-	/** A generic red warning badge (e.g. for a non-ironman in an ironman-only party). */
 	private JLabel warnBadge(String text)
 	{
 		JLabel label = new JLabel("(!) " + text);
@@ -1327,7 +1289,6 @@ class CurrentPanel extends JPanel
 		return label;
 	}
 
-	/** A red RuneWatch / WDR warning shown under a flagged member's name. */
 	private JLabel runeWatchBadge(RuneWatchCase flagged)
 	{
 		String reason = flagged.getReason() == null || flagged.getReason().isEmpty()

@@ -11,7 +11,7 @@ import lombok.Data;
 @Data
 public class PartyPreset
 {
-	/** Favourite name; null/empty for the implicit "last used" preset. */
+	/** null/empty marks the implicit "last used" preset. */
 	private String name;
 	private String activityId;
 	private int capacity;
@@ -25,8 +25,8 @@ public class PartyPreset
 	private boolean includeLayout;
 	private boolean hardMode;
 	private int invocation;
-	/** Saved team composition, as role ids; null for non-role activities. */
 	private List<String> requiredRoles;
-	/** Saved host role id; null for non-role activities. */
 	private String hostRole;
+	private boolean learner;
+	private boolean teacher;
 }

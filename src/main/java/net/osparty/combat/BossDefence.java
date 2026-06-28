@@ -85,7 +85,6 @@ public enum BossDefence
 		this.minDef = minDef;
 	}
 
-	/** @return the entry whose name matches {@code name}, or null if untracked. */
 	public static BossDefence forName(String name)
 	{
 		if (name == null)

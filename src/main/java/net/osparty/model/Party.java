@@ -18,66 +18,59 @@ public class Party
 	private int size;
 	private int capacity;
 	private String world;
-	/** Live CoX raid layout the host is advertising, or null. */
 	private String layout;
-	/** Raid run as the harder variant: CoX CM / ToB HMT. */
 	private boolean hardMode;
-	/** ToA invocation level (0 = unset/normal), shown in the title as "ToA (n)". */
 	private int invocation;
 	private long createdAt;
 
 	/**
-	 * RuneLite party passphrase for the live peer-to-peer room backing this ad.
-	 * The API only advertises it; the actual roster/live data is exchanged P2P.
-	 * May be {@code null} for legacy/seed ads with no live room.
+	 * Live RuneLite P2P room backing this ad; roster/live data is exchanged P2P,
+	 * not via the API. {@code null} for legacy/seed ads with no live room.
 	 */
 	private String passphrase;
 
-	/** Current members by player name; the host is the first entry. */
+	/** Host is the first entry. */
 	private List<String> members;
 
-	/** Minimum kills required to apply. 0 means no requirement. */
 	private int minKillCount;
-
-	/**
-	 * Minimum kills of the activity's harder variant (CM/HM/Expert) required to
-	 * apply. 0 means no requirement; only meaningful for raids.
-	 */
 	private int minHardModeKillCount;
-
-	/** Private parties aren't listed in search — joined via {@link #inviteCode}. */
 	private boolean privateParty;
-
-	/** Short code used to find this party (shown to the host to share). */
 	private String inviteCode;
-
-	/** Loot rule: FFA / SPLIT / UNSPECIFIED (see {@link LootRule}). */
 	private String lootRule;
-
-	/** When true, only ironman accounts should join. */
 	private boolean ironmanOnly;
-
-	/** The host's account type name (NORMAL / IRONMAN / ...). */
 	private String hostAccountType;
 
-	/**
-	 * The full team composition the host wants, as {@link Role#getId()} values (a
-	 * multiset — two "Range" slots appear twice). Empty/null for activities
-	 * without roles.
-	 */
+	/** A multiset of {@link Role#getId()} values, so a doubled-up slot appears twice. */
 	private List<String> requiredRoles;
 
-	/** The role id the host fills themselves, or null when roles don't apply. */
 	private String hostRole;
 
-	/**
-	 * Roles still open, as role ids (kept live by the host via heartbeat as members
-	 * join/leave). Applicants choose one of these when applying.
-	 */
+	/** Kept live by the host via heartbeat as members join/leave. */
 	private List<String> neededRoles;
+
+	private boolean learner;
+	private boolean teacher;
 
 	public boolean isFull()
 	{
 		return capacity > 0 && size >= capacity;
+	}
+
+	public boolean isLearnerRaid()
+	{
+		return learner || teacher;
+	}
+
+	public String learnerLabel()
+	{
+		if (!isLearnerRaid())
+		{
+			return null;
+		}
+		if (teacher && learner)
+		{
+			return "Learner raid (teacher + learner)";
+		}
+		return teacher ? "Learner raid (teacher)" : "Learner raid (learner)";
 	}
 }

@@ -12,8 +12,7 @@ import net.runelite.client.ui.overlay.components.TitleComponent;
 
 /**
  * A small on-screen notification shown to every party member while a ready check
- * is running: who started it, how many have readied, and the countdown. Renders
- * nothing when there's no active check.
+ * is running: who started it, how many have readied, and the countdown.
  */
 public class ReadyCheckOverlay extends OverlayPanel
 {

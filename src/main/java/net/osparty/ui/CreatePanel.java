@@ -57,7 +57,6 @@ import net.runelite.client.ui.FontManager;
  */
 class CreatePanel extends JPanel
 {
-	/** ConfigManager keys for the implicit "last used" preset and the favourites list. */
 	private static final String KEY_LAST_PRESET = "lastPreset";
 	private static final String KEY_FAVOURITES = "favourites";
 
@@ -75,7 +74,6 @@ class CreatePanel extends JPanel
 	private final JComboBox<Activity> activityDropdown = new JComboBox<>(Activity.values());
 	/** The activity we're currently standing near (suggested at the top of the list). */
 	private Activity recommended;
-	/** True while we're programmatically reordering the dropdown. */
 	private boolean rebuildingDropdown;
 	private final JComboBox<LootRule> lootDropdown = new JComboBox<>(LootRule.values());
 	private final JSpinner capacitySpinner;
@@ -83,19 +81,18 @@ class CreatePanel extends JPanel
 	private final JTextArea descriptionArea = new JTextArea(3, 0);
 	private final JCheckBox privateCheck = new JCheckBox("Private (join by code only)");
 	private final JCheckBox ironmanCheck = new JCheckBox("Ironman only");
-	/** Chambers of Xeric only: advertise the scouted raid layout (via heartbeat). */
+	private final JCheckBox learnerCheck = new JCheckBox("Learner");
+	private final JCheckBox teacherCheck = new JCheckBox("Teacher");
+	private JPanel learnerRow;
 	private final JCheckBox includeLayoutCheck = new JCheckBox("Advertise raid layout (in raid)");
 	private JPanel includeLayoutRow;
-	/** CoX/ToB: run the harder variant (CM / HMT); changes the advertised title. */
 	private final JCheckBox hardModeCheck = new JCheckBox();
 	private JPanel hardModeRow;
-	/** ToA: invocation level (0-600); changes the title to "ToA (n)". */
 	private final JSpinner invocationSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 600, 5));
 	private JPanel invocationRow;
 	private final JButton createButton = new JButton("Create party");
 	private final JLabel statusLabel = new JLabel();
 
-	/** Favourites: a dropdown of saved presets, plus save/remove controls. */
 	private final JComboBox<String> favouriteDropdown = new JComboBox<>();
 	private boolean rebuildingFavourites;
 
@@ -104,19 +101,14 @@ class CreatePanel extends JPanel
 	private final JSpinner hardKcSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 100_000, 10));
 	private JPanel hardKcField;
 
-	/** ToB/CoX: the role the host fills, plus a count per role for the team comp. */
 	private final JComboBox<Role> myRoleDropdown = new JComboBox<>();
 	private JPanel rolesSection;
 	private JPanel roleCountsPanel;
 	private final JLabel roleTotalLabel = new JLabel();
-	/** role id -> its count spinner, rebuilt for the current activity & party size. */
 	private final LinkedHashMap<String, JSpinner> roleCountSpinners = new LinkedHashMap<>();
-	/** True while we're programmatically rebuilding/restoring the role controls. */
 	private boolean rebuildingRoles;
 
-	/** Shown in the status line while logged out; cleared once the player logs in. */
 	private static final String LOGIN_HINT = "Log in to create a party.";
-	/** True while a create request is in flight, so the form stays disabled. */
 	private boolean creating;
 
 	CreatePanel(PartyService partyService, OSPartyConfig config, Supplier<String> playerNameSupplier,
@@ -175,6 +167,13 @@ class CreatePanel extends JPanel
 		invocationRow.setVisible(false);
 		add(invocationRow);
 
+		// Learner-raid tagging (raids only): ticking either Learner or Teacher marks
+		// the ad as a learner raid; neither leaves it a normal raid. Shown/hidden by
+		// applyActivityBounds.
+		learnerRow = buildLearnerRow();
+		learnerRow.setVisible(false);
+		add(learnerRow);
+
 		// Roles (ToB/CoX only): the host's own role plus a count per role for the
 		// team composition. Shown/hidden and rebuilt by applyActivityBounds.
 		rolesSection = buildRolesSection();
@@ -184,6 +183,17 @@ class CreatePanel extends JPanel
 		// ToB's composition is fixed by party size, and CoX's Fill count should track
 		// capacity, so rebuild the role controls whenever the party size changes.
 		capacitySpinner.addChangeListener(e -> {
+			Activity activity = (Activity) activityDropdown.getSelectedItem();
+			if (!rebuildingRoles && activity != null && activity.hasRoles())
+			{
+				rebuildRoles(activity);
+				absorbRemainderIntoFill();
+			}
+		});
+
+		// Chambers of Xeric's role split (normal vs CM) changes with the hard-mode
+		// toggle, so rebuild the role controls when it flips.
+		hardModeCheck.addActionListener(e -> {
 			Activity activity = (Activity) activityDropdown.getSelectedItem();
 			if (!rebuildingRoles && activity != null && activity.hasRoles())
 			{
@@ -225,8 +235,7 @@ class CreatePanel extends JPanel
 		});
 		applyActivityBounds();
 
-		// Pre-fill the form with the last settings the player used (remembered across
-		// sessions), so recreating a similar party is a one-click affair.
+		// Pre-fill the form with the last settings the player used (remembered across sessions).
 		applyPreset(loadLastPreset());
 
 		// Suggest the activity we're standing near when the tab opens, and re-check
@@ -273,13 +282,12 @@ class CreatePanel extends JPanel
 	}
 
 	/**
-	 * You can't host a party while logged out (no host name, no passphrase), so
-	 * disable the whole form until the player is logged in.
+	 * The form stays usable while logged out (so presets/favourites can be built);
+	 * only hosting needs a logged-in account, so just the Create button is gated.
 	 */
 	private void updateLoginState()
 	{
 		boolean loggedIn = playerNameSupplier.get() != null;
-		setFormEnabled(loggedIn);
 		createButton.setEnabled(loggedIn && !creating);
 		if (!loggedIn)
 		{
@@ -288,25 +296,6 @@ class CreatePanel extends JPanel
 		else if (LOGIN_HINT.equals(statusLabel.getText()))
 		{
 			setStatus("");
-		}
-	}
-
-	/** Enable/disable every input on the form (the Create button is handled separately). */
-	private void setFormEnabled(boolean enabled)
-	{
-		activityDropdown.setEnabled(enabled);
-		capacitySpinner.setEnabled(enabled);
-		lootDropdown.setEnabled(enabled);
-		minKcSpinner.setEnabled(enabled);
-		hardKcSpinner.setEnabled(enabled);
-		worldField.setEnabled(enabled);
-		descriptionArea.setEnabled(enabled);
-		privateCheck.setEnabled(enabled);
-		ironmanCheck.setEnabled(enabled);
-		myRoleDropdown.setEnabled(enabled);
-		for (JSpinner spinner : roleCountSpinners.values())
-		{
-			spinner.setEnabled(enabled);
 		}
 	}
 
@@ -396,7 +385,37 @@ class CreatePanel extends JPanel
 		return panel;
 	}
 
-	/** Reset the party-size spinner to the configured default, clamped to activity bounds. */
+	private JPanel buildLearnerRow()
+	{
+		JPanel boxes = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+		boxes.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		for (JCheckBox box : new JCheckBox[]{learnerCheck, teacherCheck})
+		{
+			box.setBackground(ColorScheme.DARK_GRAY_COLOR);
+			box.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			box.setFocusPainted(false);
+		}
+		boxes.add(learnerCheck);
+		boxes.add(Box.createHorizontalStrut(12));
+		boxes.add(teacherCheck);
+
+		// Learner and Teacher are mutually exclusive; ticking one clears the other.
+		// Either can still be unticked to leave it a normal raid.
+		learnerCheck.addActionListener(e -> {
+			if (learnerCheck.isSelected())
+			{
+				teacherCheck.setSelected(false);
+			}
+		});
+		teacherCheck.addActionListener(e -> {
+			if (teacherCheck.isSelected())
+			{
+				learnerCheck.setSelected(false);
+			}
+		});
+		return field("Learner raid", boxes);
+	}
+
 	private void applyDefaultCapacity()
 	{
 		// A remembered preset takes precedence over the configured default size.
@@ -472,6 +491,15 @@ class CreatePanel extends JPanel
 			invocationSpinner.setValue(0);
 		}
 
+		// Learner-raid tagging only applies to the three raids.
+		boolean isRaid = activity.isRaid();
+		learnerRow.setVisible(isRaid);
+		if (!isRaid)
+		{
+			learnerCheck.setSelected(false);
+			teacherCheck.setSelected(false);
+		}
+
 		// Roles: a "my role" dropdown + per-role count spinners for ToB/CoX.
 		boolean hasRoles = activity.hasRoles();
 		rolesSection.setVisible(hasRoles);
@@ -484,7 +512,6 @@ class CreatePanel extends JPanel
 		repaint();
 	}
 
-	/** The "my role" dropdown, the per-role count rows, and the assigned/size total. */
 	private JPanel buildRolesSection()
 	{
 		JPanel panel = new JPanel();
@@ -522,7 +549,10 @@ class CreatePanel extends JPanel
 	private void rebuildRoles(Activity activity)
 	{
 		int capacity = (Integer) capacitySpinner.getValue();
-		List<Role> roles = activity.roles();
+		// The role split depends on the difficulty (CoX normal vs CM, ToB vs HMT).
+		boolean hardMode = hardModeCheck.isSelected();
+		List<Role> roles = activity.roles(hardMode);
+		Role fillRole = activity.fillRole(hardMode);
 
 		// "My role" dropdown - the roles the host can be.
 		Role previousMine = (Role) myRoleDropdown.getSelectedItem();
@@ -542,9 +572,9 @@ class CreatePanel extends JPanel
 		}
 		rebuildingRoles = false;
 
-		if (activity.hasFixedComposition())
+		if (activity.hasFixedComposition(hardMode))
 		{
-			// ToB: no spinners - the team make-up is determined by party size.
+			// Normal ToB: no spinners - the team make-up is determined by party size.
 			rebuildingRoles = true;
 			roleCountSpinners.clear();
 			roleCountsPanel.removeAll();
@@ -554,7 +584,7 @@ class CreatePanel extends JPanel
 		}
 		else
 		{
-			// CoX: a count per role, summing to the party size.
+			// CoX (and HMT): a count per role, summing to the party size.
 			Map<String, Integer> previous = new HashMap<>();
 			for (Map.Entry<String, JSpinner> entry : roleCountSpinners.entrySet())
 			{
@@ -567,9 +597,9 @@ class CreatePanel extends JPanel
 			roleCountsPanel.removeAll();
 			for (Role role : roles)
 			{
-				// Seed Fill with the whole party on the first build so the total
-				// matches capacity; otherwise keep what the host had entered.
-				int seed = firstBuild && role == Role.COX_FILL ? capacity : 0;
+				// Seed the Fill slot (CoX only) with the whole party on the first build
+				// so the total matches capacity; otherwise keep what the host entered.
+				int seed = firstBuild && role == fillRole ? capacity : 0;
 				int value = previous.getOrDefault(role.getId(), seed);
 				JSpinner spinner = new JSpinner(new SpinnerNumberModel(Math.max(0, value), 0, 100, 1));
 				spinner.addChangeListener(e -> {
@@ -592,15 +622,16 @@ class CreatePanel extends JPanel
 	/** CoX only: set the Fill count to absorb whatever's left of the party size. */
 	private void absorbRemainderIntoFill()
 	{
-		JSpinner fill = roleCountSpinners.get(Role.COX_FILL.getId());
+		String fillId = currentFillRoleId();
+		JSpinner fill = fillId == null ? null : roleCountSpinners.get(fillId);
 		if (fill == null)
 		{
-			return;
+			return; // no Fill slot for this activity/mode (e.g. HMT) - nothing to absorb
 		}
 		int others = 0;
 		for (Map.Entry<String, JSpinner> entry : roleCountSpinners.entrySet())
 		{
-			if (!entry.getKey().equals(Role.COX_FILL.getId()))
+			if (!entry.getKey().equals(fillId))
 			{
 				others += (Integer) entry.getValue().getValue();
 			}
@@ -610,6 +641,17 @@ class CreatePanel extends JPanel
 		fill.setValue(Math.max(0, capacity - others));
 		rebuildingRoles = false;
 		updateRoleTotal();
+	}
+
+	private String currentFillRoleId()
+	{
+		Activity activity = (Activity) activityDropdown.getSelectedItem();
+		if (activity == null)
+		{
+			return null;
+		}
+		Role fill = activity.fillRole(hardModeCheck.isSelected());
+		return fill == null ? null : fill.getId();
 	}
 
 	private int assignedRoleTotal()
@@ -667,7 +709,7 @@ class CreatePanel extends JPanel
 		{
 			return null;
 		}
-		if (activity.hasFixedComposition())
+		if (activity.hasFixedComposition(hardModeCheck.isSelected()))
 		{
 			List<String> roles = new ArrayList<>();
 			for (Role role : activity.fixedComposition(capacity))
@@ -737,6 +779,10 @@ class CreatePanel extends JPanel
 		boolean hardMode = activity.hasHardMode() && !activity.usesInvocation() && hardModeCheck.isSelected();
 		int invocation = activity.usesInvocation() ? (Integer) invocationSpinner.getValue() : 0;
 
+		// Learner-raid tagging (raids only): either flag marks the ad as a learner raid.
+		boolean learner = activity.isRaid() && learnerCheck.isSelected();
+		boolean teacher = activity.isRaid() && teacherCheck.isSelected();
+
 		// Roles (ToB/CoX): the composition must fill exactly the party size, and the
 		// host's chosen role must be one of those slots (the host fills it). ToB's
 		// composition is fixed by size, so it always validates; CoX is host-defined.
@@ -779,11 +825,12 @@ class CreatePanel extends JPanel
 		liveParty.generatePassphrase(passphrase -> {
 			PartyRequest request = new PartyRequest(
 				activityId, player, advertisedDescription, capacity, world, minKc, minHardKc, passphrase,
-				privateParty, lootRule, ironmanOnly, hostAccountType, hardMode, invocation, requiredRoles, hostRole);
+				privateParty, lootRule, ironmanOnly, hostAccountType, hardMode, invocation, requiredRoles, hostRole,
+				learner, teacher);
 
 			partyService.createParty(request,
 				party -> SwingUtilities.invokeLater(
-					() -> onCreated(party, passphrase, player, capacity, advertiseLayout, hostRole)),
+					() -> onCreated(party, passphrase, player, capacity, advertiseLayout, hostRole, learner)),
 				error -> SwingUtilities.invokeLater(() -> {
 					creating = false;
 					createButton.setEnabled(true);
@@ -793,7 +840,7 @@ class CreatePanel extends JPanel
 	}
 
 	private void onCreated(Party party, String passphrase, String host, int capacity, boolean advertiseLayout,
-		String hostRole)
+		String hostRole, boolean hostLearner)
 	{
 		creating = false;
 		createButton.setEnabled(true);
@@ -803,7 +850,7 @@ class CreatePanel extends JPanel
 		partyState.setAdvertiseLayout(advertiseLayout);
 		// Host the live room now that the ad is up; applicants who join are pending
 		// until admitted from the Current tab.
-		liveParty.hostParty(passphrase, host, party.getActivity(), capacity, false, hostRole);
+		liveParty.hostParty(passphrase, host, party.getActivity(), capacity, false, hostRole, hostLearner);
 		if (party.isPrivateParty() && party.getInviteCode() != null)
 		{
 			setStatus("Private party created - invite code " + party.getInviteCode() + " (also on Current tab).");
@@ -824,7 +871,6 @@ class CreatePanel extends JPanel
 
 	private static final String FAV_PLACEHOLDER = "Favourites...";
 
-	/** Top-of-form row: favourites dropdown plus save (+) and remove (x) buttons. */
 	private JPanel buildFavourites()
 	{
 		JPanel panel = new JPanel(new BorderLayout(4, 0))
@@ -861,7 +907,7 @@ class CreatePanel extends JPanel
 		save.setToolTipText("Save the current settings as a favourite");
 		save.addActionListener(e -> saveCurrentAsFavourite());
 
-		JButton remove = miniButton("✕");
+		JButton remove = miniButton("X");
 		remove.setToolTipText("Remove the selected favourite");
 		remove.addActionListener(e -> removeSelectedFavourite());
 
@@ -958,6 +1004,8 @@ class CreatePanel extends JPanel
 		preset.setIncludeLayout(includeLayoutCheck.isSelected());
 		preset.setHardMode(hardModeCheck.isSelected());
 		preset.setInvocation((Integer) invocationSpinner.getValue());
+		preset.setLearner(learnerCheck.isSelected());
+		preset.setTeacher(teacherCheck.isSelected());
 		if (activity != null && activity.hasRoles())
 		{
 			preset.setRequiredRoles(captureRequiredRoles(activity, (Integer) capacitySpinner.getValue()));
@@ -967,7 +1015,6 @@ class CreatePanel extends JPanel
 		return preset;
 	}
 
-	/** Populate the form from a preset (no-op for null). */
 	private void applyPreset(PartyPreset preset)
 	{
 		if (preset == null)
@@ -1001,6 +1048,8 @@ class CreatePanel extends JPanel
 		includeLayoutCheck.setSelected(preset.isIncludeLayout());
 		hardModeCheck.setSelected(preset.isHardMode());
 		invocationSpinner.setValue(Math.max(0, Math.min(600, preset.getInvocation())));
+		learnerCheck.setSelected(preset.isLearner());
+		teacherCheck.setSelected(preset.isTeacher());
 		applyActivityBounds(); // refresh row visibility (and rebuild role controls)
 		applyRolePreset(preset);
 	}

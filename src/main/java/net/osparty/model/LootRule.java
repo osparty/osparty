@@ -1,6 +1,6 @@
 package net.osparty.model;
 
-/** How a party splits drops. Advertised on the ad and shown in the UI. */
+/** How a party splits drops. */
 public enum LootRule
 {
 	UNSPECIFIED("Unspecified"),

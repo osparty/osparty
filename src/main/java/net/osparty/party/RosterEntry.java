@@ -6,8 +6,7 @@ import lombok.NoArgsConstructor;
 
 /**
  * One admitted member in the host-authoritative roster carried by
- * {@link PartyStateMessage}. Identified by the relay-assigned {@code memberId}
- * plus a display {@code name}. Kept Gson-friendly (no-arg constructor) so it
+ * {@link PartyStateMessage}. Kept Gson-friendly (no-arg constructor) so it
  * serialises cleanly inside a party message.
  */
 @Data

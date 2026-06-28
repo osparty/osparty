@@ -196,15 +196,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	 */
 	private volatile String playerName;
 
-	/** Owner (name) of the friends chat the player is currently in, or null. */
 	private volatile String friendsChatOwner;
-	/** Current world, or 0 when not logged in. */
 	private volatile int world;
 	/** Currently loaded map regions (for location-aware activity suggestions). */
 	private volatile int[] mapRegions;
-	/** The current CoX raid layout (readable string), or null when not in a raid. */
 	private volatile String coxLayout;
-	/** Local player's account type, or null when not logged in. */
 	private volatile AccountType accountType;
 	/** Whether we've checked for a resumable hosted party since this login. */
 	private boolean rejoinChecked;
@@ -221,7 +217,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	/** True while one of our chatbox prompts is open, so we show them one at a time. */
 	private boolean promptOpen;
 
-	/** An applicant queued for an in-game accept/decline prompt. */
 	private static final class PendingPrompt
 	{
 		final Applicant applicant;
@@ -408,7 +403,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		updateDefenceInfoBox();
 	}
 
-	/** Show/hide the status-bar defence info box based on the toggle and tracking state. */
 	private void updateDefenceInfoBox()
 	{
 		boolean show = config.defenceInfoBox() && defenceTracker.state() != null;
@@ -721,7 +715,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		quickHopTarget = null;
 	}
 
-	/** Build a client {@link World} from the world-list entry. */
 	private World toRsWorld(net.runelite.http.api.worlds.World source)
 	{
 		World rsWorld = client.createWorld();
@@ -888,7 +881,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			+ " for your " + activity.getDisplayName() + " party.");
 	}
 
-	/** Play the bundled ready-check sound when everyone is ready (if enabled). */
 	private void playReadySound()
 	{
 		if (config.readyCheckSound())
@@ -897,7 +889,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 	}
 
-	/** Play a bundled .wav sound resource (e.g. /net/osparty/sounds/kicked.wav). */
 	private void playResourceSound(String resource)
 	{
 		try

@@ -40,8 +40,10 @@ import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.JTabbedPane;
 import javax.swing.JTextField;
 import javax.swing.Scrollable;
+import javax.swing.SwingConstants;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.SwingUtilities;
@@ -58,13 +60,9 @@ import net.runelite.http.api.worlds.WorldRegion;
  * apply to one. A player can be in only one party at a time - applying leaves
  * the current party first (disbanding it if you were the host). Full parties
  * and your own party aren't appliable.
- *
- * <p>While applied to a party, a banner shows whether you're in the host's
- * friends chat and on the host's world (both read-only checks).
  */
 class SearchPanel extends JPanel
 {
-	/** How long a party stays un-appliable after the player cancels. */
 	private static final long COOLDOWN_MS = 30_000;
 
 	private final PartyService partyService;
@@ -75,19 +73,20 @@ class SearchPanel extends JPanel
 	private final LiveParty liveParty;
 	private final Supplier<AccountType> accountTypeSupplier;
 	private final Supplier<int[]> mapRegionsSupplier;
-	/** Resolves a world number to its region, for the host's location flag. */
 	private final IntFunction<WorldRegion> worldRegionResolver;
 	private final KillcountService killcountService;
 
-	/** Checkbox list of activities to include; all selected by default. */
 	private final JPanel activityListPanel = new JPanel();
 	private final Set<Activity> selectedActivities = EnumSet.allOf(Activity.class);
-	/** Roles the player is willing to fill; empty = no role constraint (show all). */
 	private final Set<Role> selectedRoles = EnumSet.noneOf(Role.class);
-	private final JPanel roleListPanel = new JPanel();
-	/** The activity we're currently standing near (floated to the top, pre-checked). */
+	private boolean rolesExpanded;
+	private final JButton roleToggle = new JButton();
+	private final JTabbedPane roleTabs = new JTabbedPane();
+	/** Collapsible content: the role tabs plus the separate learner mark. */
+	private final JPanel roleContent = new JPanel();
+	/** Self-mark (not a role): tags us as a learner to the host when we apply. */
+	private final JCheckBox imLearnerCheck = new JCheckBox("I'm a learner");
 	private Activity recommended;
-	/** Free-text filter over host name / description / activity. */
 	private final JTextField textField = new JTextField();
 
 	private final JComboBox<String> lootFilter = new JComboBox<>(new String[]{"Any loot", "FFA", "Split"});
@@ -98,17 +97,12 @@ class SearchPanel extends JPanel
 	private final JLabel statusLabel = new JLabel();
 	private final JPanel resultsPanel = new JPanel();
 
-	/** Last raw search results, kept so the filters can re-apply without re-querying. */
 	private List<Party> lastResults;
-	/** Signature of the currently-rendered cards, to skip rebuilds when nothing changed. */
 	private String renderedSignature;
 	private Timer autoRefreshTimer;
 
-	/** Party id -> epoch millis when its cooldown expires. */
 	private final Map<String, Long> cooldownExpiry = new HashMap<>();
-	/** Apply buttons currently displayed, keyed by party id (rebuilt per search). */
 	private final Map<String, JButton> applyButtons = new HashMap<>();
-	/** Parties currently displayed, keyed by id (rebuilt per search). */
 	private final Map<String, Party> partiesById = new HashMap<>();
 
 	private Timer uiTimer;
@@ -233,7 +227,6 @@ class SearchPanel extends JPanel
 	{
 		JPanel panel = cappedRow(new BorderLayout(0, 4));
 
-		// Header: "Activities" label on the left, All/None toggles on the right.
 		JPanel header = new JPanel(new BorderLayout());
 		header.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
@@ -268,51 +261,84 @@ class SearchPanel extends JPanel
 	}
 
 	/**
-	 * The role multiselect (ToB/CoX): tick the roles you're willing to fill. With
-	 * none ticked there's no role constraint; ticking some hides role parties that
-	 * don't still need any of them. "Fill / Any" matches any party with open roles.
+	 * The role multiselect (ToB/CoX): tick the roles you're willing to fill; none
+	 * ticked means no role constraint. Collapses to a single header row to save space.
 	 */
 	private JPanel buildRoleFilter()
 	{
 		JPanel panel = cappedRow(new BorderLayout(0, 4));
 		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 
-		JLabel label = new JLabel("Roles I can fill");
-		label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		label.setFont(FontManager.getRunescapeSmallFont());
-		panel.add(label, BorderLayout.NORTH);
+		// Collapsible header: clicking it shows/hides the (fairly tall) tabbed picker.
+		roleToggle.setHorizontalAlignment(SwingConstants.LEFT);
+		roleToggle.setFocusPainted(false);
+		roleToggle.setContentAreaFilled(false);
+		roleToggle.setBorder(BorderFactory.createEmptyBorder(2, 0, 2, 0));
+		roleToggle.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		roleToggle.setFont(FontManager.getRunescapeSmallFont());
+		roleToggle.addActionListener(e -> setRolesExpanded(!rolesExpanded));
+		panel.add(roleToggle, BorderLayout.NORTH);
 
-		// Two compact columns side by side - one per role-based activity - so a
-		// Theatre of Blood pick can't be confused with a Chambers of Xeric one.
-		roleListPanel.setLayout(new GridLayout(1, 2, 6, 0));
-		roleListPanel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		roleListPanel.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
-		roleListPanel.removeAll();
-		roleListPanel.add(buildRoleBox(Activity.THEATRE_OF_BLOOD, "ToB"));
-		roleListPanel.add(buildRoleBox(Activity.CHAMBERS_OF_XERIC, "CoX"));
+		// One tab per activity + difficulty so a CM pick can't be confused with a
+		// normal CoX one (or an HMT pick with a normal ToB one).
+		roleTabs.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		roleTabs.addTab("ToB", buildRoleTab(Activity.THEATRE_OF_BLOOD, false));
+		roleTabs.addTab("HMT", buildRoleTab(Activity.THEATRE_OF_BLOOD, true));
+		roleTabs.addTab("CoX", buildRoleTab(Activity.CHAMBERS_OF_XERIC, false));
+		roleTabs.addTab("CM", buildRoleTab(Activity.CHAMBERS_OF_XERIC, true));
+		roleTabs.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-		panel.add(roleListPanel, BorderLayout.CENTER);
+		// A learner mark separate from the roles: re-broadcasts live if toggled while
+		// already applied; otherwise it's read when we apply (see doApply).
+		imLearnerCheck.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		imLearnerCheck.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		imLearnerCheck.setFont(FontManager.getRunescapeSmallFont());
+		imLearnerCheck.setFocusPainted(false);
+		imLearnerCheck.setAlignmentX(Component.LEFT_ALIGNMENT);
+		imLearnerCheck.setBorder(BorderFactory.createEmptyBorder(6, 4, 2, 4));
+		imLearnerCheck.addActionListener(e -> {
+			if (isMemberInParty())
+			{
+				liveParty.setLocalLearner(imLearnerCheck.isSelected());
+			}
+		});
+
+		roleContent.setLayout(new BoxLayout(roleContent, BoxLayout.Y_AXIS));
+		roleContent.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		roleContent.add(roleTabs);
+		roleContent.add(imLearnerCheck);
+		roleContent.setVisible(rolesExpanded);
+		panel.add(roleContent, BorderLayout.CENTER);
+
+		updateRoleToggleText();
 		return panel;
 	}
 
-	/** A compact, titled checkbox column for one activity's selectable filter roles. */
-	private JPanel buildRoleBox(Activity activity, String title)
+	private void setRolesExpanded(boolean expanded)
+	{
+		rolesExpanded = expanded;
+		roleContent.setVisible(expanded);
+		updateRoleToggleText();
+		revalidate();
+		repaint();
+	}
+
+	private void updateRoleToggleText()
+	{
+		String count = selectedRoles.isEmpty() ? "" : " (" + selectedRoles.size() + ")";
+		// Plain ASCII chevron: ">" collapsed (points right), "v" expanded (points down) -
+		// the RuneScape font has no glyph for the Unicode triangles.
+		roleToggle.setText((rolesExpanded ? "v " : "> ") + "Roles I can fill" + count);
+	}
+
+	private JComponent buildRoleTab(Activity activity, boolean hardMode)
 	{
 		JPanel box = new JPanel();
 		box.setLayout(new BoxLayout(box, BoxLayout.Y_AXIS));
 		box.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		box.setBorder(BorderFactory.createCompoundBorder(
-			BorderFactory.createLineBorder(ColorScheme.MEDIUM_GRAY_COLOR),
-			BorderFactory.createEmptyBorder(4, 6, 4, 4)));
+		box.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
 
-		JLabel header = new JLabel(title);
-		header.setForeground(ColorScheme.BRAND_ORANGE);
-		header.setFont(FontManager.getRunescapeBoldFont());
-		header.setAlignmentX(Component.LEFT_ALIGNMENT);
-		header.setBorder(BorderFactory.createEmptyBorder(0, 0, 3, 0));
-		box.add(header);
-
-		for (Role role : activity.filterRoles())
+		for (Role role : activity.filterRoles(hardMode))
 		{
 			JCheckBox check = new JCheckBox(role.getDisplayName());
 			check.setSelected(selectedRoles.contains(role));
@@ -333,6 +359,7 @@ class SearchPanel extends JPanel
 				{
 					selectedRoles.remove(role);
 				}
+				updateRoleToggleText();
 				reapplyFilters();
 			});
 			box.add(check);
@@ -353,9 +380,9 @@ class SearchPanel extends JPanel
 		{
 			return true;
 		}
-		// Only consider ticks that belong to this activity's box.
+		// Only consider ticks that belong to this activity's box (normal + CM roles).
 		Set<Role> picked = EnumSet.noneOf(Role.class);
-		for (Role role : activity.filterRoles())
+		for (Role role : activity.allFilterRoles())
 		{
 			if (selectedRoles.contains(role))
 			{
@@ -371,12 +398,15 @@ class SearchPanel extends JPanel
 		{
 			return true; // no role info on the ad - don't over-filter
 		}
-		Role any = activity.anyRole();
+		// The party's difficulty selects which wildcard/Fill applies (a CM party uses
+		// the CM Fill, an HMT searcher's "any" is the HMT one, etc.).
+		Role any = activity.anyRole(party.isHardMode());
 		if (any != null && picked.contains(any))
 		{
 			return true; // "I'll do any role"
 		}
-		if (needed.contains(Role.COX_FILL.getId()))
+		Role fill = activity.fillRole(party.isHardMode());
+		if (fill != null && needed.contains(fill.getId()))
 		{
 			return true; // an advertised Fill slot accepts anyone
 		}
@@ -400,7 +430,6 @@ class SearchPanel extends JPanel
 		return party.getRequiredRoles();
 	}
 
-	/** A free-text filter over host name, description and activity. */
 	private JPanel buildTextFilter()
 	{
 		JPanel panel = cappedRow(new BorderLayout(0, 4));
@@ -437,7 +466,6 @@ class SearchPanel extends JPanel
 		return panel;
 	}
 
-	/** Check or uncheck every activity at once. */
 	private void setAllActivities(boolean selected)
 	{
 		if (selected)
@@ -657,7 +685,6 @@ class SearchPanel extends JPanel
 		leaveCurrentThen(() -> doApply(party, chosenRole));
 	}
 
-	/** Whether the local account satisfies a party's ironman-only requirement. */
 	private boolean meetsIronmanRule(Party party)
 	{
 		return !party.isIronmanOnly() || AccountTypes.isIronman(accountTypeSupplier.get());
@@ -722,6 +749,10 @@ class SearchPanel extends JPanel
 	private String tagLine(Party party)
 	{
 		List<String> tags = new ArrayList<>();
+		if (party.isLearnerRaid())
+		{
+			tags.add(party.learnerLabel());
+		}
 		LootRule loot = LootRule.fromName(party.getLootRule());
 		if (loot != LootRule.UNSPECIFIED)
 		{
@@ -820,7 +851,6 @@ class SearchPanel extends JPanel
 		resultsPanel.repaint();
 	}
 
-	/** True if the free-text query matches the host, description or activity name. */
 	private static boolean matchesText(Party party, Activity activity, String lowerQuery)
 	{
 		if (contains(party.getHost(), lowerQuery) || contains(party.getDescription(), lowerQuery))
@@ -990,7 +1020,6 @@ class SearchPanel extends JPanel
 		meta.setFont(FontManager.getRunescapeSmallFont());
 
 		info.add(host);
-		// Host's world (with a country flag for its region) sits under the name.
 		JLabel worldLabel = buildWorldLabel(party);
 		if (worldLabel != null)
 		{
@@ -1190,8 +1219,9 @@ class SearchPanel extends JPanel
 		}
 		if (options.isEmpty())
 		{
-			// No advertised roles to choose from - fall back to the full role set.
-			options.addAll(activity.roles());
+			// No advertised roles to choose from - fall back to the full role set
+			// for the party's difficulty (CoX normal vs Challenge Mode).
+			options.addAll(activity.roles(party.isHardMode()));
 		}
 		if (options.isEmpty())
 		{
@@ -1203,7 +1233,6 @@ class SearchPanel extends JPanel
 		return pick != null ? pick.getId() : null;
 	}
 
-	/** True if this is the party we're currently in as a member. */
 	private boolean isActive(Party party)
 	{
 		return partyState.isInParty() && !partyState.isHost()
@@ -1302,10 +1331,12 @@ class SearchPanel extends JPanel
 			return;
 		}
 
-		liveParty.joinParty(passphrase, party.getActivity(), party.getCapacity(), role);
+		boolean learner = imLearnerCheck.isSelected();
+		liveParty.joinParty(passphrase, party.getActivity(), party.getCapacity(), role, learner);
 		partyState.setMember(party);
 		String roleSuffix = role != null ? " as " + Role.displayNameOf(role) : "";
-		setStatus("Joined " + party.getHost() + "'s room" + roleSuffix + " - awaiting host approval.");
+		String learnerSuffix = learner ? " (learner)" : "";
+		setStatus("Joined " + party.getHost() + "'s room" + roleSuffix + learnerSuffix + " - awaiting host approval.");
 		updateAllButtons();
 	}
 

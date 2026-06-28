@@ -3,41 +3,45 @@ package net.osparty.model;
 import lombok.Getter;
 
 /**
- * A role a player can fill in a role-based activity (Theatre of Blood and
- * Chambers of Xeric). Each value carries a stable {@link #id} used when
- * (de)serialising and talking to the API, and a human readable
- * {@link #displayName} shown in the UI.
+ * A role a player can fill in a role-based activity (Theatre of Blood and Chambers
+ * of Xeric). Each value carries a stable {@link #id} used when (de)serialising and
+ * talking to the API, and a {@link #displayName}. Which roles apply where is decided
+ * by {@link Activity}.
  *
- * <p>Which roles apply where is decided by {@link Activity}:
- * <ul>
- *   <li>{@link Activity#roles()} - the roles a host/applicant can be (the
- *       "my role" dropdown and the apply prompt).</li>
- *   <li>{@link Activity#filterRoles()} - the roles shown in the Search filter
- *       (adds a "Fill / Any" wildcard for ToB).</li>
- *   <li>{@link Activity#fixedComposition(int)} - ToB's size-based team make-up.</li>
- * </ul>
- *
- * <p>The {@code *_FILL} values are wildcards. For Chambers of Xeric a Fill slot
- * is a real, flexible team spot (a host can advertise it, and anyone fits it).
- * For Theatre of Blood, Fill exists only as a Search option meaning "I'll do any
- * role" - it is never part of a party's composition.
+ * <p>Each of the four difficulty modes has its own, fully separate role set, so a
+ * pick in one can never be confused with (or matched against) a party of another.
+ * The {@code *_FILL} values are per-mode wildcards: for Chambers of Xeric a Fill slot
+ * is a real, flexible team spot, whereas for Theatre of Blood Fill exists only as a
+ * Search option meaning "I'll do any role" and is never part of a composition.
  */
 @Getter
 public enum Role
 {
-	// Theatre of Blood.
+	// Theatre of Blood (normal).
 	TOB_MELEE("tobmelee", "Melee"),
 	TOB_RANGED("tobranged", "Ranged"),
-	TOB_MAGE("tobmage", "Mage"),
-	/** Search-only wildcard for ToB ("I'll do any role"); never in a composition. */
+	TOB_NFRZ("tobnfrz", "North freeze"),
+	TOB_SFRZ("tobsfrz", "South freeze"),
 	TOB_FILL("tobfill", "Fill / Any"),
 
-	// Chambers of Xeric.
-	COX_MELEE_HAND("coxmeleehand", "Melee hand"),
-	COX_SKIP("coxskip", "Skip"),
+	// Theatre of Blood Hard Mode (HMT).
+	TOB_HM_MELEE("tobhmmelee", "Melee"),
+	TOB_HM_RANGED("tobhmranged", "Ranged"),
+	TOB_HM_NFRZ("tobhmnfrz", "North freeze"),
+	TOB_HM_SFRZ("tobhmsfrz", "South freeze"),
+	TOB_HM_FILL("tobhmfill", "Fill / Any"),
+
+	// Chambers of Xeric (normal).
+	COX_MELEE("coxmelee", "Melee"),
+	COX_MAGE("coxmage", "Mage"),
 	COX_RUNNER("coxrunner", "Runner"),
-	/** A flexible CoX spot: a host can advertise it, and any applicant fits it. */
 	COX_FILL("coxfill", "Fill / Any"),
+
+	// Chambers of Xeric Challenge Mode (CM).
+	COX_CM_VENG("coxcmveng", "Veng"),
+	COX_CM_ANCIENT("coxcmancient", "Ancient"),
+	COX_CM_NORMAL("coxcmnormal", "Normal spells"),
+	COX_CM_FILL("coxcmfill", "Fill / Any"),
 	;
 
 	private final String id;

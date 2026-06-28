@@ -11,9 +11,8 @@ import net.runelite.client.party.messages.PartyMemberMessage;
  * gear, inventory and combat stats. Every member sends their own; the framework
  * stamps the sender's {@code memberId} on receipt.
  *
- * <p>Unlike RaidParty/Party Panel this is sent whole rather than diffed and
- * bit-packed — simpler to read, and the payload (a couple of int arrays plus a
- * small map) is still small. Diffing can be layered on later if traffic matters.
+ * <p>Sent whole rather than diffed/bit-packed — simpler, and the payload (a couple
+ * of int arrays plus a small map) is small enough not to matter.
  */
 @Data
 @NoArgsConstructor
@@ -23,36 +22,36 @@ public class PlayerUpdate extends PartyMemberMessage
 	private String name;
 	private int combatLevel;
 
-	/**
-	 * Worn gear in {@link net.osparty.model.Applicant.EquipmentSlot} order
-	 * (length {@code EquipmentSlot.COUNT}); a value {@code <= 0} means empty.
-	 */
+	/** In {@link net.osparty.model.Applicant.EquipmentSlot} order; {@code <= 0} = empty. */
 	private int[] equipment;
 
-	/** 28 inventory item ids in slot order; a value {@code <= 0} means empty. */
+	/** 28 ids in slot order; {@code <= 0} = empty. */
 	private int[] inventory;
 
-	/** Combat skill name -> real level (Attack, Strength, ...). */
+	/** Skill name -> real level. */
 	private Map<String, Integer> stats;
 
-	/** Kills of the party's activity; {@code -1} when unknown. */
+	/** {@code -1} when unknown. */
 	private int killCount = -1;
 
-	/** Kills of the harder variant (CM/HM/Expert); {@code -1} when unknown/N/A. */
+	/** Harder variant (CM/HM/Expert); {@code -1} when unknown/N/A. */
 	private int hardModeKillCount = -1;
 
-	/** The member's account type name (NORMAL / IRONMAN / ...); null when unknown. */
+	/** Enum name (NORMAL / IRONMAN / ...); null when unknown. */
 	private String accountType;
 
-	/** The role id the member is filling (raids only); null when none/unknown. */
+	/** Raids only; null when none. */
 	private String role;
 
-	/** Personal best (seconds) for the party's activity+team size; {@code -1} when unknown. */
+	/** Self-marked as a learner for this raid. */
+	private boolean learner;
+
+	/** Seconds; {@code -1} when unknown. */
 	private double pbSeconds = -1;
 
-	/** The world the member is currently logged in to; {@code 0} when unknown. */
+	/** {@code 0} when logged out/unknown. */
 	private int world;
 
-	/** Owner (name) of the friends chat the member is in, or {@code null} when in none. */
+	/** Null when in no friends chat. */
 	private String friendsChatOwner;
 }

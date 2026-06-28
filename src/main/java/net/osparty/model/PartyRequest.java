@@ -17,43 +17,22 @@ public class PartyRequest
 	private String description;
 	private int capacity;
 	private String world;
-
-	/** Minimum kills required to apply. 0 means no requirement. */
 	private int minKillCount;
-
-	/** Minimum CM/HM/Expert kills required to apply (raids only). 0 means none. */
 	private int minHardModeKillCount;
 
-	/**
-	 * RuneLite party passphrase for the live room the host has opened. Advertised
-	 * so applicants can join the actual party; the API itself tracks no membership.
-	 */
 	private String passphrase;
 
-	/** Hide from public search; reachable only by the invite code. */
 	private boolean privateParty;
-
-	/** Loot rule: FFA / SPLIT / UNSPECIFIED. */
 	private String lootRule;
-
-	/** Restrict the party to ironman accounts. */
 	private boolean ironmanOnly;
-
-	/** The host's account type name, for display on the ad. */
 	private String hostAccountType;
-
-	/** Run the harder variant (CoX CM / ToB HMT); changes the title. */
 	private boolean hardMode;
-
-	/** ToA invocation level (0 = unset); changes the title to "ToA (n)". */
 	private int invocation;
 
-	/**
-	 * The team composition the host wants, as role ids (a multiset). Empty/null for
-	 * activities without roles.
-	 */
+	/** A multiset of role ids. */
 	private List<String> requiredRoles;
 
-	/** The role id the host fills themselves, or null when roles don't apply. */
 	private String hostRole;
+	private boolean learner;
+	private boolean teacher;
 }

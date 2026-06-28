@@ -11,8 +11,7 @@ import net.runelite.client.ui.overlay.infobox.InfoBox;
 /**
  * Status-bar (info-box) display of the monster's live defence, an alternative or
  * complement to the {@link NpcDefenceOverlay} scene display. Reads the value from
- * {@link DefenceTracker} on every render so it stays current without per-tick
- * updates; the host plugin just adds/removes it as tracking starts/stops.
+ * {@link DefenceTracker} on every render so it stays current without per-tick updates.
  */
 public class DefenceInfoBox extends InfoBox
 {

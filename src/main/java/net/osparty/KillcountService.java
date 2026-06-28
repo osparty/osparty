@@ -22,7 +22,7 @@ import net.runelite.client.hiscore.Skill;
 @Singleton
 public class KillcountService
 {
-	/** A looked-up killcount pair; {@code -1} means unknown / unranked. */
+	/** {@code -1} = unknown / unranked. */
 	public static final class Killcount
 	{
 		public final int killCount;
@@ -45,7 +45,6 @@ public class KillcountService
 		this.hiscoreClient = hiscoreClient;
 	}
 
-	/** @return the cached killcount for this player+activity, or {@code null} if not looked up yet. */
 	public Killcount cached(String rsn, Activity activity)
 	{
 		if (rsn == null || activity == null)

@@ -29,16 +29,12 @@ import net.runelite.client.party.WSClient;
  * The plugin's view of the live RuneLite peer-to-peer party, plus a
  * host-authoritative user-management layer on top of it.
  *
- * <p>RuneLite's {@link PartyService} is a passphrase-keyed message bus with no
- * host and no access control. This class adds one: the creator hosts, holds the
- * authoritative admitted roster, and broadcasts it via {@link PartyStateMessage}
- * so every peer renders the same membership. Applicants who join the room are
- * <em>pending</em> until the host admits them; kicks/declines are delivered as
- * {@link MemberCommand}s the target honours by leaving. Each member self-reports
- * gear/inventory/stats via {@link PlayerUpdate}.
- *
- * <p>Enforcement is cooperative — a modified client could ignore it — which is
- * the same trust model as the rest of the party network.
+ * <p>RuneLite's {@link PartyService} is a passphrase-keyed bus with no host or
+ * access control. This class adds one: the creator hosts, holds the authoritative
+ * admitted roster, and broadcasts it via {@link PartyStateMessage}. Applicants are
+ * <em>pending</em> until the host admits them; kicks/declines are {@link MemberCommand}s
+ * the target honours by leaving. Each member self-reports via {@link PlayerUpdate}.
+ * Enforcement is cooperative — the same trust model as the rest of the party network.
  *
  * <p>Messages arrive on the websocket thread and UI reads on the EDT, so shared
  * state uses concurrent collections and listeners must marshal to the EDT.
@@ -52,7 +48,6 @@ public class LiveParty
 		HOST, MEMBER, PENDING
 	}
 
-	/** A roster row for the UI: who they are, their standing, and their live data. */
 	@Value
 	public static class RosterMember
 	{
@@ -64,7 +59,6 @@ public class LiveParty
 		boolean online; // recently heard from (or ourselves)
 	}
 
-	/** A snapshot of the active ready check for the UI. */
 	@Value
 	public static class ReadyCheckStatus
 	{
@@ -75,12 +69,10 @@ public class LiveParty
 		boolean localReady;
 	}
 
-	/** A ready check expires this long after it starts if not everyone readies. */
 	private static final long READY_CHECK_TIMEOUT_MS = 30_000;
 
-	/** Consider a member offline if we haven't heard from them in this long. */
 	private static final long ONLINE_TIMEOUT_MS = 20_000;
-	/** The host drops a member from the roster after this long with no contact. */
+	/** Host drops a member after this long with no contact. */
 	private static final long PRUNE_TIMEOUT_MS = 60_000;
 
 	private final PartyService partyService;
@@ -89,15 +81,14 @@ public class LiveParty
 	private final ClientThread clientThread;
 	private final ConfigManager configManager;
 
-	/** The activity/team-size of the party we're in (host or member), for our PB lookup. */
 	private volatile String currentActivityId;
 	private volatile int currentTeamSize;
 
-	/** The role id we've chosen to fill, broadcast in our self-report; null when none. */
 	private volatile String localRole;
+	private volatile boolean localLearner;
 
 	private final Map<Long, PlayerUpdate> playerData = new ConcurrentHashMap<>();
-	/** memberId -> epoch millis we last heard from them (presence + stale pruning). */
+	/** memberId -> epoch millis last heard from (presence + pruning). */
 	private final Map<Long, Long> lastSeen = new ConcurrentHashMap<>();
 	private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
 
@@ -106,7 +97,7 @@ public class LiveParty
 	private volatile String hostName;
 	private volatile int capacity;
 	private volatile boolean locked;
-	/** Admitted applicants (excludes the host). memberId -> display name. */
+	/** Excludes the host. memberId -> display name. */
 	private final Map<Long, String> admitted = new ConcurrentHashMap<>();
 
 	/**
@@ -116,11 +107,10 @@ public class LiveParty
 	 */
 	private final Set<Long> leaving = ConcurrentHashMap.newKeySet();
 
-	/** Last state received from the host (non-host clients). */
 	private volatile PartyStateMessage lastState;
 
-	private volatile boolean stateDirty; // host: roster/config changed, needs rebroadcast
-	private volatile boolean localDirty;  // self: our PlayerUpdate changed, needs rebroadcast
+	private volatile boolean stateDirty;
+	private volatile boolean localDirty;
 
 	/**
 	 * Ticks since we last broadcast our own snapshot. RuneLite's party relay does
@@ -131,7 +121,7 @@ public class LiveParty
 	private int ticksSinceLocalBroadcast;
 	private static final int LOCAL_REBROADCAST_TICKS = 10; // ~6s at 0.6s/tick
 
-	/** Invoked (off-EDT) when our membership ends — host closed, or we were kicked. */
+	/** Invoked off-EDT when our membership ends. */
 	private volatile Runnable onEnded;
 
 	// ---- ready check (one active per party) ----------------------------------
@@ -146,7 +136,6 @@ public class LiveParty
 	private volatile Runnable onReadyExpired;
 
 	// ---- map pings -----------------------------------------------------------
-	/** A ping animates for this long after it's received, then disappears. */
 	private static final long PING_DURATION_MS = 2_000;
 	private final List<TilePing> pings = new CopyOnWriteArrayList<>();
 
@@ -222,9 +211,8 @@ public class LiveParty
 		});
 	}
 
-	/** Host {@code passphrase}'s room with the given rules. */
 	public void hostParty(String passphrase, String hostName, String activityId, int capacity,
-		boolean locked, String role)
+		boolean locked, String role, boolean learner)
 	{
 		reset();
 		hosting = true;
@@ -234,6 +222,7 @@ public class LiveParty
 		this.currentActivityId = activityId;
 		this.currentTeamSize = capacity;
 		this.localRole = role;
+		this.localLearner = learner;
 		stateDirty = true;
 		localDirty = true;
 		partyService.changeParty(passphrase);
@@ -241,12 +230,13 @@ public class LiveParty
 	}
 
 	/** Join an advertised room as an applicant (pending until the host admits). */
-	public void joinParty(String passphrase, String activityId, int teamSize, String role)
+	public void joinParty(String passphrase, String activityId, int teamSize, String role, boolean learner)
 	{
 		reset();
 		this.currentActivityId = activityId;
 		this.currentTeamSize = teamSize;
 		this.localRole = role;
+		this.localLearner = learner;
 		localDirty = true;
 		partyService.changeParty(passphrase);
 		fire();
@@ -267,10 +257,26 @@ public class LiveParty
 		fire();
 	}
 
-	/** @return the role id we're currently filling, or null. */
 	public String getLocalRole()
 	{
 		return localRole;
+	}
+
+	/** Mark/unmark ourselves as a learner and re-broadcast so the host sees it. No-op when unchanged. */
+	public void setLocalLearner(boolean learner)
+	{
+		if (learner == localLearner)
+		{
+			return;
+		}
+		localLearner = learner;
+		localDirty = true;
+		fire();
+	}
+
+	public boolean isLocalLearner()
+	{
+		return localLearner;
 	}
 
 	/** Leave the room. Hosts send a closing state first, best effort. */
@@ -303,6 +309,7 @@ public class LiveParty
 		currentActivityId = null;
 		currentTeamSize = 0;
 		localRole = null;
+		localLearner = false;
 		lastState = null;
 		stateDirty = false;
 		localDirty = false;
@@ -410,7 +417,6 @@ public class LiveParty
 
 	// ---- ready check ---------------------------------------------------------
 
-	/** The activity/team-size we're grouped for (for the all-ready message). */
 	public String currentActivityId()
 	{
 		return currentActivityId;
@@ -442,7 +448,6 @@ public class LiveParty
 		fire();
 	}
 
-	/** Mark ourselves ready for the active check and tell the party. */
 	public void markReady()
 	{
 		if (readyCheckId == 0)
@@ -603,7 +608,6 @@ public class LiveParty
 		pings.add(ping);
 	}
 
-	/** @return the pings still within their animation window (most-recent included). */
 	public List<TilePing> activePings()
 	{
 		expirePings();
@@ -656,6 +660,7 @@ public class LiveParty
 				update.setPbSeconds(PersonalBests.read(configManager, currentActivityId, currentTeamSize));
 				// The role we've chosen to fill (a user choice, not read from the client).
 				update.setRole(localRole);
+				update.setLearner(localLearner);
 				broadcastLocal(update);
 			}
 		}
@@ -708,7 +713,6 @@ public class LiveParty
 		}
 	}
 
-	/** Drop an active ready check once it's older than the timeout without all-ready. */
 	private void expireReadyCheck()
 	{
 		if (readyCheckId == 0)
@@ -834,14 +838,12 @@ public class LiveParty
 		}
 	}
 
-	/** @return true if {@code memberId} is our own connected member id. */
 	public boolean isForLocalMember(long memberId)
 	{
 		long id = localId();
 		return id != 0 && memberId == id;
 	}
 
-	/** @return true if we're hosting and {@code memberId} is still a pending applicant. */
 	public boolean isPendingApplicant(long memberId)
 	{
 		if (!hosting)

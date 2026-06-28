@@ -15,9 +15,7 @@ import net.runelite.client.ui.overlay.components.TitleComponent;
 
 /**
  * In-game overlay listing every applicant pending for the party the host is
- * running — name, combat level and activity killcount each. Renders nothing
- * when there are none. Inspect full gear/stats and Admit/Decline in the side
- * panel.
+ * running — name, combat level and activity killcount each.
  */
 public class ApplicantOverlay extends OverlayPanel
 {
@@ -71,6 +69,15 @@ public class ApplicantOverlay extends OverlayPanel
 				panelComponent.getChildren().add(LineComponent.builder()
 					.left("Role")
 					.right(Role.displayNameOf(a.getRole()))
+					.rightColor(Color.ORANGE)
+					.build());
+			}
+
+			if (a.isLearner())
+			{
+				panelComponent.getChildren().add(LineComponent.builder()
+					.left("Learner")
+					.right("yes")
 					.rightColor(Color.ORANGE)
 					.build());
 			}

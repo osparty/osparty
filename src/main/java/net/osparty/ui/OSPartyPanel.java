@@ -44,7 +44,6 @@ import net.runelite.client.util.LinkBrowser;
  */
 public class OSPartyPanel extends PluginPanel
 {
-	/** Plugin version shown in the footer, read from runelite-plugin.properties. */
 	private static final String VERSION = readPluginVersion();
 	private static final String GITHUB_URL = "https://github.com/iodrareg/osparty";
 
@@ -126,12 +125,10 @@ public class OSPartyPanel extends PluginPanel
 		}
 		catch (Exception ignored)
 		{
-			// Fall through to the placeholder below.
 		}
 		return "?";
 	}
 
-	/** Footer: a GitHub link button on the left and the plugin version on the right. */
 	private JPanel buildFooter()
 	{
 		JPanel footer = new JPanel(new BorderLayout());
@@ -182,7 +179,7 @@ public class OSPartyPanel extends PluginPanel
 			return;
 		}
 		liveParty.hostParty(party.getPassphrase(), party.getHost(), party.getActivity(), party.getCapacity(), false,
-			party.getHostRole());
+			party.getHostRole(), party.isLearner());
 		partyState.setHosting(party);
 	}
 
