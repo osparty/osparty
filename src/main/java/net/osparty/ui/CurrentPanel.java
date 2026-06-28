@@ -191,7 +191,8 @@ class CurrentPanel extends JPanel
 			if (partyState.isHost() && partyState.getCurrentParty() != null)
 			{
 				partyService.heartbeat(partyState.getCurrentParty().getId(), currentPartySize(),
-					currentWorld.getAsInt(), currentLayout(), currentNeededRolesParam(), ok -> { }, err -> { });
+					currentWorld.getAsInt(), currentLayout(), currentNeededRolesParam(), partyState.getHostKey(),
+					ok -> { }, err -> { });
 			}
 		}).start();
 
@@ -207,7 +208,8 @@ class CurrentPanel extends JPanel
 			{
 				lastReportedLayout = layout;
 				partyService.heartbeat(partyState.getCurrentParty().getId(), currentPartySize(),
-					currentWorld.getAsInt(), layout, currentNeededRolesParam(), ok -> { }, err -> { });
+					currentWorld.getAsInt(), layout, currentNeededRolesParam(), partyState.getHostKey(),
+					ok -> { }, err -> { });
 			}
 		}).start();
 
@@ -325,7 +327,7 @@ class CurrentPanel extends JPanel
 		{
 			lastReportedSize = admitted;
 			partyService.heartbeat(party.getId(), admitted, currentWorld.getAsInt(), currentLayout(),
-				currentNeededRolesParam(), ok -> { }, err -> { });
+				currentNeededRolesParam(), partyState.getHostKey(), ok -> { }, err -> { });
 		}
 
 		StringBuilder spots = new StringBuilder();
@@ -1198,8 +1200,9 @@ class CurrentPanel extends JPanel
 	{
 		button.setEnabled(false);
 		setStatus("Disbanding party...");
-		// Remove the ad (fire-and-forget) and close the live room.
-		partyService.disbandParty(party.getId(), party.getHost(), ignored -> { }, error -> { });
+		// Remove the ad (fire-and-forget) and close the live room. Read the host key
+		// before clear() wipes it.
+		partyService.disbandParty(party.getId(), party.getHost(), partyState.getHostKey(), ignored -> { }, error -> { });
 		liveParty.leave();
 		partyState.clear();
 	}

@@ -33,6 +33,8 @@ import okhttp3.ResponseBody;
 public class PartyApiClient implements PartyService
 {
 	private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
+	/** Header carrying the per-party host credential on host-only mutations. */
+	private static final String HOST_KEY_HEADER = "X-OSParty-Host-Key";
 	private static final Type PARTY_LIST_TYPE = new TypeToken<List<Party>>()
 	{
 	}.getType();
@@ -126,20 +128,23 @@ public class PartyApiClient implements PartyService
 	}
 
 	@Override
-	public void createParty(PartyRequest partyRequest, Consumer<Party> onSuccess, Consumer<Throwable> onError)
+	public void createParty(PartyRequest partyRequest, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
 		HttpUrl url = baseUrl().addPathSegment("parties").build();
 		RequestBody body = RequestBody.create(JSON, gson.toJson(partyRequest));
-		Request request = new Request.Builder().url(url).post(body).build();
-		enqueue(request, Party.class, onSuccess, onError);
+		Request.Builder request = new Request.Builder().url(url).post(body);
+		// The host credential the server binds to this party's session for later checks.
+		withHostKey(request, hostKey);
+		enqueue(request.build(), Party.class, onSuccess, onError);
 	}
 
 	/**
 	 * Host keep-alive: bump the ad's liveness so the backend doesn't reap it as
-	 * stale. PUT (not POST) so it isn't caught by the create rate limit.
+	 * stale. PUT (not POST) so it isn't caught by the create rate limit. The host key
+	 * authorises the mutation (the server rejects it if it doesn't match the session).
 	 */
 	@Override
-	public void heartbeat(String partyId, int size, int world, String layout, String roles,
+	public void heartbeat(String partyId, int size, int world, String layout, String roles, String hostKey,
 		Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
 		HttpUrl.Builder url = baseUrl()
@@ -164,8 +169,9 @@ public class PartyApiClient implements PartyService
 		}
 
 		RequestBody body = RequestBody.create(JSON, "{}");
-		Request request = new Request.Builder().url(url.build()).put(body).build();
-		enqueue(request, Party.class, onSuccess, onError);
+		Request.Builder request = new Request.Builder().url(url.build()).put(body);
+		withHostKey(request, hostKey);
+		enqueue(request.build(), Party.class, onSuccess, onError);
 	}
 
 	@Override
@@ -225,15 +231,29 @@ public class PartyApiClient implements PartyService
 	}
 
 	@Override
-	public void disbandParty(String partyId, String host, Consumer<Party> onSuccess, Consumer<Throwable> onError)
+	public void disbandParty(String partyId, String host, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
 		HttpUrl url = baseUrl()
 			.addPathSegment("parties")
 			.addPathSegment(partyId)
 			.build();
 
-		Request request = new Request.Builder().url(url).delete().build();
-		enqueue(request, Party.class, onSuccess, onError);
+		Request.Builder request = new Request.Builder().url(url).delete();
+		withHostKey(request, hostKey);
+		enqueue(request.build(), Party.class, onSuccess, onError);
+	}
+
+	/**
+	 * Attach the host credential as a header (when present) so the server can verify
+	 * the caller owns the party before honouring a host-only mutation. Kept out of the
+	 * URL/body so it isn't logged by intermediaries.
+	 */
+	private static void withHostKey(Request.Builder request, String hostKey)
+	{
+		if (hostKey != null && !hostKey.isEmpty())
+		{
+			request.header(HOST_KEY_HEADER, hostKey);
+		}
 	}
 
 	private <T> void enqueue(Request request, Type type, Consumer<T> onSuccess, Consumer<Throwable> onError)

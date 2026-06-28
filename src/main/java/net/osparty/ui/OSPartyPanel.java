@@ -49,7 +49,7 @@ public class OSPartyPanel extends PluginPanel
 	private static final String VERSION = "1.0.2";
 	private static final String GITHUB_URL = "https://github.com/iodrareg/osparty";
 
-	private final PartyState partyState = new PartyState();
+	private final PartyState partyState;
 	private final LiveParty liveParty;
 	private final MaterialTabGroup tabGroup;
 	private final MaterialTab searchTab;
@@ -67,6 +67,7 @@ public class OSPartyPanel extends PluginPanel
 		super(false);
 
 		this.liveParty = liveParty;
+		this.partyState = new PartyState(configManager);
 
 		setLayout(new BorderLayout());
 		setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -158,7 +159,7 @@ public class OSPartyPanel extends PluginPanel
 		}
 		liveParty.hostParty(party.getPassphrase(), party.getHost(), party.getActivity(), party.getCapacity(), false,
 			party.getHostRole(), party.isLearner(), party.isTeacher());
-		partyState.setHosting(party);
+		partyState.resumeHosting(party);
 	}
 
 	private void onPartyStateChanged()

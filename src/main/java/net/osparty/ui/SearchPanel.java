@@ -1466,7 +1466,7 @@ class SearchPanel extends JPanel
 		Party current = partyState.getCurrentParty();
 		if (partyState.isHost())
 		{
-			partyService.disbandParty(current.getId(), playerNameSupplier.get(),
+			partyService.disbandParty(current.getId(), playerNameSupplier.get(), partyState.getHostKey(),
 				p -> { }, e -> { });
 		}
 		liveParty.leave();

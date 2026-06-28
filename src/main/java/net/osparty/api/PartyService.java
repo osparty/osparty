@@ -20,16 +20,22 @@ public interface PartyService
 
 	void getPartyByHost(String host, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
-	void createParty(PartyRequest partyRequest, Consumer<Party> onSuccess, Consumer<Throwable> onError);
+	/**
+	 * Create an advertised party. {@code hostKey} is a secret the caller mints; the
+	 * server stores it in the party's session and requires it on later host-only
+	 * mutations (see {@link #heartbeat}/{@link #disbandParty}), so only the real host
+	 * can change or close the ad.
+	 */
+	void createParty(PartyRequest partyRequest, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
 	/**
 	 * Host keep-alive: keep the ad live and report live occupancy/world/layout/roles
 	 * (membership and whereabouts are peer-to-peer, so the ad alone can't track them).
 	 * A non-positive {@code size}/{@code world} or null/blank {@code layout}/{@code roles}
 	 * means "unknown" and is left unchanged. {@code roles} is a comma-separated list of
-	 * role ids the host is still looking for.
+	 * role ids the host is still looking for. {@code hostKey} authorises the mutation.
 	 */
-	void heartbeat(String partyId, int size, int world, String layout, String roles,
+	void heartbeat(String partyId, int size, int world, String layout, String roles, String hostKey,
 		Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
 	void applyToParty(String partyId, String player, Consumer<Party> onSuccess, Consumer<Throwable> onError);
@@ -40,5 +46,6 @@ public interface PartyService
 
 	void kickPlayer(String partyId, String host, String target, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
-	void disbandParty(String partyId, String host, Consumer<Party> onSuccess, Consumer<Throwable> onError);
+	/** Host action: close the ad. {@code hostKey} authorises it. */
+	void disbandParty(String partyId, String host, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 }

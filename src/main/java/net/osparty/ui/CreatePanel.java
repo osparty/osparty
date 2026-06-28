@@ -822,6 +822,9 @@ class CreatePanel extends JPanel
 		setStatus("Creating party...");
 
 		final String advertisedDescription = description;
+		// A secret that authorises host-only changes to this ad: sent on create (the
+		// server binds it to the party's session) and on later heartbeat/disband.
+		final String hostKey = java.util.UUID.randomUUID().toString();
 		// The passphrase must be generated on the client thread (RuneLite reads item
 		// names to build it), so this is async; advertise once we have it.
 		liveParty.generatePassphrase(passphrase -> {
@@ -830,9 +833,10 @@ class CreatePanel extends JPanel
 				privateParty, lootRule, ironmanOnly, hostAccountType, hardMode, invocation, requiredRoles, hostRole,
 				learner, teacher);
 
-			partyService.createParty(request,
+			partyService.createParty(request, hostKey,
 				party -> SwingUtilities.invokeLater(
-					() -> onCreated(party, passphrase, player, capacity, advertiseLayout, hostRole, learner, teacher)),
+					() -> onCreated(party, passphrase, player, capacity, advertiseLayout, hostRole, learner, teacher,
+						hostKey)),
 				error -> SwingUtilities.invokeLater(() -> {
 					creating = false;
 					createButton.setEnabled(true);
@@ -842,7 +846,7 @@ class CreatePanel extends JPanel
 	}
 
 	private void onCreated(Party party, String passphrase, String host, int capacity, boolean advertiseLayout,
-		String hostRole, boolean hostLearner, boolean hostTeacher)
+		String hostRole, boolean hostLearner, boolean hostTeacher, String hostKey)
 	{
 		creating = false;
 		createButton.setEnabled(true);
@@ -861,7 +865,7 @@ class CreatePanel extends JPanel
 		{
 			setStatus("Party created - manage it on the Current tab.");
 		}
-		partyState.setHosting(party);
+		partyState.setHosting(party, hostKey);
 	}
 
 	private void setStatus(String text)
