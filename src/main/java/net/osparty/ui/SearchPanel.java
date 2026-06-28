@@ -1,11 +1,13 @@
 package net.osparty.ui;
 
 import net.osparty.KillcountService;
+import net.osparty.OSPartyConfig;
 import net.osparty.api.PartyService;
 import net.osparty.model.AccountTypes;
 import net.osparty.model.Activity;
 import net.osparty.model.LootRule;
 import net.osparty.model.Party;
+import net.osparty.model.Role;
 import net.osparty.party.LiveParty;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -36,10 +38,13 @@ import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.JTabbedPane;
 import javax.swing.JTextField;
 import javax.swing.Scrollable;
+import javax.swing.SwingConstants;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.SwingUtilities;
@@ -47,6 +52,7 @@ import javax.swing.Timer;
 import javax.swing.event.AncestorEvent;
 import javax.swing.event.AncestorListener;
 import net.runelite.api.vars.AccountType;
+import net.runelite.client.config.ConfigManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 import net.runelite.http.api.worlds.WorldRegion;
@@ -56,13 +62,9 @@ import net.runelite.http.api.worlds.WorldRegion;
  * apply to one. A player can be in only one party at a time - applying leaves
  * the current party first (disbanding it if you were the host). Full parties
  * and your own party aren't appliable.
- *
- * <p>While applied to a party, a banner shows whether you're in the host's
- * friends chat and on the host's world (both read-only checks).
  */
 class SearchPanel extends JPanel
 {
-	/** How long a party stays un-appliable after the player cancels. */
 	private static final long COOLDOWN_MS = 30_000;
 
 	private final PartyService partyService;
@@ -73,16 +75,21 @@ class SearchPanel extends JPanel
 	private final LiveParty liveParty;
 	private final Supplier<AccountType> accountTypeSupplier;
 	private final Supplier<int[]> mapRegionsSupplier;
-	/** Resolves a world number to its region, for the host's location flag. */
 	private final IntFunction<WorldRegion> worldRegionResolver;
 	private final KillcountService killcountService;
+	private final ConfigManager configManager;
 
-	/** Checkbox list of activities to include; all selected by default. */
 	private final JPanel activityListPanel = new JPanel();
 	private final Set<Activity> selectedActivities = EnumSet.allOf(Activity.class);
-	/** The activity we're currently standing near (floated to the top, pre-checked). */
+	private final Set<Role> selectedRoles = EnumSet.noneOf(Role.class);
+	private boolean rolesExpanded;
+	private final JButton roleToggle = new JButton();
+	private final JTabbedPane roleTabs = new JTabbedPane();
+	/** Collapsible content: the role tabs plus the separate learner mark. */
+	private final JPanel roleContent = new JPanel();
+	/** Self-mark (not a role): tags us as a learner to the host when we apply. */
+	private final JCheckBox imLearnerCheck = new JCheckBox("I'm a learner");
 	private Activity recommended;
-	/** Free-text filter over host name / description / activity. */
 	private final JTextField textField = new JTextField();
 
 	private final JComboBox<String> lootFilter = new JComboBox<>(new String[]{"Any loot", "FFA", "Split"});
@@ -93,17 +100,12 @@ class SearchPanel extends JPanel
 	private final JLabel statusLabel = new JLabel();
 	private final JPanel resultsPanel = new JPanel();
 
-	/** Last raw search results, kept so the filters can re-apply without re-querying. */
 	private List<Party> lastResults;
-	/** Signature of the currently-rendered cards, to skip rebuilds when nothing changed. */
 	private String renderedSignature;
 	private Timer autoRefreshTimer;
 
-	/** Party id -> epoch millis when its cooldown expires. */
 	private final Map<String, Long> cooldownExpiry = new HashMap<>();
-	/** Apply buttons currently displayed, keyed by party id (rebuilt per search). */
 	private final Map<String, JButton> applyButtons = new HashMap<>();
-	/** Parties currently displayed, keyed by id (rebuilt per search). */
 	private final Map<String, Party> partiesById = new HashMap<>();
 
 	private Timer uiTimer;
@@ -111,7 +113,7 @@ class SearchPanel extends JPanel
 	SearchPanel(PartyService partyService, Supplier<String> playerNameSupplier,
 		Supplier<String> friendsChatOwnerSupplier, IntSupplier worldSupplier, PartyState partyState,
 		LiveParty liveParty, Supplier<AccountType> accountTypeSupplier, Supplier<int[]> mapRegionsSupplier,
-		IntFunction<WorldRegion> worldRegionResolver, KillcountService killcountService)
+		IntFunction<WorldRegion> worldRegionResolver, KillcountService killcountService, ConfigManager configManager)
 	{
 		this.partyService = partyService;
 		this.playerNameSupplier = playerNameSupplier;
@@ -123,6 +125,10 @@ class SearchPanel extends JPanel
 		this.mapRegionsSupplier = mapRegionsSupplier;
 		this.worldRegionResolver = worldRegionResolver;
 		this.killcountService = killcountService;
+		this.configManager = configManager;
+
+		// Restore the filters the player last used, before the UI is built from them.
+		loadFilters();
 
 		setLayout(new BorderLayout(0, 8));
 		setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
@@ -132,6 +138,7 @@ class SearchPanel extends JPanel
 		north.setLayout(new BoxLayout(north, BoxLayout.Y_AXIS));
 		north.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		north.add(buildActivityFilter());
+		north.add(buildRoleFilter());
 		north.add(buildTextFilter());
 		north.add(buildControls());
 		north.add(buildFilters());
@@ -227,7 +234,6 @@ class SearchPanel extends JPanel
 	{
 		JPanel panel = cappedRow(new BorderLayout(0, 4));
 
-		// Header: "Activities" label on the left, All/None toggles on the right.
 		JPanel header = new JPanel(new BorderLayout());
 		header.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
@@ -261,7 +267,178 @@ class SearchPanel extends JPanel
 		return panel;
 	}
 
-	/** A free-text filter over host name, description and activity. */
+	/**
+	 * The role multiselect (ToB/CoX): tick the roles you're willing to fill; none
+	 * ticked means no role constraint. Collapses to a single header row to save space.
+	 */
+	private JPanel buildRoleFilter()
+	{
+		JPanel panel = cappedRow(new BorderLayout(0, 4));
+		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
+
+		// Collapsible header: clicking it shows/hides the (fairly tall) tabbed picker.
+		roleToggle.setHorizontalAlignment(SwingConstants.LEFT);
+		roleToggle.setFocusPainted(false);
+		roleToggle.setContentAreaFilled(false);
+		roleToggle.setBorder(BorderFactory.createEmptyBorder(2, 0, 2, 0));
+		roleToggle.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		roleToggle.setFont(FontManager.getRunescapeSmallFont());
+		roleToggle.addActionListener(e -> setRolesExpanded(!rolesExpanded));
+		panel.add(roleToggle, BorderLayout.NORTH);
+
+		// One tab per activity + difficulty so a CM pick can't be confused with a
+		// normal CoX one (or an HMT pick with a normal ToB one).
+		roleTabs.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		roleTabs.addTab("ToB", buildRoleTab(Activity.THEATRE_OF_BLOOD, false));
+		roleTabs.addTab("HMT", buildRoleTab(Activity.THEATRE_OF_BLOOD, true));
+		roleTabs.addTab("CoX", buildRoleTab(Activity.CHAMBERS_OF_XERIC, false));
+		roleTabs.addTab("CM", buildRoleTab(Activity.CHAMBERS_OF_XERIC, true));
+		roleTabs.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+		// A learner mark separate from the roles: re-broadcasts live if toggled while
+		// already applied; otherwise it's read when we apply (see doApply).
+		imLearnerCheck.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		imLearnerCheck.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		imLearnerCheck.setFont(FontManager.getRunescapeSmallFont());
+		imLearnerCheck.setFocusPainted(false);
+		imLearnerCheck.setAlignmentX(Component.LEFT_ALIGNMENT);
+		imLearnerCheck.setBorder(BorderFactory.createEmptyBorder(6, 4, 2, 4));
+		imLearnerCheck.addActionListener(e -> {
+			if (isMemberInParty())
+			{
+				liveParty.setLocalLearner(imLearnerCheck.isSelected());
+			}
+			persistFilters();
+		});
+
+		roleContent.setLayout(new BoxLayout(roleContent, BoxLayout.Y_AXIS));
+		roleContent.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		roleContent.add(roleTabs);
+		roleContent.add(imLearnerCheck);
+		roleContent.setVisible(rolesExpanded);
+		panel.add(roleContent, BorderLayout.CENTER);
+
+		updateRoleToggleText();
+		return panel;
+	}
+
+	private void setRolesExpanded(boolean expanded)
+	{
+		rolesExpanded = expanded;
+		roleContent.setVisible(expanded);
+		updateRoleToggleText();
+		persistFilters();
+		revalidate();
+		repaint();
+	}
+
+	private void updateRoleToggleText()
+	{
+		String count = selectedRoles.isEmpty() ? "" : " (" + selectedRoles.size() + ")";
+		// Plain ASCII chevron: ">" collapsed (points right), "v" expanded (points down) -
+		// the RuneScape font has no glyph for the Unicode triangles.
+		roleToggle.setText((rolesExpanded ? "v " : "> ") + "Roles I can fill" + count);
+	}
+
+	private JComponent buildRoleTab(Activity activity, boolean hardMode)
+	{
+		JPanel box = new JPanel();
+		box.setLayout(new BoxLayout(box, BoxLayout.Y_AXIS));
+		box.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		box.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
+
+		for (Role role : activity.filterRoles(hardMode))
+		{
+			JCheckBox check = new JCheckBox(role.getDisplayName());
+			check.setSelected(selectedRoles.contains(role));
+			check.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+			check.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			check.setFont(FontManager.getRunescapeSmallFont());
+			check.setFocusPainted(false);
+			check.setMargin(new Insets(0, 0, 0, 0));
+			check.setIconTextGap(4);
+			check.setBorder(BorderFactory.createEmptyBorder(1, 0, 1, 0));
+			check.setAlignmentX(Component.LEFT_ALIGNMENT);
+			check.addActionListener(e -> {
+				if (check.isSelected())
+				{
+					selectedRoles.add(role);
+				}
+				else
+				{
+					selectedRoles.remove(role);
+				}
+				updateRoleToggleText();
+				filtersChanged();
+			});
+			box.add(check);
+		}
+		return box;
+	}
+
+	/**
+	 * Whether a party passes the role filter. Non-role parties always pass. Each
+	 * activity's box is independent: with nothing ticked in that box, parties of
+	 * that activity pass. Otherwise the party must still need one of the ticked
+	 * roles - with "Fill / Any" meaning "I'll do any role", and a party's own Fill
+	 * slot accepting anyone.
+	 */
+	private boolean matchesRoleFilter(Party party, Activity activity)
+	{
+		if (activity == null || !activity.hasRoles())
+		{
+			return true;
+		}
+		// Only consider ticks that belong to this activity's box (normal + CM roles).
+		Set<Role> picked = EnumSet.noneOf(Role.class);
+		for (Role role : activity.allFilterRoles())
+		{
+			if (selectedRoles.contains(role))
+			{
+				picked.add(role);
+			}
+		}
+		if (picked.isEmpty())
+		{
+			return true; // this activity's box is unconstrained
+		}
+		List<String> needed = neededRolesOf(party);
+		if (needed == null || needed.isEmpty())
+		{
+			return true; // no role info on the ad - don't over-filter
+		}
+		// The party's difficulty selects which wildcard/Fill applies (a CM party uses
+		// the CM Fill, an HMT searcher's "any" is the HMT one, etc.).
+		Role any = activity.anyRole(party.isHardMode());
+		if (any != null && picked.contains(any))
+		{
+			return true; // "I'll do any role"
+		}
+		Role fill = activity.fillRole(party.isHardMode());
+		if (fill != null && needed.contains(fill.getId()))
+		{
+			return true; // an advertised Fill slot accepts anyone
+		}
+		for (Role role : picked)
+		{
+			if (needed.contains(role.getId()))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** The roles still open on an ad: the live {@code neededRoles}, else the full comp. */
+	private static List<String> neededRolesOf(Party party)
+	{
+		if (party.getNeededRoles() != null && !party.getNeededRoles().isEmpty())
+		{
+			return party.getNeededRoles();
+		}
+		return party.getRequiredRoles();
+	}
+
 	private JPanel buildTextFilter()
 	{
 		JPanel panel = cappedRow(new BorderLayout(0, 4));
@@ -298,7 +475,6 @@ class SearchPanel extends JPanel
 		return panel;
 	}
 
-	/** Check or uncheck every activity at once. */
 	private void setAllActivities(boolean selected)
 	{
 		if (selected)
@@ -310,7 +486,7 @@ class SearchPanel extends JPanel
 			selectedActivities.clear();
 		}
 		rebuildActivityList();
-		reapplyFilters();
+		filtersChanged();
 	}
 
 	private JButton miniButton(String text)
@@ -345,7 +521,7 @@ class SearchPanel extends JPanel
 				{
 					selectedActivities.remove(activity);
 				}
-				reapplyFilters();
+				filtersChanged();
 			});
 			activityListPanel.add(box);
 		}
@@ -393,12 +569,12 @@ class SearchPanel extends JPanel
 
 	private JPanel buildFilters()
 	{
-		lootFilter.addActionListener(e -> reapplyFilters());
+		lootFilter.addActionListener(e -> filtersChanged());
 
 		ironmanFilter.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		ironmanFilter.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		ironmanFilter.setFocusPainted(false);
-		ironmanFilter.addActionListener(e -> reapplyFilters());
+		ironmanFilter.addActionListener(e -> filtersChanged());
 
 		// GridBagLayout centres each control within a full-width cell (weightx=1 +
 		// anchor CENTER) - robust regardless of the surrounding BoxLayout.
@@ -460,6 +636,98 @@ class SearchPanel extends JPanel
 		}
 	}
 
+	/** A filter changed: save the new selection and re-render the results. */
+	private void filtersChanged()
+	{
+		persistFilters();
+		reapplyFilters();
+	}
+
+	// ---- filter persistence (remembered across sessions) ---------------------
+
+	private static final String KEY_ACTIVITIES = "searchActivities";
+	private static final String KEY_ROLES = "searchRoles";
+	private static final String KEY_LOOT = "searchLoot";
+	private static final String KEY_IRONMAN = "searchIronman";
+	private static final String KEY_LEARNER = "searchLearner";
+	private static final String KEY_ROLES_EXPANDED = "searchRolesExpanded";
+
+	/** Save the current filter selection so it's restored next session. */
+	private void persistFilters()
+	{
+		put(KEY_ACTIVITIES, idsOf(selectedActivities, Activity::getId));
+		put(KEY_ROLES, idsOf(selectedRoles, Role::getId));
+		put(KEY_LOOT, (String) lootFilter.getSelectedItem());
+		put(KEY_IRONMAN, Boolean.toString(ironmanFilter.isSelected()));
+		put(KEY_LEARNER, Boolean.toString(imLearnerCheck.isSelected()));
+		put(KEY_ROLES_EXPANDED, Boolean.toString(rolesExpanded));
+	}
+
+	/** Restore the saved filter selection into the in-memory state and the controls. */
+	private void loadFilters()
+	{
+		String activities = get(KEY_ACTIVITIES);
+		if (activities != null)
+		{
+			selectedActivities.clear();
+			for (String id : activities.split(","))
+			{
+				Activity activity = Activity.fromId(id);
+				if (activity != null)
+				{
+					selectedActivities.add(activity);
+				}
+			}
+		}
+
+		String roles = get(KEY_ROLES);
+		if (roles != null)
+		{
+			selectedRoles.clear();
+			for (String id : roles.split(","))
+			{
+				Role role = Role.fromId(id);
+				if (role != null)
+				{
+					selectedRoles.add(role);
+				}
+			}
+		}
+
+		String loot = get(KEY_LOOT);
+		if (loot != null)
+		{
+			lootFilter.setSelectedItem(loot);
+		}
+		ironmanFilter.setSelected(Boolean.parseBoolean(get(KEY_IRONMAN)));
+		imLearnerCheck.setSelected(Boolean.parseBoolean(get(KEY_LEARNER)));
+		rolesExpanded = Boolean.parseBoolean(get(KEY_ROLES_EXPANDED));
+	}
+
+	private static <T> String idsOf(Set<T> values, java.util.function.Function<T, String> id)
+	{
+		StringBuilder sb = new StringBuilder();
+		for (T value : values)
+		{
+			if (sb.length() > 0)
+			{
+				sb.append(',');
+			}
+			sb.append(id.apply(value));
+		}
+		return sb.toString();
+	}
+
+	private void put(String key, String value)
+	{
+		configManager.setConfiguration(OSPartyConfig.GROUP, key, value == null ? "" : value);
+	}
+
+	private String get(String key)
+	{
+		return configManager.getConfiguration(OSPartyConfig.GROUP, key);
+	}
+
 	private void joinByCode()
 	{
 		String code = codeField.getText().trim();
@@ -501,11 +769,23 @@ class SearchPanel extends JPanel
 			setStatus("You don't meet that party's minimum killcount.");
 			return;
 		}
+
+		Activity activity = Activity.fromId(party.getActivity());
+		String role = null;
+		if (activity != null && activity.hasRoles())
+		{
+			role = promptForRole(party, activity);
+			if (role == null)
+			{
+				return; // cancelled the role dialog
+			}
+		}
+
 		codeField.setText("");
-		leaveCurrentThen(() -> doApply(party));
+		final String chosenRole = role;
+		leaveCurrentThen(() -> doApply(party, chosenRole));
 	}
 
-	/** Whether the local account satisfies a party's ironman-only requirement. */
 	private boolean meetsIronmanRule(Party party)
 	{
 		return !party.isIronmanOnly() || AccountTypes.isIronman(accountTypeSupplier.get());
@@ -570,6 +850,10 @@ class SearchPanel extends JPanel
 	private String tagLine(Party party)
 	{
 		List<String> tags = new ArrayList<>();
+		if (party.isLearnerRaid())
+		{
+			tags.add(party.learnerLabel());
+		}
 		LootRule loot = LootRule.fromName(party.getLootRule());
 		if (loot != LootRule.UNSPECIFIED)
 		{
@@ -624,6 +908,10 @@ class SearchPanel extends JPanel
 				{
 					continue;
 				}
+				if (!matchesRoleFilter(party, act))
+				{
+					continue;
+				}
 				if (!text.isEmpty() && !matchesText(party, act, text))
 				{
 					continue;
@@ -633,7 +921,7 @@ class SearchPanel extends JPanel
 		}
 
 		// Skip the rebuild (and its flicker) when nothing rendered would change.
-		String signature = selectedSignature() + "|" + text + "|" + signatureOf(visible);
+		String signature = selectedSignature() + "|" + roleSignature() + "|" + text + "|" + signatureOf(visible);
 		if (signature.equals(renderedSignature))
 		{
 			return;
@@ -664,7 +952,6 @@ class SearchPanel extends JPanel
 		resultsPanel.repaint();
 	}
 
-	/** True if the free-text query matches the host, description or activity name. */
 	private static boolean matchesText(Party party, Activity activity, String lowerQuery)
 	{
 		if (contains(party.getHost(), lowerQuery) || contains(party.getDescription(), lowerQuery))
@@ -693,6 +980,20 @@ class SearchPanel extends JPanel
 		return sb.toString();
 	}
 
+	/** A signature of the ticked-role set so toggling it triggers a rebuild. */
+	private String roleSignature()
+	{
+		StringBuilder sb = new StringBuilder();
+		for (Role role : Role.values())
+		{
+			if (selectedRoles.contains(role))
+			{
+				sb.append(role.getId()).append(',');
+			}
+		}
+		return sb.toString();
+	}
+
 	/**
 	 * A stable signature of the visible parties so unchanged refreshes can no-op.
 	 * Includes each party's age in minutes so the "searching Xm" labels stay current.
@@ -707,6 +1008,7 @@ class SearchPanel extends JPanel
 				.append('/').append(party.getCapacity())
 				.append('w').append(party.getWorld() == null ? "" : party.getWorld())
 				.append('L').append(party.getLayout() == null ? "" : party.getLayout())
+				.append('R').append(neededRolesOf(party) == null ? "" : neededRolesOf(party))
 				.append('d').append(party.isHardMode() ? "h" : "").append(party.getInvocation())
 				.append('@').append(ageMinutes(now, party.getCreatedAt())).append(';');
 		}
@@ -819,7 +1121,6 @@ class SearchPanel extends JPanel
 		meta.setFont(FontManager.getRunescapeSmallFont());
 
 		info.add(host);
-		// Host's world (with a country flag for its region) sits under the name.
 		JLabel worldLabel = buildWorldLabel(party);
 		if (worldLabel != null)
 		{
@@ -843,6 +1144,19 @@ class SearchPanel extends JPanel
 			req.setForeground(ColorScheme.PROGRESS_INPROGRESS_COLOR);
 			req.setFont(FontManager.getRunescapeSmallFont());
 			info.add(req);
+		}
+
+		// Roles still needed (ToB/CoX), wrapped across rows so the full list shows.
+		String needs = neededRolesText(activity, party);
+		if (needs != null)
+		{
+			for (String line : wrapByComma(needs, 30))
+			{
+				JLabel roles = new JLabel(line);
+				roles.setForeground(ColorScheme.BRAND_ORANGE);
+				roles.setFont(FontManager.getRunescapeSmallFont());
+				info.add(roles);
+			}
 		}
 
 		if (party.getDescription() != null && !party.getDescription().isEmpty())
@@ -955,7 +1269,71 @@ class SearchPanel extends JPanel
 		return req.toString();
 	}
 
-	/** True if this is the party we're currently in as a member. */
+	/**
+	 * A "Needs: North freeze, Range x2" summary of a role party's still-open roles,
+	 * or null when the activity has no roles / nothing's open.
+	 */
+	private static String neededRolesText(Activity activity, Party party)
+	{
+		if (activity == null || !activity.hasRoles())
+		{
+			return null;
+		}
+		List<String> needed = neededRolesOf(party);
+		if (needed == null || needed.isEmpty())
+		{
+			return null;
+		}
+		// Count occurrences keeping first-seen order.
+		Map<String, Integer> counts = new java.util.LinkedHashMap<>();
+		for (String id : needed)
+		{
+			counts.merge(id, 1, Integer::sum);
+		}
+		List<String> parts = new ArrayList<>();
+		for (Map.Entry<String, Integer> entry : counts.entrySet())
+		{
+			String name = Role.displayNameOf(entry.getKey());
+			parts.add(entry.getValue() > 1 ? name + " x" + entry.getValue() : name);
+		}
+		return "Needs: " + String.join(", ", parts);
+	}
+
+	/**
+	 * Force the applicant to pick one of a role party's still-open roles. Returns
+	 * the chosen role id, or null if they cancelled (or there's nothing to choose).
+	 */
+	private String promptForRole(Party party, Activity activity)
+	{
+		List<Role> options = new ArrayList<>();
+		List<String> needed = neededRolesOf(party);
+		if (needed != null)
+		{
+			for (String id : needed)
+			{
+				Role role = Role.fromId(id);
+				if (role != null && !options.contains(role))
+				{
+					options.add(role);
+				}
+			}
+		}
+		if (options.isEmpty())
+		{
+			// No advertised roles to choose from - fall back to the full role set
+			// for the party's difficulty (CoX normal vs Challenge Mode).
+			options.addAll(activity.roles(party.isHardMode()));
+		}
+		if (options.isEmpty())
+		{
+			return null;
+		}
+		Role[] choices = options.toArray(new Role[0]);
+		Role pick = (Role) JOptionPane.showInputDialog(this, "Which role will you fill?",
+			"Choose a role", JOptionPane.QUESTION_MESSAGE, null, choices, choices[0]);
+		return pick != null ? pick.getId() : null;
+	}
+
 	private boolean isActive(Party party)
 	{
 		return partyState.isInParty() && !partyState.isHost()
@@ -999,6 +1377,18 @@ class SearchPanel extends JPanel
 			return;
 		}
 
+		// ToB/CoX: the applicant must commit to one of the party's open roles.
+		Activity activity = Activity.fromId(party.getActivity());
+		String role = null;
+		if (activity != null && activity.hasRoles())
+		{
+			role = promptForRole(party, activity);
+			if (role == null)
+			{
+				return; // cancelled the role dialog
+			}
+		}
+
 		JButton button = applyButtons.get(party.getId());
 		if (button != null)
 		{
@@ -1007,7 +1397,8 @@ class SearchPanel extends JPanel
 		}
 
 		// Leave whatever party we're currently in first (one party at a time).
-		leaveCurrentThen(() -> doApply(party));
+		final String chosenRole = role;
+		leaveCurrentThen(() -> doApply(party, chosenRole));
 	}
 
 	private void leaveCurrentThen(Runnable next)
@@ -1031,7 +1422,7 @@ class SearchPanel extends JPanel
 		next.run();
 	}
 
-	private void doApply(Party party)
+	private void doApply(Party party, String role)
 	{
 		String passphrase = party.getPassphrase();
 		if (passphrase == null || passphrase.isEmpty())
@@ -1041,9 +1432,12 @@ class SearchPanel extends JPanel
 			return;
 		}
 
-		liveParty.joinParty(passphrase, party.getActivity(), party.getCapacity());
+		boolean learner = imLearnerCheck.isSelected();
+		liveParty.joinParty(passphrase, party.getActivity(), party.getCapacity(), role, learner);
 		partyState.setMember(party);
-		setStatus("Joined " + party.getHost() + "'s room - awaiting host approval.");
+		String roleSuffix = role != null ? " as " + Role.displayNameOf(role) : "";
+		String learnerSuffix = learner ? " (learner)" : "";
+		setStatus("Joined " + party.getHost() + "'s room" + roleSuffix + learnerSuffix + " - awaiting host approval.");
 		updateAllButtons();
 	}
 

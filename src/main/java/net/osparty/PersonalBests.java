@@ -15,7 +15,6 @@ public final class PersonalBests
 	{
 	}
 
-	/** @return the PB in seconds for {@code activityId} at {@code teamSize}, or {@code -1} if unknown. */
 	public static double read(ConfigManager configManager, String activityId, int teamSize)
 	{
 		String boss = bossName(activityId);
@@ -38,7 +37,6 @@ public final class PersonalBests
 		return pb != null ? pb : -1;
 	}
 
-	/** @return true if the activity has a meaningful timed PB (raids/Inferno/etc.). */
 	public static boolean isPbActivity(String activityId)
 	{
 		return bossName(activityId) != null;
@@ -54,7 +52,6 @@ public final class PersonalBests
 		return String.format("%d:%02d.%d", mins, secs, frac);
 	}
 
-	/** Activity id -> the (lower-case) boss name chat-commands stores PBs under. */
 	private static String bossName(String activityId)
 	{
 		if (activityId == null)

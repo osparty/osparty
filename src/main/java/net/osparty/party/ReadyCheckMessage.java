@@ -18,9 +18,8 @@ public class ReadyCheckMessage extends PartyMemberMessage
 {
 	public enum Type
 	{
-		/** Begin a new ready check (the sender is implicitly ready). */
+		/** Begin a new check (sender is implicitly ready). */
 		START,
-		/** The sender has readied up for the active check. */
 		READY,
 	}
 
@@ -29,6 +28,6 @@ public class ReadyCheckMessage extends PartyMemberMessage
 	private Type kind;
 	private long checkId;
 
-	/** Display name of the player who started the check (START only). */
+	/** Set on START only. */
 	private String starter;
 }

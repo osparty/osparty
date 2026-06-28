@@ -2,6 +2,7 @@ package net.osparty.ui;
 
 import net.osparty.model.Activity;
 import net.osparty.model.Applicant;
+import net.osparty.model.Role;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
@@ -14,9 +15,7 @@ import net.runelite.client.ui.overlay.components.TitleComponent;
 
 /**
  * In-game overlay listing every applicant pending for the party the host is
- * running — name, combat level and activity killcount each. Renders nothing
- * when there are none. Inspect full gear/stats and Admit/Decline in the side
- * panel.
+ * running — name, combat level and activity killcount each.
  */
 public class ApplicantOverlay extends OverlayPanel
 {
@@ -64,6 +63,24 @@ public class ApplicantOverlay extends OverlayPanel
 				.left(a.getName())
 				.right("cb " + a.getCombatLevel())
 				.build());
+
+			if (a.getRole() != null)
+			{
+				panelComponent.getChildren().add(LineComponent.builder()
+					.left("Role")
+					.right(Role.displayNameOf(a.getRole()))
+					.rightColor(Color.ORANGE)
+					.build());
+			}
+
+			if (a.isLearner())
+			{
+				panelComponent.getChildren().add(LineComponent.builder()
+					.left("Learner")
+					.right("yes")
+					.rightColor(Color.ORANGE)
+					.build());
+			}
 
 			if (a.getKillCount() >= 0)
 			{

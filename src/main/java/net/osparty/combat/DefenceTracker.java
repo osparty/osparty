@@ -30,18 +30,15 @@ public class DefenceTracker
 
 	private final Client client;
 
-	/** The npc index we're tracking, or -1 when nothing is tracked. */
+	/** -1 = nothing tracked. */
 	private int bossIndex = -1;
 	private String bossName = "";
 	private double bossDef = -1;
-	/** The monster's starting defence (scaled), so the overlay can show the drop. */
 	private double bossStartDef;
 	private double minDef;
 
-	/** Specs seen this tick, applied in order on the next game tick. */
 	private final List<SpecialCounterUpdate> pending = new ArrayList<>();
 
-	/** A snapshot of the tracked monster's defence for the overlay. */
 	@Value
 	public static class DefenceState
 	{
@@ -74,7 +71,7 @@ public class DefenceTracker
 		}
 	}
 
-	/** Apply queued specs and drop the tracked monster once it dies. Client thread. */
+	/** Client thread. */
 	public void onGameTick()
 	{
 		for (SpecialCounterUpdate event : pending)
@@ -235,7 +232,6 @@ public class DefenceTracker
 		return null;
 	}
 
-	/** @return the tracked monster's defence for the overlay, or null when none. */
 	public DefenceState state()
 	{
 		if (bossIndex == -1 || bossDef < 0)

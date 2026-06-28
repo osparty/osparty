@@ -10,10 +10,9 @@ import javax.swing.ImageIcon;
 import net.runelite.client.util.ImageUtil;
 
 /**
- * Small status glyphs drawn at load time: a green check and a red cross used to
- * show whether a party member is in the host's friends chat. Drawn rather than
- * shipped as assets so they stay crisp at this size and need no network fetch;
- * swap in wiki PNGs here if preferred.
+ * Small status glyphs drawn at load time (check/cross/chevrons/presence dots).
+ * Drawn rather than shipped as assets so they stay crisp at this size and need
+ * no network fetch.
  */
 final class StatusIcons
 {
@@ -21,9 +20,7 @@ final class StatusIcons
 	static final ImageIcon CROSS = new ImageIcon(cross());
 	static final ImageIcon CHEVRON_DOWN = new ImageIcon(chevron(true));
 	static final ImageIcon CHEVRON_UP = new ImageIcon(chevron(false));
-	/** The in-game friends-chat channel icon (from the OSRS wiki). */
 	static final ImageIcon FRIENDS_CHAT = loadFriendsChat();
-	/** Green/red presence dots shown beside a member's name. */
 	static final ImageIcon ONLINE = new ImageIcon(dot(new Color(0x4C, 0xD1, 0x37)));
 	static final ImageIcon OFFLINE = new ImageIcon(dot(new Color(0xD1, 0x3A, 0x3A)));
 
@@ -59,7 +56,6 @@ final class StatusIcons
 		return img;
 	}
 
-	/** A small chevron pointing down (collapsed) or up (expanded). */
 	private static BufferedImage chevron(boolean down)
 	{
 		BufferedImage img = base();
@@ -81,7 +77,6 @@ final class StatusIcons
 		return img;
 	}
 
-	/** A small filled presence dot in the given colour. */
 	private static BufferedImage dot(Color color)
 	{
 		BufferedImage img = base();

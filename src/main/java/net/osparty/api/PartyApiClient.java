@@ -23,13 +23,10 @@ import okhttp3.Response;
 import okhttp3.ResponseBody;
 
 /**
- * Thin asynchronous client over the (separately implemented) party queue API.
+ * Thin asynchronous client over the party queue API.
  *
- * <p>All calls are non-blocking; results are delivered on an OkHttp dispatcher
- * thread, so callers that touch Swing must marshal back onto the EDT
- * themselves. Every request is keyed on the logged in player name supplied by
- * the caller, which is how the backend associates a queue entry with an
- * account.
+ * <p>Results are delivered on an OkHttp dispatcher thread, so callers that touch
+ * Swing must marshal back onto the EDT themselves.
  */
 @Slf4j
 @Singleton
@@ -40,8 +37,30 @@ public class PartyApiClient implements PartyService
 	{
 	}.getType();
 
-	/** Fixed party advertising API. Not user-configurable. */
-	private static final String API_BASE_URL = "https://api.osparty.net";
+	/** Production party advertising API, used unless overridden for local development. */
+	private static final String DEFAULT_API_BASE_URL = "https://api.osparty.net";
+
+	/**
+	 * The API base URL. Defaults to {@link #DEFAULT_API_BASE_URL}, but can be pointed
+	 * at a local API during development via the {@code osparty.apiUrl} system property
+	 * or the {@code OSPARTY_API_URL} environment variable (the property wins).
+	 */
+	private static final String API_BASE_URL = resolveBaseUrl();
+
+	private static String resolveBaseUrl()
+	{
+		String property = System.getProperty("osparty.apiUrl");
+		if (property != null && !property.trim().isEmpty())
+		{
+			return property.trim();
+		}
+		String env = System.getenv("OSPARTY_API_URL");
+		if (env != null && !env.trim().isEmpty())
+		{
+			return env.trim();
+		}
+		return DEFAULT_API_BASE_URL;
+	}
 
 	private final OkHttpClient httpClient;
 	private final Gson gson;
@@ -64,15 +83,11 @@ public class PartyApiClient implements PartyService
 		return parsed.newBuilder().addPathSegment("api").addPathSegment("v1");
 	}
 
-	/** @return the fixed API base URL (for logging/diagnostics). */
 	public static String apiBaseUrl()
 	{
 		return API_BASE_URL;
 	}
 
-	/**
-	 * Fetch the parties currently queued for the given activity.
-	 */
 	@Override
 	public void searchParties(Activity activity, String player, Consumer<List<Party>> onSuccess, Consumer<Throwable> onError)
 	{
@@ -90,9 +105,6 @@ public class PartyApiClient implements PartyService
 		enqueue(request, PARTY_LIST_TYPE, onSuccess, onError);
 	}
 
-	/**
-	 * Fetch a single party by its invite code (works for private parties too).
-	 */
 	@Override
 	public void getPartyByCode(String code, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
@@ -106,9 +118,6 @@ public class PartyApiClient implements PartyService
 		enqueue(request, Party.class, onSuccess, onError);
 	}
 
-	/**
-	 * Fetch the ad currently hosted by a player (used to rejoin after a restart).
-	 */
 	@Override
 	public void getPartyByHost(String host, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
@@ -122,9 +131,6 @@ public class PartyApiClient implements PartyService
 		enqueue(request, Party.class, onSuccess, onError);
 	}
 
-	/**
-	 * Create a new party hosted by the logged in player and enter the queue.
-	 */
 	@Override
 	public void createParty(PartyRequest partyRequest, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
@@ -139,15 +145,13 @@ public class PartyApiClient implements PartyService
 	 * stale. PUT (not POST) so it isn't caught by the create rate limit.
 	 */
 	@Override
-	public void heartbeat(String partyId, int size, int world, String layout,
+	public void heartbeat(String partyId, int size, int world, String layout, String roles,
 		Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
 		HttpUrl.Builder url = baseUrl()
 			.addPathSegment("parties")
 			.addPathSegment(partyId)
 			.addPathSegment("heartbeat");
-		// Report the live occupancy, host world and (CoX) raid layout so search
-		// reflects who's in the party, where the host is, and the raid rotation.
 		if (size > 0)
 		{
 			url.addQueryParameter("size", Integer.toString(size));
@@ -160,15 +164,16 @@ public class PartyApiClient implements PartyService
 		{
 			url.addQueryParameter("layout", layout);
 		}
+		if (roles != null && !roles.isEmpty())
+		{
+			url.addQueryParameter("roles", roles);
+		}
 
 		RequestBody body = RequestBody.create(JSON, "{}");
 		Request request = new Request.Builder().url(url.build()).put(body).build();
 		enqueue(request, Party.class, onSuccess, onError);
 	}
 
-	/**
-	 * Submit an application for the logged in player to an existing party.
-	 */
 	@Override
 	public void applyToParty(String partyId, String player, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
@@ -183,9 +188,6 @@ public class PartyApiClient implements PartyService
 		enqueue(request, Party.class, onSuccess, onError);
 	}
 
-	/**
-	 * Withdraw the logged in player's pending application to a party.
-	 */
 	@Override
 	public void cancelApplication(String partyId, String player, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
@@ -200,9 +202,6 @@ public class PartyApiClient implements PartyService
 		enqueue(request, Party.class, onSuccess, onError);
 	}
 
-	/**
-	 * Host action: admit an applicant into the party.
-	 */
 	@Override
 	public void acceptApplicant(String partyId, String host, String applicant, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
@@ -217,9 +216,6 @@ public class PartyApiClient implements PartyService
 		enqueue(request, Party.class, onSuccess, onError);
 	}
 
-	/**
-	 * Host action: remove a member from the party.
-	 */
 	@Override
 	public void kickPlayer(String partyId, String host, String target, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
@@ -234,9 +230,6 @@ public class PartyApiClient implements PartyService
 		enqueue(request, Party.class, onSuccess, onError);
 	}
 
-	/**
-	 * Host action: close the party.
-	 */
 	@Override
 	public void disbandParty(String partyId, String host, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{

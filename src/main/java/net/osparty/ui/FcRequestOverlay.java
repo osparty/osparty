@@ -10,8 +10,7 @@ import net.runelite.client.ui.overlay.components.TitleComponent;
 
 /**
  * A brief, self-dismissing in-game popup shown to a member when the party host
- * asks them to join the host's friends chat. Renders for a few seconds and then
- * disappears on its own (no acknowledgement needed).
+ * asks them to join the host's friends chat.
  */
 public class FcRequestOverlay extends OverlayPanel
 {
@@ -24,7 +23,6 @@ public class FcRequestOverlay extends OverlayPanel
 		setPosition(OverlayPosition.TOP_CENTER);
 	}
 
-	/** Show the popup for {@code durationMs} milliseconds, replacing any current one. */
 	public void show(String hostName, String friendsChat, long durationMs)
 	{
 		this.hostName = hostName;

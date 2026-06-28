@@ -27,7 +27,7 @@ import net.runelite.client.ui.overlay.components.TextComponent;
  */
 public class TilePingOverlay extends Overlay
 {
-	/** Animation length; matches LiveParty's ping window so a ping fades out fully. */
+	/** Matches LiveParty's ping window so a ping fades out fully. */
 	private static final long ANIM_MS = 2_000;
 	private static final int MAX_RADIUS = 48;
 

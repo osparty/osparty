@@ -27,7 +27,6 @@ public class RuneWatchCase
 	/** "RW" (RuneWatch) or "WDR" (We Do Raids). */
 	private String source;
 
-	/** Human-readable source name for display. */
 	public String sourceName()
 	{
 		return source != null && source.equalsIgnoreCase("wdr") ? "We Do Raids" : "RuneWatch";

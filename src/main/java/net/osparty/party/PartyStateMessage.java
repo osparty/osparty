@@ -9,14 +9,10 @@ import net.runelite.client.party.messages.PartyMemberMessage;
 
 /**
  * The host-authoritative state of a party, broadcast <b>only by the host</b>.
- * RuneLite's party network has no host or access control, so this message is
- * how one peer declares itself the authority and publishes the agreed roster
- * and rules. Re-sent whenever the state changes and whenever a new peer joins
- * (so newcomers learn the current state).
- *
- * <p>This is a cooperative convention, not an enforced one: a modified client
- * could ignore or spoof it. That is acceptable for an LFG tool and matches the
- * trust model of the rest of the party network.
+ * RuneLite's party network has no host or access control, so this is how one peer
+ * declares itself the authority and publishes the agreed roster and rules. Re-sent
+ * whenever the state changes and whenever a new peer joins (so newcomers learn it).
+ * Cooperative, not enforced: a modified client could ignore or spoof it.
  */
 @Data
 @NoArgsConstructor
@@ -26,19 +22,18 @@ public class PartyStateMessage extends PartyMemberMessage
 	private long hostMemberId;
 	private String hostName;
 
-	/** Activity id (see {@link net.osparty.model.Activity#getId()}). */
 	private String activityId;
 
 	private int capacity;
 	private int minKillCount;
 	private int minHardModeKillCount;
 
-	/** When locked, the host admits no further applicants. */
+	/** Host admits no further applicants. */
 	private boolean locked;
 
-	/** Set in the host's final broadcast to tell everyone the party is closing. */
+	/** Set in the host's final broadcast; the party is closing. */
 	private boolean closed;
 
-	/** The admitted roster (host first). Pending applicants are not listed here. */
+	/** Admitted only, host first; no pending applicants. */
 	private List<RosterEntry> roster = new ArrayList<>();
 }

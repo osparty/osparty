@@ -17,14 +17,14 @@ public interface OSPartyConfig extends Config
 	@ConfigSection(
 		name = "Defence tracker",
 		description = "Show the live defence of a monster the party is draining with special attacks.",
-		position = 9
+		position = 13
 	)
 	String DEFENCE = "defence";
 
 	@ConfigSection(
 		name = "Meme mode",
 		description = "Optional sound effects for party events. All off by default.",
-		position = 10,
+		position = 14,
 		closedByDefault = true
 	)
 	String MEME_MODE = "memeMode";
@@ -105,6 +105,52 @@ public interface OSPartyConfig extends Config
 	default Color pingColor()
 	{
 		return new Color(0, 255, 255);
+	}
+
+	@ConfigItem(
+		keyName = "learnerTeacherIcons",
+		name = "Learner/teacher name icons",
+		description = "Show an icon by the name of party members tagged as a learner or teacher. Untagged members get nothing.",
+		position = 9
+	)
+	default boolean learnerTeacherIcons()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "learnerTeacherTiles",
+		name = "Learner/teacher tile markers",
+		description = "Highlight the tile of party members tagged as a learner or teacher. Untagged members get nothing.",
+		position = 10
+	)
+	default boolean learnerTeacherTiles()
+	{
+		return true;
+	}
+
+	@Alpha
+	@ConfigItem(
+		keyName = "teacherColor",
+		name = "Teacher colour",
+		description = "Colour of the teacher tile marker.",
+		position = 11
+	)
+	default Color teacherColor()
+	{
+		return new Color(255, 175, 45);
+	}
+
+	@Alpha
+	@ConfigItem(
+		keyName = "learnerColor",
+		name = "Learner colour",
+		description = "Colour of the learner tile marker.",
+		position = 12
+	)
+	default Color learnerColor()
+	{
+		return new Color(80, 200, 255);
 	}
 
 	@ConfigItem(

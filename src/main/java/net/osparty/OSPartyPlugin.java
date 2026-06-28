@@ -20,6 +20,7 @@ import net.osparty.ui.ApplicantOverlay;
 import net.osparty.ui.FcRequestOverlay;
 import net.osparty.ui.DefenceInfoBox;
 import net.osparty.ui.NpcDefenceOverlay;
+import net.osparty.ui.PlayerMarkerOverlay;
 import net.osparty.ui.ReadyCheckOverlay;
 import net.osparty.ui.TilePingOverlay;
 import com.google.inject.Provides;
@@ -152,6 +153,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private ReadyCheckOverlay readyCheckOverlay;
 	private TilePingOverlay tilePingOverlay;
 	private NpcDefenceOverlay defenceOverlay;
+	private PlayerMarkerOverlay playerMarkerOverlay;
 	/** Status-bar defence info box, present only while tracking and the toggle is on. */
 	private DefenceInfoBox defenceBox;
 
@@ -196,15 +198,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	 */
 	private volatile String playerName;
 
-	/** Owner (name) of the friends chat the player is currently in, or null. */
 	private volatile String friendsChatOwner;
-	/** Current world, or 0 when not logged in. */
 	private volatile int world;
 	/** Currently loaded map regions (for location-aware activity suggestions). */
 	private volatile int[] mapRegions;
-	/** The current CoX raid layout (readable string), or null when not in a raid. */
 	private volatile String coxLayout;
-	/** Local player's account type, or null when not logged in. */
 	private volatile AccountType accountType;
 	/** Whether we've checked for a resumable hosted party since this login. */
 	private boolean rejoinChecked;
@@ -220,8 +218,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private final java.util.Deque<PendingPrompt> promptQueue = new java.util.ArrayDeque<>();
 	/** True while one of our chatbox prompts is open, so we show them one at a time. */
 	private boolean promptOpen;
+	/** Member id the open chatbox prompt is for, so we can close it if they're resolved elsewhere; 0 = none. */
+	private long openPromptMemberId;
 
-	/** An applicant queued for an in-game accept/decline prompt. */
 	private static final class PendingPrompt
 	{
 		final Applicant applicant;
@@ -256,6 +255,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		defenceOverlay = new NpcDefenceOverlay(client, defenceTracker, config,
 			ImageUtil.resizeImage(skillIconManager.getSkillImage(Skill.DEFENCE), 16, 16));
 		overlayManager.add(defenceOverlay);
+
+		playerMarkerOverlay = new PlayerMarkerOverlay(client, liveParty, config,
+			ImageUtil.resizeImage(ImageUtil.loadImageResource(getClass(), "/net/osparty/icons/learner.png"), 12, 12),
+			ImageUtil.resizeImage(ImageUtil.loadImageResource(getClass(), "/net/osparty/icons/teacher.png"), 12, 12));
+		overlayManager.add(playerMarkerOverlay);
 		// The defence tracker reads RuneLite's Special Attack Counter events, which
 		// only fire while that plugin is running, so make sure it's enabled.
 		enablePluginByName("Special Attack Counter");
@@ -318,6 +322,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		overlayManager.remove(readyCheckOverlay);
 		overlayManager.remove(tilePingOverlay);
 		overlayManager.remove(defenceOverlay);
+		overlayManager.remove(playerMarkerOverlay);
 		if (defenceBox != null)
 		{
 			infoBoxManager.removeInfoBox(defenceBox);
@@ -329,6 +334,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		readyCheckOverlay = null;
 		tilePingOverlay = null;
 		defenceOverlay = null;
+		playerMarkerOverlay = null;
 		panel = null;
 		navButton = null;
 		playerName = null;
@@ -408,7 +414,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		updateDefenceInfoBox();
 	}
 
-	/** Show/hide the status-bar defence info box based on the toggle and tracking state. */
 	private void updateDefenceInfoBox()
 	{
 		boolean show = config.defenceInfoBox() && defenceTracker.state() != null;
@@ -721,7 +726,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		quickHopTarget = null;
 	}
 
-	/** Build a client {@link World} from the world-list entry. */
 	private World toRsWorld(net.runelite.http.api.worlds.World source)
 	{
 		World rsWorld = client.createWorld();
@@ -859,9 +863,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		String title = applicant.getName() + " - " + applicantSummary(applicant, activity);
 
 		promptOpen = true;
+		openPromptMemberId = applicant.getMemberId();
 		chatboxPanelManager.openTextMenuInput(title)
 			.option("Accept", () -> {
 				promptOpen = false;
+				openPromptMemberId = 0;
 				if (liveParty.admit(applicant.getMemberId(), applicant.getName()))
 				{
 					announceResolved(applicant, activity, true);
@@ -873,22 +879,46 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			})
 			.option("Decline", () -> {
 				promptOpen = false;
+				openPromptMemberId = 0;
 				liveParty.reject(applicant.getMemberId());
 				announceResolved(applicant, activity, false);
 			})
-			.option("Decide later", () -> promptOpen = false)
-			.onClose(() -> promptOpen = false)
+			.option("Decide later", () -> {
+				promptOpen = false;
+				openPromptMemberId = 0;
+			})
+			.onClose(() -> {
+				promptOpen = false;
+				openPromptMemberId = 0;
+			})
 			.build();
 	}
 
 	@Override
 	public void announceResolved(Applicant applicant, Activity activity, boolean accepted)
 	{
+		// If this applicant was resolved elsewhere (e.g. the side panel) while their
+		// in-game prompt is still open, close it so it can't be actioned twice.
+		dismissPromptFor(applicant.getMemberId());
 		gameMessage((accepted ? "Accepted " : "Declined ") + applicant.getName()
 			+ " for your " + activity.getDisplayName() + " party.");
 	}
 
-	/** Play the bundled ready-check sound when everyone is ready (if enabled). */
+	/** Close the open chatbox applicant prompt if it's the one for {@code memberId}. */
+	private void dismissPromptFor(long memberId)
+	{
+		if (memberId == 0)
+		{
+			return;
+		}
+		clientThread.invoke(() -> {
+			if (openPromptMemberId == memberId)
+			{
+				chatboxPanelManager.close();
+			}
+		});
+	}
+
 	private void playReadySound()
 	{
 		if (config.readyCheckSound())
@@ -897,7 +927,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 	}
 
-	/** Play a bundled .wav sound resource (e.g. /net/osparty/sounds/kicked.wav). */
 	private void playResourceSound(String resource)
 	{
 		try

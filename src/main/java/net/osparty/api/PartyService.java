@@ -7,47 +7,38 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * Source of party advertisements, implemented by {@link PartyApiClient} (the
- * HTTP bulletin-board API). Membership/roster is not handled here — that runs
- * peer-to-peer; only the discovery/advertising calls (search/create/disband)
- * are used by the UI. All calls are asynchronous; results may arrive on a
- * background thread, so UI callers must marshal back onto the EDT themselves.
+ * Source of party advertisements, implemented by {@link PartyApiClient}. Only
+ * discovery/advertising is handled here; membership/roster runs peer-to-peer.
+ * Results may arrive on a background thread, so UI callers must marshal back
+ * onto the EDT themselves.
  */
 public interface PartyService
 {
 	void searchParties(Activity activity, String player, Consumer<List<Party>> onSuccess, Consumer<Throwable> onError);
 
-	/** Fetch a single party (public or private) by its invite code. */
 	void getPartyByCode(String code, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
-	/** Fetch the ad currently hosted by {@code host}, if any (for rejoin-on-restart). */
 	void getPartyByHost(String host, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
 	void createParty(PartyRequest partyRequest, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
 	/**
-	 * Host keep-alive: tell the bulletin board the advertised party is still live,
-	 * and report the current live member count and the host's current {@code world}
-	 * so search results show the real occupancy and location (the API only tracks
-	 * the ad; membership and the host's whereabouts are peer-to-peer). A non-positive
-	 * {@code size}/{@code world} is treated as "unknown" and left unchanged, as is a
-	 * null/blank {@code layout} (the live CoX raid layout, advertised by the host).
+	 * Host keep-alive: keep the ad live and report live occupancy/world/layout/roles
+	 * (membership and whereabouts are peer-to-peer, so the ad alone can't track them).
+	 * A non-positive {@code size}/{@code world} or null/blank {@code layout}/{@code roles}
+	 * means "unknown" and is left unchanged. {@code roles} is a comma-separated list of
+	 * role ids the host is still looking for.
 	 */
-	void heartbeat(String partyId, int size, int world, String layout,
+	void heartbeat(String partyId, int size, int world, String layout, String roles,
 		Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
-	/** Submit an application for the logged in player to the given party. */
 	void applyToParty(String partyId, String player, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
-	/** Withdraw the logged in player's pending application to the given party. */
 	void cancelApplication(String partyId, String player, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
-	/** Host action: admit an applicant into the party. Returns the updated party. */
 	void acceptApplicant(String partyId, String host, String applicant, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
-	/** Host action: remove a member from the party. Returns the updated party. */
 	void kickPlayer(String partyId, String host, String target, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
-	/** Host action: close the party. */
 	void disbandParty(String partyId, String host, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 }

@@ -46,7 +46,6 @@ public class RuneWatchService
 	private final Gson gson;
 	private final OSPartyConfig config;
 
-	/** Normalised RSN -> case. */
 	private final Map<String, RuneWatchCase> cases = new ConcurrentHashMap<>();
 	private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
 	private volatile boolean loaded;
@@ -70,7 +69,6 @@ public class RuneWatchService
 		return loaded;
 	}
 
-	/** @return the case for {@code rsn}, or {@code null} if not listed / warnings off. */
 	public RuneWatchCase get(String rsn)
 	{
 		if (!config.runeWatch() || rsn == null)
@@ -80,7 +78,7 @@ public class RuneWatchService
 		return cases.get(normalize(rsn));
 	}
 
-	/** Fetch/refresh the watchlist on a background thread. No-op when disabled. */
+	/** Background thread; no-op when disabled. */
 	public void refresh()
 	{
 		if (!config.runeWatch())

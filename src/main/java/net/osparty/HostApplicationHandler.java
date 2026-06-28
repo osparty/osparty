@@ -11,12 +11,9 @@ import java.util.List;
  */
 public interface HostApplicationHandler
 {
-	/** Replace the in-game overlay with the current set of pending applicants. */
 	void setPendingApplicants(List<Applicant> applicants, Activity activity);
 
-	/** Chatbox ping for a newly-arrived applicant. */
 	void announceApplicant(Applicant applicant, Activity activity);
 
-	/** Chatbox ping after the host accepts or declines an applicant. */
 	void announceResolved(Applicant applicant, Activity activity, boolean accepted);
 }
