@@ -27,6 +27,7 @@ import com.google.inject.Provides;
 import java.awt.Color;
 import java.awt.event.MouseEvent;
 import java.time.temporal.ChronoUnit;
+import com.google.gson.Gson;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
@@ -118,6 +119,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 	@Inject
 	private ChatboxPanelManager chatboxPanelManager;
+
+	@Inject
+	private Gson gson;
 
 	@Inject
 	private AudioPlayer audioPlayer;
@@ -295,7 +299,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		panel = new OSPartyPanel(partyService, config, this::getPlayerName, this,
 			this::getFriendsChatOwner, this::getCurrentWorld, itemManager, liveParty, runeWatchService,
 			this::getAccountType, killcountService, skillIconManager, this::hopTo, this::getMapRegions,
-			this::regionForWorld, this::getCoxLayout, configManager);
+			this::regionForWorld, this::getCoxLayout, configManager, gson);
 
 		navButton = NavigationButton.builder()
 			.tooltip("OSParty")
