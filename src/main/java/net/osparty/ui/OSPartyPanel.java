@@ -24,6 +24,7 @@ import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingConstants;
+import net.osparty.WorldPinger;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.SkillIconManager;
@@ -62,7 +63,8 @@ public class OSPartyPanel extends PluginPanel
 		RuneWatchService runeWatchService, Supplier<AccountType> accountTypeSupplier,
 		KillcountService killcountService, SkillIconManager skillIconManager, IntConsumer worldHopper,
 		Supplier<int[]> mapRegionsSupplier, IntFunction<WorldRegion> worldRegionResolver,
-		Supplier<String> coxLayoutSupplier, ConfigManager configManager, Gson gson)
+		Supplier<String> coxLayoutSupplier, ConfigManager configManager, Gson gson,
+		WorldPinger worldPinger, IntFunction<String> worldAddressResolver)
 	{
 		super(false);
 
@@ -77,7 +79,8 @@ public class OSPartyPanel extends PluginPanel
 
 		SearchPanel searchPanel = new SearchPanel(partyService, playerNameSupplier,
 			friendsChatOwnerSupplier, worldSupplier, partyState, liveParty, accountTypeSupplier,
-			mapRegionsSupplier, worldRegionResolver, killcountService, configManager);
+			mapRegionsSupplier, worldRegionResolver, killcountService, configManager,
+			worldPinger, worldAddressResolver);
 		CreatePanel createPanel = new CreatePanel(partyService, config, playerNameSupplier, partyState, liveParty,
 			accountTypeSupplier, mapRegionsSupplier, coxLayoutSupplier, configManager, gson);
 		CurrentPanel currentPanel = new CurrentPanel(partyService, playerNameSupplier,

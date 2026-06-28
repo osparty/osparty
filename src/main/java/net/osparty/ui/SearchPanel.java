@@ -2,6 +2,7 @@ package net.osparty.ui;
 
 import net.osparty.KillcountService;
 import net.osparty.OSPartyConfig;
+import net.osparty.WorldPinger;
 import net.osparty.api.PartyService;
 import net.osparty.model.AccountTypes;
 import net.osparty.model.Activity;
@@ -69,6 +70,18 @@ class SearchPanel extends JPanel
 {
 	private static final long COOLDOWN_MS = 30_000;
 
+	/** World regions we know flags for, in display order. */
+	private static final WorldRegion[] KNOWN_REGIONS = {
+		WorldRegion.UNITED_STATES_OF_AMERICA,
+		WorldRegion.UNITED_KINGDOM,
+		WorldRegion.AUSTRALIA,
+		WorldRegion.GERMANY,
+		WorldRegion.BRAZIL,
+		WorldRegion.JAPAN,
+		WorldRegion.SINGAPORE,
+		WorldRegion.SOUTH_AFRICA,
+	};
+
 	private final PartyService partyService;
 	private final Supplier<String> playerNameSupplier;
 	private final Supplier<String> friendsChatOwnerSupplier;
@@ -80,6 +93,8 @@ class SearchPanel extends JPanel
 	private final IntFunction<WorldRegion> worldRegionResolver;
 	private final KillcountService killcountService;
 	private final ConfigManager configManager;
+	private final WorldPinger worldPinger;
+	private final IntFunction<String> worldAddressResolver;
 
 	private final JPanel activityListPanel = new JPanel();
 	private final Set<Activity> selectedActivities = EnumSet.allOf(Activity.class);
@@ -89,6 +104,10 @@ class SearchPanel extends JPanel
 	private final JTabbedPane roleTabs = new JTabbedPane();
 	/** Collapsible content: the role tabs plus the separate learner mark. */
 	private final JPanel roleContent = new JPanel();
+	private final Set<WorldRegion> selectedRegions = EnumSet.allOf(WorldRegion.class);
+	private boolean regionsExpanded;
+	private final JButton regionToggle = new JButton();
+	private final JPanel regionContent = new JPanel();
 	/** Self-mark (not a role): tags us as a learner to the host when we apply. */
 	private final JCheckBox imLearnerCheck = new JCheckBox("I'm a learner");
 	private Activity recommended;
@@ -96,6 +115,7 @@ class SearchPanel extends JPanel
 	private final JButton searchToggle = new JButton();
 	private final JPanel searchContent = new JPanel();
 	private final JTextField textField = new JTextField();
+	private final JTextField maxPingField = new JTextField();
 
 	private final JComboBox<String> lootFilter = new JComboBox<>(new String[]{"Any loot", "FFA", "Split"});
 	private final JCheckBox ironmanFilter = new JCheckBox("Ironman parties only");
@@ -118,7 +138,8 @@ class SearchPanel extends JPanel
 	SearchPanel(PartyService partyService, Supplier<String> playerNameSupplier,
 		Supplier<String> friendsChatOwnerSupplier, IntSupplier worldSupplier, PartyState partyState,
 		LiveParty liveParty, Supplier<AccountType> accountTypeSupplier, Supplier<int[]> mapRegionsSupplier,
-		IntFunction<WorldRegion> worldRegionResolver, KillcountService killcountService, ConfigManager configManager)
+		IntFunction<WorldRegion> worldRegionResolver, KillcountService killcountService, ConfigManager configManager,
+		WorldPinger worldPinger, IntFunction<String> worldAddressResolver)
 	{
 		this.partyService = partyService;
 		this.playerNameSupplier = playerNameSupplier;
@@ -131,6 +152,8 @@ class SearchPanel extends JPanel
 		this.worldRegionResolver = worldRegionResolver;
 		this.killcountService = killcountService;
 		this.configManager = configManager;
+		this.worldPinger = worldPinger;
+		this.worldAddressResolver = worldAddressResolver;
 
 		// Restore the filters the player last used, before the UI is built from them.
 		loadFilters();
@@ -145,6 +168,7 @@ class SearchPanel extends JPanel
 		north.add(buildActivityFilter());
 		north.add(buildRoleFilter());
 		north.add(buildTextFilter());
+		north.add(buildRegionFilter());
 		north.add(buildControls());
 		north.add(buildJoinByCode());
 		add(north, BorderLayout.NORTH);
@@ -513,12 +537,43 @@ class SearchPanel extends JPanel
 		ironmanFilter.setFocusPainted(false);
 		ironmanFilter.addActionListener(e -> filtersChanged());
 
+		maxPingField.setToolTipText("Hide parties whose world ping exceeds this threshold (ms). Leave blank for no limit.");
+		maxPingField.getDocument().addDocumentListener(new DocumentListener()
+		{
+			@Override
+			public void insertUpdate(DocumentEvent e)
+			{
+				filtersChanged();
+			}
+
+			@Override
+			public void removeUpdate(DocumentEvent e)
+			{
+				filtersChanged();
+			}
+
+			@Override
+			public void changedUpdate(DocumentEvent e)
+			{
+				filtersChanged();
+			}
+		});
+
+		JLabel maxPingLabel = new JLabel("Max ping (ms)");
+		maxPingLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		maxPingLabel.setFont(FontManager.getRunescapeSmallFont());
+		JPanel maxPingRow = new JPanel(new BorderLayout(4, 0));
+		maxPingRow.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		maxPingRow.add(maxPingLabel, BorderLayout.WEST);
+		maxPingRow.add(maxPingField, BorderLayout.CENTER);
+
 		searchContent.setLayout(new BoxLayout(searchContent, BoxLayout.Y_AXIS));
 		searchContent.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		searchContent.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
 		searchContent.add(searchRow(textField));
 		searchContent.add(searchRow(lootFilter));
 		searchContent.add(searchRow(ironmanFilter));
+		searchContent.add(searchRow(maxPingRow));
 		searchContent.setVisible(searchExpanded);
 		panel.add(searchContent, BorderLayout.CENTER);
 
@@ -549,6 +604,127 @@ class SearchPanel extends JPanel
 	{
 		searchToggle.setIcon(searchExpanded ? CARET_EXPANDED : CARET_COLLAPSED);
 		searchToggle.setText("Search");
+	}
+
+	/**
+	 * Collapsible region multi-select: a 2-column grid of flag checkboxes for each
+	 * known world region. All ticked by default (no filter). Deselecting a region
+	 * hides parties whose host world belongs to that region. Unchecked regions show
+	 * a dimmed flag so the on/off state is visually distinct.
+	 */
+	private JPanel buildRegionFilter()
+	{
+		JPanel panel = cappedRow(new BorderLayout(0, 4));
+		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
+
+		styleCollapsibleHeader(regionToggle);
+		updateRegionToggleText();
+		regionToggle.addActionListener(e -> setRegionsExpanded(!regionsExpanded));
+		panel.add(regionToggle, BorderLayout.NORTH);
+
+		JPanel grid = new JPanel(new GridLayout(0, 2, 2, 2));
+		grid.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		grid.setBorder(BorderFactory.createEmptyBorder(4, 2, 4, 2));
+
+		for (WorldRegion region : KNOWN_REGIONS)
+		{
+			JCheckBox check = new JCheckBox(shortNameOf(region));
+			check.setSelected(selectedRegions.contains(region));
+			check.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+			check.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			check.setFont(FontManager.getRunescapeSmallFont());
+			check.setFocusPainted(false);
+			check.setMargin(new Insets(0, 0, 0, 0));
+			check.setIconTextGap(2);
+			ImageIcon flag = WorldFlags.forRegion(region);
+			if (flag != null)
+			{
+				// Bright flag = region included; dimmed flag = region filtered out.
+				check.setSelectedIcon(flag);
+				check.setIcon(dimIcon(flag));
+			}
+			check.addActionListener(e -> {
+				if (check.isSelected())
+				{
+					selectedRegions.add(region);
+				}
+				else
+				{
+					selectedRegions.remove(region);
+				}
+				updateRegionToggleText();
+				filtersChanged();
+			});
+			grid.add(check);
+		}
+
+		regionContent.setLayout(new BorderLayout());
+		regionContent.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		regionContent.add(grid);
+		regionContent.setVisible(regionsExpanded);
+		panel.add(regionContent, BorderLayout.CENTER);
+
+		return panel;
+	}
+
+	private void setRegionsExpanded(boolean expanded)
+	{
+		regionsExpanded = expanded;
+		regionContent.setVisible(expanded);
+		updateRegionToggleText();
+		persistFilters();
+		revalidate();
+		repaint();
+	}
+
+	private void updateRegionToggleText()
+	{
+		regionToggle.setIcon(regionsExpanded ? CARET_EXPANDED : CARET_COLLAPSED);
+		int deselected = 0;
+		for (WorldRegion r : KNOWN_REGIONS)
+		{
+			if (!selectedRegions.contains(r))
+			{
+				deselected++;
+			}
+		}
+		regionToggle.setText(deselected == 0 ? "Regions"
+			: "Regions (" + (KNOWN_REGIONS.length - deselected) + "/" + KNOWN_REGIONS.length + ")");
+	}
+
+	/**
+	 * Produce a semi-transparent (dimmed) copy of {@code source} to indicate a
+	 * deselected/inactive state on region checkboxes.
+	 */
+	private static ImageIcon dimIcon(ImageIcon source)
+	{
+		if (source == null)
+		{
+			return null;
+		}
+		java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(
+			source.getIconWidth(), source.getIconHeight(), java.awt.image.BufferedImage.TYPE_INT_ARGB);
+		java.awt.Graphics2D g = out.createGraphics();
+		g.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, 0.30f));
+		g.drawImage(source.getImage(), 0, 0, null);
+		g.dispose();
+		return new ImageIcon(out);
+	}
+
+	private static String shortNameOf(WorldRegion region)
+	{
+		switch (region)
+		{
+			case UNITED_STATES_OF_AMERICA: return "US";
+			case UNITED_KINGDOM: return "UK";
+			case AUSTRALIA: return "AU";
+			case GERMANY: return "DE";
+			case BRAZIL: return "BR";
+			case JAPAN: return "JP";
+			case SINGAPORE: return "SG";
+			case SOUTH_AFRICA: return "ZA";
+			default: return region.name().substring(0, Math.min(2, region.name().length()));
+		}
 	}
 
 	private void setAllActivities(boolean selected)
@@ -701,6 +877,9 @@ class SearchPanel extends JPanel
 	private static final String KEY_LEARNER = "searchLearner";
 	private static final String KEY_ROLES_EXPANDED = "searchRolesExpanded";
 	private static final String KEY_SEARCH_EXPANDED = "searchTextExpanded";
+	private static final String KEY_REGIONS = "searchRegions";
+	private static final String KEY_REGIONS_EXPANDED = "searchRegionsExpanded";
+	private static final String KEY_MAX_PING = "searchMaxPing";
 
 	/** Save the current filter selection so it's restored next session. */
 	private void persistFilters()
@@ -712,6 +891,22 @@ class SearchPanel extends JPanel
 		put(KEY_LEARNER, Boolean.toString(imLearnerCheck.isSelected()));
 		put(KEY_ROLES_EXPANDED, Boolean.toString(rolesExpanded));
 		put(KEY_SEARCH_EXPANDED, Boolean.toString(searchExpanded));
+		// Save which known regions are selected (non-KNOWN regions are always on).
+		StringBuilder regionsStr = new StringBuilder();
+		for (WorldRegion r : KNOWN_REGIONS)
+		{
+			if (selectedRegions.contains(r))
+			{
+				if (regionsStr.length() > 0)
+				{
+					regionsStr.append(',');
+				}
+				regionsStr.append(r.name());
+			}
+		}
+		put(KEY_REGIONS, regionsStr.toString());
+		put(KEY_REGIONS_EXPANDED, Boolean.toString(regionsExpanded));
+		put(KEY_MAX_PING, maxPingField.getText().trim());
 	}
 
 	/** Restore the saved filter selection into the in-memory state and the controls. */
@@ -754,6 +949,31 @@ class SearchPanel extends JPanel
 		imLearnerCheck.setSelected(Boolean.parseBoolean(get(KEY_LEARNER)));
 		rolesExpanded = Boolean.parseBoolean(get(KEY_ROLES_EXPANDED));
 		searchExpanded = Boolean.parseBoolean(get(KEY_SEARCH_EXPANDED));
+
+		// Regions: start from allOf, then remove any KNOWN region the user deselected.
+		String regionsStr = get(KEY_REGIONS);
+		if (regionsStr != null && !regionsStr.isEmpty())
+		{
+			java.util.Set<String> savedNames = new java.util.HashSet<>();
+			for (String name : regionsStr.split(","))
+			{
+				savedNames.add(name.trim());
+			}
+			for (WorldRegion r : KNOWN_REGIONS)
+			{
+				if (!savedNames.contains(r.name()))
+				{
+					selectedRegions.remove(r);
+				}
+			}
+		}
+		regionsExpanded = Boolean.parseBoolean(get(KEY_REGIONS_EXPANDED));
+
+		String maxPing = get(KEY_MAX_PING);
+		if (maxPing != null && !maxPing.isEmpty())
+		{
+			maxPingField.setText(maxPing);
+		}
 	}
 
 	private static <T> String idsOf(Set<T> values, java.util.function.Function<T, String> id)
@@ -936,6 +1156,18 @@ class SearchPanel extends JPanel
 		LootRule wantLoot = lootFilterValue();
 		boolean ironOnly = ironmanFilter.isSelected();
 		String text = textField.getText().trim().toLowerCase();
+		int maxPing = parseMaxPing();
+
+		// Region filter is active when at least one known region is deselected.
+		boolean regionFilterActive = false;
+		for (WorldRegion r : KNOWN_REGIONS)
+		{
+			if (!selectedRegions.contains(r))
+			{
+				regionFilterActive = true;
+				break;
+			}
+		}
 
 		// Show only joinable parties matching every active filter (full ones hidden).
 		List<Party> visible = new ArrayList<>();
@@ -968,12 +1200,53 @@ class SearchPanel extends JPanel
 				{
 					continue;
 				}
+
+				Integer worldNum = parseWorldNum(party);
+
+				// Region filter: skip parties whose host world has a deselected region.
+				if (regionFilterActive && worldNum != null)
+				{
+					WorldRegion region = worldRegionResolver.apply(worldNum);
+					if (region != null && !selectedRegions.contains(region))
+					{
+						continue;
+					}
+				}
+
+				// Max ping filter: skip parties whose world ping exceeds the threshold.
+				// Parties with no known ping yet are always shown (never over-filtered on
+				// unknown data); they will be re-evaluated when the ping result arrives.
+				if (maxPing > 0 && worldNum != null && worldPinger != null)
+				{
+					Integer ping = worldPinger.getCachedPing(worldNum);
+					if (ping != null && ping >= 0 && ping > maxPing)
+					{
+						continue;
+					}
+				}
+
 				visible.add(party);
 			}
 		}
 
+		// Request pings for all visible parties. No-op if already cached or in flight.
+		if (worldPinger != null)
+		{
+			for (Party party : visible)
+			{
+				Integer worldNum = parseWorldNum(party);
+				if (worldNum != null)
+				{
+					String address = worldAddressResolver != null ? worldAddressResolver.apply(worldNum) : null;
+					worldPinger.requestPing(worldNum, address,
+						() -> javax.swing.SwingUtilities.invokeLater(this::reapplyFilters));
+				}
+			}
+		}
+
 		// Skip the rebuild (and its flicker) when nothing rendered would change.
-		String signature = selectedSignature() + "|" + roleSignature() + "|" + text + "|" + signatureOf(visible);
+		String signature = selectedSignature() + "|" + roleSignature() + "|" + regionSignature() + "|"
+			+ maxPingField.getText().trim() + "|" + text + "|" + pingSignatureOf(visible) + "|" + signatureOf(visible);
 		if (signature.equals(renderedSignature))
 		{
 			return;
@@ -1267,9 +1540,9 @@ class SearchPanel extends JPanel
 	}
 
 	/**
-	 * A "World 302" label with the host world's country flag, or null when the ad
-	 * has no world. The flag is omitted when the region can't be resolved (the
-	 * world list isn't loaded yet, or the world is unknown).
+	 * A "World 302  ~42ms" label with the host world's country flag, or null when
+	 * the ad has no world. The flag is omitted when the region can't be resolved.
+	 * The ping is omitted until a cached result is available.
 	 */
 	private JLabel buildWorldLabel(Party party)
 	{
@@ -1279,13 +1552,25 @@ class SearchPanel extends JPanel
 			return null;
 		}
 		String digits = raw.replaceAll("\\D", "");
-		JLabel label = new JLabel("World " + (digits.isEmpty() ? raw.trim() : digits));
+		int worldNum = (!digits.isEmpty() && digits.length() <= 5) ? Integer.parseInt(digits) : -1;
+
+		StringBuilder labelText = new StringBuilder("World ").append(digits.isEmpty() ? raw.trim() : digits);
+		if (worldNum > 0 && worldPinger != null)
+		{
+			Integer ping = worldPinger.getCachedPing(worldNum);
+			if (ping != null)
+			{
+				labelText.append(ping >= 0 ? "  ~" + ping + "ms" : "  (timeout)");
+			}
+		}
+
+		JLabel label = new JLabel(labelText.toString());
 		label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		label.setFont(FontManager.getRunescapeSmallFont());
 
-		if (!digits.isEmpty() && digits.length() <= 5 && worldRegionResolver != null)
+		if (worldNum > 0 && worldRegionResolver != null)
 		{
-			WorldRegion region = worldRegionResolver.apply(Integer.parseInt(digits));
+			WorldRegion region = worldRegionResolver.apply(worldNum);
 			ImageIcon flag = WorldFlags.forRegion(region);
 			if (flag != null)
 			{
@@ -1294,6 +1579,77 @@ class SearchPanel extends JPanel
 			}
 		}
 		return label;
+	}
+
+	/** Parse the world number from a party's world string, or null if not parseable. */
+	private static Integer parseWorldNum(Party party)
+	{
+		String raw = party.getWorld();
+		if (raw == null)
+		{
+			return null;
+		}
+		String digits = raw.replaceAll("\\D", "");
+		if (digits.isEmpty() || digits.length() > 5)
+		{
+			return null;
+		}
+		return Integer.parseInt(digits);
+	}
+
+	/** Parse the max-ping field value, or -1 if blank or non-numeric. */
+	private int parseMaxPing()
+	{
+		String text = maxPingField.getText().trim();
+		if (text.isEmpty())
+		{
+			return -1;
+		}
+		try
+		{
+			return Integer.parseInt(text);
+		}
+		catch (NumberFormatException e)
+		{
+			return -1;
+		}
+	}
+
+	/** Signature of the selected regions so deselecting one triggers a re-render. */
+	private String regionSignature()
+	{
+		StringBuilder sb = new StringBuilder();
+		for (WorldRegion r : KNOWN_REGIONS)
+		{
+			if (selectedRegions.contains(r))
+			{
+				sb.append(r.name()).append(',');
+			}
+		}
+		return sb.toString();
+	}
+
+	/**
+	 * Signature of cached pings for the visible parties so that a ping arriving
+	 * via callback causes a re-render and updates the world label.
+	 */
+	private String pingSignatureOf(List<Party> parties)
+	{
+		if (worldPinger == null)
+		{
+			return "";
+		}
+		StringBuilder sb = new StringBuilder();
+		for (Party p : parties)
+		{
+			Integer wn = parseWorldNum(p);
+			if (wn != null)
+			{
+				Integer ping = worldPinger.getCachedPing(wn);
+				sb.append(wn).append(':').append(ping != null ? ping : '?').append(',');
+			}
+		}
+		return sb.toString();
 	}
 
 	private String requirementText(Activity activity, Party party)

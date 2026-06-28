@@ -211,6 +211,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	/** Whether we've checked for a resumable hosted party since this login. */
 	private boolean rejoinChecked;
 
+	private WorldPinger worldPinger;
+
 	/** Pending quick-hop target (driven on game ticks), or null when not hopping. */
 	private volatile net.runelite.http.api.worlds.World quickHopTarget;
 	/** How many ticks we've waited for the world switcher widget to appear. */
@@ -296,10 +298,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// Pull the scammer watchlist now; it refreshes periodically (see schedule).
 		runeWatchService.refresh();
 
+		worldPinger = new WorldPinger();
+
 		panel = new OSPartyPanel(partyService, config, this::getPlayerName, this,
 			this::getFriendsChatOwner, this::getCurrentWorld, itemManager, liveParty, runeWatchService,
 			this::getAccountType, killcountService, skillIconManager, this::hopTo, this::getMapRegions,
-			this::regionForWorld, this::getCoxLayout, configManager, gson);
+			this::regionForWorld, this::getCoxLayout, configManager, gson,
+			worldPinger, this::worldAddressForNum);
 
 		navButton = NavigationButton.builder()
 			.tooltip("OSParty")
@@ -333,6 +338,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			defenceBox = null;
 		}
 		defenceTracker.reset();
+		if (worldPinger != null)
+		{
+			worldPinger.shutdown();
+			worldPinger = null;
+		}
 		applicantOverlay = null;
 		fcRequestOverlay = null;
 		readyCheckOverlay = null;
@@ -655,6 +665,26 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 		net.runelite.http.api.worlds.World world = worlds.findWorld(worldNum);
 		return world != null ? world.getRegion() : null;
+	}
+
+	/**
+	 * Resolve a world number to its server hostname (for TCP-ping latency). Returns
+	 * null when the world list isn't loaded yet or the world number is unknown.
+	 * Reads the cached world list, so it's safe from the EDT.
+	 */
+	public String worldAddressForNum(int worldNum)
+	{
+		if (worldNum <= 0)
+		{
+			return null;
+		}
+		WorldResult worlds = worldService.getWorlds();
+		if (worlds == null)
+		{
+			return null;
+		}
+		net.runelite.http.api.worlds.World world = worlds.findWorld(worldNum);
+		return world != null ? world.getAddress() : null;
 	}
 
 	/** @return the local player's account type, or null when not logged in. Safe from the EDT. */
