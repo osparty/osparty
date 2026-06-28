@@ -42,8 +42,7 @@ public class PartyApiClient implements PartyService
 
 	/**
 	 * The API base URL. Defaults to {@link #DEFAULT_API_BASE_URL}, but can be pointed
-	 * at a local API during development via the {@code osparty.apiUrl} system property
-	 * or the {@code OSPARTY_API_URL} environment variable (the property wins).
+	 * at a local API during development via the {@code osparty.apiUrl} system property.
 	 */
 	private static final String API_BASE_URL = resolveBaseUrl();
 
@@ -53,11 +52,6 @@ public class PartyApiClient implements PartyService
 		if (property != null && !property.trim().isEmpty())
 		{
 			return property.trim();
-		}
-		String env = System.getenv("OSPARTY_API_URL");
-		if (env != null && !env.trim().isEmpty())
-		{
-			return env.trim();
 		}
 		return DEFAULT_API_BASE_URL;
 	}
