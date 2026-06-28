@@ -39,10 +39,9 @@ import net.runelite.client.util.ImageUtil;
 import net.runelite.client.util.LinkBrowser;
 
 /**
- * Root side-panel. Hosts Search / Create tabs, plus a "Current" tab that only
- * appears while the player is in a party (hosting or joined). All three tabs
- * share a single {@link PartyState} so the membership rule (one party at a
- * time) and the Current tab's visibility stay in sync.
+ * Root side-panel. Hosts Search / Faves always, plus Create when idle and Current
+ * while in a party (hosting or joined). All tabs share a single {@link PartyState}
+ * so the one-party-at-a-time rule and tab visibility stay in sync.
  */
 public class OSPartyPanel extends PluginPanel
 {
@@ -56,8 +55,12 @@ public class OSPartyPanel extends PluginPanel
 	private final LiveParty liveParty;
 	private final MaterialTabGroup tabGroup;
 	private final MaterialTab searchTab;
+	private final MaterialTab createTab;
+	private final MaterialTab favesTab;
 	private final MaterialTab currentTab;
 	private boolean wasInParty;
+	/** Whether the tab bar is in the in-party layout (Current shown, Create hidden). */
+	private boolean inPartyTabLayout;
 
 	public OSPartyPanel(PartyService partyService, OSPartyConfig config, Supplier<String> playerNameSupplier,
 		HostApplicationHandler hostApplicationHandler, Supplier<String> friendsChatOwnerSupplier,
@@ -98,17 +101,17 @@ public class OSPartyPanel extends PluginPanel
 
 		tabGroup = new MaterialTabGroup(display);
 		searchTab = new MaterialTab("Search", tabGroup, searchPanel);
-		MaterialTab createTab = new MaterialTab("Create", tabGroup, createPanel);
-		MaterialTab favesTab = new MaterialTab("Faves", tabGroup, favesPanel);
+		createTab = new MaterialTab("Create", tabGroup, createPanel);
+		favesTab = new MaterialTab("Faves", tabGroup, favesPanel);
 		currentTab = new MaterialTab("Current", tabGroup, currentPanel);
 
+		// Register every tab with the group (needed for select()), then lay out the
+		// idle bar. In-party swaps Create for Current (see rebuildTabs).
 		tabGroup.addTab(searchTab);
 		tabGroup.addTab(createTab);
 		tabGroup.addTab(favesTab);
 		tabGroup.addTab(currentTab);
-
-		// The Current tab only shows while in a party.
-		currentTab.setVisible(false);
+		rebuildTabs(false);
 		tabGroup.select(searchTab);
 
 		add(tabGroup, BorderLayout.NORTH);
@@ -176,20 +179,55 @@ public class OSPartyPanel extends PluginPanel
 	private void onPartyStateChanged()
 	{
 		boolean inParty = partyState.isInParty();
-		currentTab.setVisible(inParty);
+
+		// Switch away from tabs that are about to be removed from the bar.
+		if (!inParty && currentTab.isSelected())
+		{
+			tabGroup.select(searchTab);
+		}
+		else if (inParty && createTab.isSelected())
+		{
+			tabGroup.select(currentTab);
+		}
+
+		if (inParty != inPartyTabLayout)
+		{
+			inPartyTabLayout = inParty;
+			rebuildTabs(inParty);
+		}
 
 		if (inParty && !wasInParty)
 		{
-			// Just entered a party — jump to the Current tab.
 			tabGroup.select(currentTab);
-		}
-		else if (!inParty && wasInParty && currentTab.isSelected())
-		{
-			// Left the party while viewing it — fall back to Search.
-			tabGroup.select(searchTab);
 		}
 
 		wasInParty = inParty;
+		revalidate();
+		repaint();
+	}
+
+	/**
+	 * Rebuild the tab bar for idle vs in-party. Idle: Search | Create | Faves.
+	 * In-party: Search | Current | Faves (Create hidden — you can only be in one party).
+	 */
+	private void rebuildTabs(boolean inParty)
+	{
+		tabGroup.remove(searchTab);
+		tabGroup.remove(createTab);
+		tabGroup.remove(favesTab);
+		tabGroup.remove(currentTab);
+
+		tabGroup.add(searchTab);
+		if (inParty)
+		{
+			tabGroup.add(currentTab);
+		}
+		else
+		{
+			tabGroup.add(createTab);
+		}
+		tabGroup.add(favesTab);
+
 		tabGroup.revalidate();
 		tabGroup.repaint();
 	}
