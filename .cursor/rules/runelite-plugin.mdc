@@ -1,0 +1,112 @@
+---
+description: RuneLite external plugin conventions for the OSParty project
+globs: **/*.java
+alwaysApply: false
+---
+
+# RuneLite Plugin – OSParty Conventions
+
+## Project Overview
+- **Plugin**: `OSPartyPlugin` (`net.osparty`) – lets players advertise, search, and join parties.
+- **Build**: Gradle wrapper (`./gradlew`). Java 11 source/target, JDK 21 runtime.
+- **Run client**: `./gradlew runClient` (launches RuneLite with the plugin loaded).
+
+## Package Structure
+```
+net.osparty/
+  OSPartyPlugin.java      ← main plugin class (@PluginDescriptor)
+  OSPartyConfig.java      ← config interface (@ConfigGroup)
+  api/                    ← HTTP clients (PartyApiClient, PartyService)
+  model/                  ← plain data classes (Party, Applicant, Activity…)
+  party/                  ← RuneLite party-bus messages & LiveParty
+  runewatch/              ← RuneWatch scammer-check integration
+  ui/                     ← Swing panels (OSPartyPanel, SearchPanel…) & overlays
+```
+
+## Key RuneLite Patterns
+
+### Plugin Class
+```java
+@Slf4j
+@PluginDescriptor(name = "OSParty", description = "...", tags = {...})
+public class OSPartyPlugin extends Plugin {
+    @Inject private Client client;
+    @Inject private OSPartyConfig config;
+    @Inject private ClientThread clientThread;  // for client-thread work
+    @Inject private OverlayManager overlayManager;
+
+    @Provides
+    OSPartyConfig provideConfig(ConfigManager manager) {
+        return manager.getConfig(OSPartyConfig.class);
+    }
+
+    @Override protected void startUp() throws Exception { ... }
+    @Override protected void shutDown() throws Exception { ... }
+}
+```
+
+### Event Subscriptions
+```java
+// Always annotate with @Subscribe; never poll in startUp loops.
+@Subscribe
+public void onGameTick(GameTick event) { ... }
+
+@Subscribe
+public void onGameStateChanged(GameStateChanged event) { ... }
+```
+
+### Scheduled Tasks
+```java
+// Use @Schedule instead of Timer/ScheduledExecutorService.
+@Schedule(period = 5, unit = ChronoUnit.SECONDS, asynchronous = true)
+public void pollPartyStatus() { ... }
+```
+
+### Config Interface
+```java
+@ConfigGroup(OSPartyConfig.GROUP)
+public interface OSPartyConfig extends Config {
+    String GROUP = "osparty";
+
+    @ConfigItem(keyName = "myKey", name = "Display name", description = "...", position = N)
+    default boolean myKey() { return true; }
+}
+```
+
+### Swing / UI Thread Safety
+- Build and mutate Swing components only on the EDT.
+- Use `SwingUtilities.invokeLater(() -> ...)`.
+- Use `clientThread.invokeLater(() -> ...)` for RuneLite client-thread work.
+
+### Overlays
+```java
+// Implement Overlay, register/deregister in startUp/shutDown.
+overlayManager.add(myOverlay);   // startUp
+overlayManager.remove(myOverlay); // shutDown
+```
+
+### Lombok
+- `@Slf4j` for logging (`log.debug/info/warn/error`).
+- `@Data`, `@Value`, `@Builder` for model classes.
+- `@Getter`/`@Setter` on fields to avoid boilerplate.
+
+## RuneLite Party Bus
+Messages extend `PartyMember` or implement `PartyData`:
+```java
+// Sending
+partyService.send(new MyMessage(...));
+
+// Receiving
+@Subscribe
+public void onMyMessage(MyMessage msg) { ... }
+```
+
+## Do / Don't
+
+| ✅ Do | ❌ Don't |
+|-------|---------|
+| Use `@Subscribe` for game events | Poll game state in loops |
+| Use `clientThread` for client reads | Read client state on EDT directly |
+| Deregister overlays in `shutDown` | Leave overlays registered after plugin stops |
+| Use `ImageUtil.loadImageResource` | Load images with `ImageIO` directly |
+| Format config descriptions clearly | Leave `description` blank |

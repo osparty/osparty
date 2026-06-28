@@ -1,8 +1,9 @@
 package net.osparty.ui;
 
-import net.osparty.OSPartyConfig;
+import net.osparty.FavoritesService;
 import net.osparty.HostApplicationHandler;
 import net.osparty.KillcountService;
+import net.osparty.OSPartyConfig;
 import net.osparty.api.PartyService;
 import net.osparty.model.Party;
 import net.osparty.party.LiveParty;
@@ -66,7 +67,7 @@ public class OSPartyPanel extends PluginPanel
 		Supplier<int[]> mapRegionsSupplier, IntFunction<WorldRegion> worldRegionResolver,
 		Supplier<String> coxLayoutSupplier, ConfigManager configManager, Gson gson,
 		WorldPinger worldPinger, IntFunction<String> worldAddressResolver,
-		Supplier<Set<String>> friendNamesSupplier)
+		Supplier<Set<String>> friendNamesSupplier, FavoritesService favoritesService)
 	{
 		super(false);
 
@@ -82,7 +83,10 @@ public class OSPartyPanel extends PluginPanel
 		SearchPanel searchPanel = new SearchPanel(partyService, playerNameSupplier,
 			friendsChatOwnerSupplier, worldSupplier, partyState, liveParty, accountTypeSupplier,
 			mapRegionsSupplier, worldRegionResolver, killcountService, configManager,
-			worldPinger, worldAddressResolver, friendNamesSupplier);
+			worldPinger, worldAddressResolver, friendNamesSupplier, favoritesService);
+		FriendsPanel favesPanel = new FriendsPanel(partyService, playerNameSupplier, partyState,
+			liveParty, accountTypeSupplier, killcountService, worldPinger, worldRegionResolver,
+			worldAddressResolver, favoritesService, friendNamesSupplier);
 		CreatePanel createPanel = new CreatePanel(partyService, config, playerNameSupplier, partyState, liveParty,
 			accountTypeSupplier, mapRegionsSupplier, coxLayoutSupplier, configManager, gson);
 		CurrentPanel currentPanel = new CurrentPanel(partyService, playerNameSupplier,
@@ -95,10 +99,12 @@ public class OSPartyPanel extends PluginPanel
 		tabGroup = new MaterialTabGroup(display);
 		searchTab = new MaterialTab("Search", tabGroup, searchPanel);
 		MaterialTab createTab = new MaterialTab("Create", tabGroup, createPanel);
+		MaterialTab favesTab = new MaterialTab("Faves", tabGroup, favesPanel);
 		currentTab = new MaterialTab("Current", tabGroup, currentPanel);
 
 		tabGroup.addTab(searchTab);
 		tabGroup.addTab(createTab);
+		tabGroup.addTab(favesTab);
 		tabGroup.addTab(currentTab);
 
 		// The Current tab only shows while in a party.

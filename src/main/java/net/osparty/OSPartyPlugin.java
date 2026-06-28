@@ -213,6 +213,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private boolean rejoinChecked;
 
 	private WorldPinger worldPinger;
+
+	@Inject
+	private FavoritesService favoritesService;
 	/** Snapshot of the local player's friends list, updated each game tick. */
 	private volatile Set<String> friendNames = java.util.Collections.emptySet();
 
@@ -307,7 +310,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			this::getFriendsChatOwner, this::getCurrentWorld, itemManager, liveParty, runeWatchService,
 			this::getAccountType, killcountService, skillIconManager, this::hopTo, this::getMapRegions,
 			this::regionForWorld, this::getCoxLayout, configManager, gson,
-			worldPinger, this::worldAddressForNum, this::getFriendNames);
+			worldPinger, this::worldAddressForNum, this::getFriendNames, favoritesService);
 
 		navButton = NavigationButton.builder()
 			.tooltip("OSParty")

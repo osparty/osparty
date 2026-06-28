@@ -1,0 +1,50 @@
+{
+  // Java - point to IntelliJ's bundled JDK 21 (available on this machine)
+  "java.jdt.ls.java.home": "C:\\Program Files\\JetBrains\\IntelliJ IDEA 2025.2.1\\jbr",
+  "java.configuration.runtimes": [
+    {
+      "name": "JavaSE-21",
+      "path": "C:\\Program Files\\JetBrains\\IntelliJ IDEA 2025.2.1\\jbr",
+      "default": true
+    }
+  ],
+
+  // Gradle - use the wrapper and the same JDK
+  "java.import.gradle.enabled": true,
+  "java.import.gradle.wrapper.enabled": true,
+  "java.import.gradle.java.home": "C:\\Program Files\\JetBrains\\IntelliJ IDEA 2025.2.1\\jbr",
+  "gradle.java.home": "C:\\Program Files\\JetBrains\\IntelliJ IDEA 2025.2.1\\jbr",
+  "gradle.nestedProjects": true,
+
+  // Editor quality-of-life for Java
+  "editor.formatOnSave": true,
+  "editor.tabSize": 4,
+  "editor.insertSpaces": true,
+  "[java]": {
+    "editor.tabSize": 4,
+    "editor.formatOnSave": true,
+    "editor.suggest.snippetsPreventQuickSuggestions": false
+  },
+
+  // Show Lombok-generated members in outline / completions
+  "java.settings.url": null,
+  "java.completion.importOrder": ["java", "javax", "org", "com", "net", ""],
+  "java.sources.organizeImports.starThreshold": 5,
+  "java.sources.organizeImports.staticStarThreshold": 3,
+
+  // Test runner
+  "java.test.defaultConfig": "junit",
+
+  // File associations
+  "files.associations": {
+    "*.gradle": "groovy",
+    "*.properties": "properties"
+  },
+
+  // Exclude noisy build output from explorer
+  "files.exclude": {
+    "**/.gradle": true,
+    "**/build/classes": true,
+    "**/build/tmp": true
+  }
+}

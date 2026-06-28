@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "name": "Run RuneLite Client (OSParty)",
+      "request": "launch",
+      "mainClass": "net.osparty.OSPartyPluginTest",
+      "projectName": "osparty",
+      "vmArgs": "-ea --add-opens=java.desktop/java.awt=ALL-UNNAMED --add-opens=java.desktop/sun.awt=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED"
+    },
+    {
+      "type": "java",
+      "name": "Run RuneLite Client (OSParty – Testing API)",
+      "request": "launch",
+      "mainClass": "net.osparty.OSPartyPluginTest",
+      "projectName": "osparty",
+      "vmArgs": "-ea -Dosparty.apiUrl=https://testing.osparty.net/ --add-opens=java.desktop/java.awt=ALL-UNNAMED --add-opens=java.desktop/sun.awt=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED"
+    }
+  ]
+}
