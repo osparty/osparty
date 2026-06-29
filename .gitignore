@@ -1,4 +1,7 @@
 .gradle/
+.vscode/
+.cursor/
+gradle.properties
 build/
 out/
 .idea/

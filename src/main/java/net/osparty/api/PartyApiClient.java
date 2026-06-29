@@ -1,50 +1,30 @@
 package net.osparty.api;
 
-import net.osparty.model.Activity;
 import net.osparty.model.Party;
 import net.osparty.model.PartyRequest;
-import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
 import java.io.IOException;
-import java.lang.reflect.Type;
+import java.util.Arrays;
 import java.util.List;
 import java.util.function.Consumer;
 import javax.inject.Inject;
 import javax.inject.Singleton;
-import lombok.extern.slf4j.Slf4j;
-import okhttp3.Call;
-import okhttp3.Callback;
-import okhttp3.HttpUrl;
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.RequestBody;
-import okhttp3.Response;
-import okhttp3.ResponseBody;
 
 /**
- * Thin asynchronous client over the party queue API.
- *
- * <p>Results are delivered on an OkHttp dispatcher thread, so callers that touch
- * Swing must marshal back onto the EDT themselves.
+ * {@link PartyService} backed entirely by the live {@link PartySocket}. Discovery,
+ * hosting, keep-alive and one-shot lookups all travel over the single session-long
+ * WebSocket; there is no REST path. Callbacks fire on the socket's reader thread, so
+ * UI callers must marshal back onto the EDT themselves.
  */
-@Slf4j
 @Singleton
 public class PartyApiClient implements PartyService
 {
-	private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
-	/** Header carrying the per-party host credential on host-only mutations. */
-	private static final String HOST_KEY_HEADER = "X-OSParty-Host-Key";
-	private static final Type PARTY_LIST_TYPE = new TypeToken<List<Party>>()
-	{
-	}.getType();
-
 	/** Production party advertising API, used unless overridden for local development. */
 	private static final String DEFAULT_API_BASE_URL = "https://api.osparty.net";
 
 	/**
 	 * The API base URL. Defaults to {@link #DEFAULT_API_BASE_URL}, but can be pointed
 	 * at a local API during development via the {@code osparty.apiUrl} system property.
+	 * Read by {@link PartySocket} to derive the WebSocket URL.
 	 */
 	private static final String API_BASE_URL = resolveBaseUrl();
 
@@ -58,49 +38,17 @@ public class PartyApiClient implements PartyService
 		return DEFAULT_API_BASE_URL;
 	}
 
-	private final OkHttpClient httpClient;
-	private final Gson gson;
-	private final PartySocket partySocket;
-
-	@Inject
-	private PartyApiClient(OkHttpClient httpClient, Gson gson, PartySocket partySocket)
-	{
-		this.httpClient = httpClient;
-		this.gson = gson;
-		this.partySocket = partySocket;
-	}
-
-	private HttpUrl.Builder baseUrl()
-	{
-		HttpUrl parsed = HttpUrl.parse(API_BASE_URL);
-		if (parsed == null)
-		{
-			throw new IllegalStateException("Invalid API base URL: " + API_BASE_URL);
-		}
-		// Versioned base path: all endpoints live under /api/v1.
-		return parsed.newBuilder().addPathSegment("api").addPathSegment("v1");
-	}
-
 	public static String apiBaseUrl()
 	{
 		return API_BASE_URL;
 	}
 
-	@Override
-	public void searchParties(Activity activity, String player, Consumer<List<Party>> onSuccess, Consumer<Throwable> onError)
-	{
-		HttpUrl.Builder url = baseUrl()
-			.addPathSegment("parties")
-			.addQueryParameter("player", nullToEmpty(player));
-		// A null activity fetches every open party (the API treats the filter as
-		// optional); the Search tab then filters client-side by the checked set.
-		if (activity != null)
-		{
-			url.addQueryParameter("activity", activity.getId());
-		}
+	private final PartySocket partySocket;
 
-		Request request = new Request.Builder().url(url.build()).get().build();
-		enqueue(request, PARTY_LIST_TYPE, onSuccess, onError);
+	@Inject
+	private PartyApiClient(PartySocket partySocket)
+	{
+		this.partySocket = partySocket;
 	}
 
 	@Override
@@ -129,95 +77,50 @@ public class PartyApiClient implements PartyService
 	@Override
 	public void getPartyByCode(String code, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
-		HttpUrl url = baseUrl()
-			.addPathSegment("parties")
-			.addPathSegment("by-code")
-			.addPathSegment(code)
-			.build();
-
-		Request request = new Request.Builder().url(url).get().build();
-		enqueue(request, Party.class, onSuccess, onError);
+		partySocket.getByCode(code, party -> deliver(party, onSuccess, onError, "No party with code " + code));
 	}
 
 	@Override
 	public void getPartyByHost(String host, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
-		HttpUrl url = baseUrl()
-			.addPathSegment("parties")
-			.addPathSegment("by-host")
-			.addPathSegment(host)
-			.build();
-
-		Request request = new Request.Builder().url(url).get().build();
-		enqueue(request, Party.class, onSuccess, onError);
+		partySocket.getByHost(host, party -> deliver(party, onSuccess, onError, "No party for host " + host));
 	}
 
 	@Override
 	public void createParty(PartyRequest partyRequest, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
-		// Prefer the socket: it advertises the ad and is its own keep-alive.
-		if (partySocket.isConnected())
-		{
-			partySocket.host(partyRequest, hostKey, onSuccess, onError);
-			return;
-		}
-		// REST fallback (socket down / older server). Bind the ad to the socket so it's
-		// kept alive and resumed once the connection comes up.
-		HttpUrl url = baseUrl().addPathSegment("parties").build();
-		RequestBody body = RequestBody.create(JSON, gson.toJson(partyRequest));
-		Request.Builder request = new Request.Builder().url(url).post(body);
-		withHostKey(request, hostKey);
-		enqueue(request.build(), Party.class,
-			(Party party) ->
-			{
-				partySocket.setHosting(party.getId(), hostKey);
-				onSuccess.accept(party);
-			},
-			onError);
+		// The socket advertises the ad and is its own keep-alive; the hosted ack carries
+		// the server-assigned id. If the socket is down, host() reports the error.
+		partySocket.host(partyRequest, hostKey, onSuccess, onError);
 	}
 
-	/**
-	 * Host keep-alive: bump the ad's liveness so the backend doesn't reap it as
-	 * stale. PUT (not POST) so it isn't caught by the create rate limit. The host key
-	 * authorises the mutation (the server rejects it if it doesn't match the session).
-	 */
 	@Override
 	public void heartbeat(String partyId, int size, int world, String layout, String roles, String hostKey,
 		Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
-		// With the socket open there's no keep-alive to send — the connection is the
-		// keep-alive. Just push the changed fields (deduped inside PartySocket).
-		if (partySocket.isConnected())
-		{
-			partySocket.update(partyId, hostKey, patchOf(size, world, layout, roles));
-			return;
-		}
-		// REST fallback: the legacy heartbeat endpoint (also refreshes the ad's TTL).
-		HttpUrl.Builder url = baseUrl()
-			.addPathSegment("parties")
-			.addPathSegment(partyId)
-			.addPathSegment("heartbeat");
-		if (size > 0)
-		{
-			url.addQueryParameter("size", Integer.toString(size));
-		}
-		if (world > 0)
-		{
-			url.addQueryParameter("world", Integer.toString(world));
-		}
-		if (layout != null && !layout.isEmpty())
-		{
-			url.addQueryParameter("layout", layout);
-		}
-		if (roles != null && !roles.isEmpty())
-		{
-			url.addQueryParameter("roles", roles);
-		}
+		// The open socket is the keep-alive; just push the changed fields (deduped inside
+		// PartySocket). There is no acknowledgement — list changes come back as deltas.
+		partySocket.update(partyId, hostKey, patchOf(size, world, layout, roles));
+	}
 
-		RequestBody body = RequestBody.create(JSON, "{}");
-		Request.Builder request = new Request.Builder().url(url.build()).put(body);
-		withHostKey(request, hostKey);
-		enqueue(request.build(), Party.class, onSuccess, onError);
+	@Override
+	public void disbandParty(String partyId, String host, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError)
+	{
+		partySocket.unhost(partyId, hostKey);
+		onSuccess.accept(null); // optimistic — the server removes the ad and broadcasts it
+	}
+
+	/** Route a lookup result: the party on success, or a not-found error when null. */
+	private static void deliver(Party party, Consumer<Party> onSuccess, Consumer<Throwable> onError, String notFound)
+	{
+		if (party != null)
+		{
+			onSuccess.accept(party);
+		}
+		else
+		{
+			onError.accept(new IOException(notFound));
+		}
 	}
 
 	/** A partial update mirroring the server's PartyUpdate (Gson omits the null fields). */
@@ -238,153 +141,11 @@ public class PartyApiClient implements PartyService
 		}
 		if (roles != null && !roles.isEmpty())
 		{
-			patch.neededRoles = java.util.Arrays.asList(roles.split(","));
+			patch.neededRoles = Arrays.asList(roles.split(","));
 		}
 		return patch;
 	}
 
-	@Override
-	public void applyToParty(String partyId, String player, Consumer<Party> onSuccess, Consumer<Throwable> onError)
-	{
-		HttpUrl url = baseUrl()
-			.addPathSegment("parties")
-			.addPathSegment(partyId)
-			.addPathSegment("apply")
-			.build();
-
-		RequestBody body = RequestBody.create(JSON, gson.toJson(new PlayerRequest(player)));
-		Request request = new Request.Builder().url(url).post(body).build();
-		enqueue(request, Party.class, onSuccess, onError);
-	}
-
-	@Override
-	public void cancelApplication(String partyId, String player, Consumer<Party> onSuccess, Consumer<Throwable> onError)
-	{
-		HttpUrl url = baseUrl()
-			.addPathSegment("parties")
-			.addPathSegment(partyId)
-			.addPathSegment("cancel")
-			.build();
-
-		RequestBody body = RequestBody.create(JSON, gson.toJson(new PlayerRequest(player)));
-		Request request = new Request.Builder().url(url).post(body).build();
-		enqueue(request, Party.class, onSuccess, onError);
-	}
-
-	@Override
-	public void acceptApplicant(String partyId, String host, String applicant, Consumer<Party> onSuccess, Consumer<Throwable> onError)
-	{
-		HttpUrl url = baseUrl()
-			.addPathSegment("parties")
-			.addPathSegment(partyId)
-			.addPathSegment("accept")
-			.build();
-
-		RequestBody body = RequestBody.create(JSON, gson.toJson(new PlayerRequest(applicant)));
-		Request request = new Request.Builder().url(url).post(body).build();
-		enqueue(request, Party.class, onSuccess, onError);
-	}
-
-	@Override
-	public void kickPlayer(String partyId, String host, String target, Consumer<Party> onSuccess, Consumer<Throwable> onError)
-	{
-		HttpUrl url = baseUrl()
-			.addPathSegment("parties")
-			.addPathSegment(partyId)
-			.addPathSegment("kick")
-			.build();
-
-		RequestBody body = RequestBody.create(JSON, gson.toJson(new PlayerRequest(target)));
-		Request request = new Request.Builder().url(url).post(body).build();
-		enqueue(request, Party.class, onSuccess, onError);
-	}
-
-	@Override
-	public void disbandParty(String partyId, String host, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError)
-	{
-		// Always clear local hosting state; sends an unhost over the socket if it's up.
-		partySocket.unhost(partyId, hostKey);
-		if (partySocket.isConnected())
-		{
-			onSuccess.accept(null); // optimistic — the server removes the ad
-			return;
-		}
-		HttpUrl url = baseUrl()
-			.addPathSegment("parties")
-			.addPathSegment(partyId)
-			.build();
-
-		Request.Builder request = new Request.Builder().url(url).delete();
-		withHostKey(request, hostKey);
-		enqueue(request.build(), Party.class, onSuccess, onError);
-	}
-
-	/**
-	 * Attach the host credential as a header (when present) so the server can verify
-	 * the caller owns the party before honouring a host-only mutation. Kept out of the
-	 * URL/body so it isn't logged by intermediaries.
-	 */
-	private static void withHostKey(Request.Builder request, String hostKey)
-	{
-		if (hostKey != null && !hostKey.isEmpty())
-		{
-			request.header(HOST_KEY_HEADER, hostKey);
-		}
-	}
-
-	private <T> void enqueue(Request request, Type type, Consumer<T> onSuccess, Consumer<Throwable> onError)
-	{
-		httpClient.newCall(request).enqueue(new Callback()
-		{
-			@Override
-			public void onFailure(Call call, IOException e)
-			{
-				log.warn("Party API request failed: {}", request.url(), e);
-				onError.accept(e);
-			}
-
-			@Override
-			public void onResponse(Call call, Response response)
-			{
-				try (ResponseBody responseBody = response.body())
-				{
-					if (!response.isSuccessful())
-					{
-						onError.accept(new IOException("Unexpected response " + response.code() + " from " + request.url()));
-						return;
-					}
-
-					String json = responseBody == null ? "" : responseBody.string();
-					@SuppressWarnings("unchecked")
-					T parsed = (T) gson.fromJson(json, type);
-					onSuccess.accept(parsed);
-				}
-				catch (Exception e)
-				{
-					log.warn("Failed to parse party API response: {}", request.url(), e);
-					onError.accept(e);
-				}
-			}
-		});
-	}
-
-	private static String nullToEmpty(String value)
-	{
-		return value == null ? "" : value;
-	}
-
-	private static final class PlayerRequest
-	{
-		@SuppressWarnings("unused")
-		private final String player;
-
-		private PlayerRequest(String player)
-		{
-			this.player = player;
-		}
-	}
-
-	/** Partial ad update sent over the socket; mirrors the server's PartyUpdate fields. */
 	private static final class PartyPatch
 	{
 		Integer size;

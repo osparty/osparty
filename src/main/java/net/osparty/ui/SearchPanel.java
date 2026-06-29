@@ -1,7 +1,9 @@
 package net.osparty.ui;
 
+import net.osparty.FavoritesService;
 import net.osparty.KillcountService;
 import net.osparty.OSPartyConfig;
+import net.osparty.WorldPinger;
 import net.osparty.api.PartyService;
 import net.osparty.api.PartySubscription;
 import net.osparty.model.AccountTypes;
@@ -23,6 +25,7 @@ import java.awt.LayoutManager;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
@@ -40,7 +43,6 @@ import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
-import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTabbedPane;
@@ -55,6 +57,7 @@ import javax.swing.event.AncestorEvent;
 import javax.swing.event.AncestorListener;
 import net.runelite.api.vars.AccountType;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.util.ImageUtil;
 import net.runelite.client.ui.FontManager;
@@ -66,20 +69,53 @@ import net.runelite.http.api.worlds.WorldRegion;
  * the current party first (disbanding it if you were the host). Full parties
  * and your own party aren't appliable.
  */
-class SearchPanel extends JPanel
+class SearchPanel extends PartyCardPanel
 {
-	private static final long COOLDOWN_MS = 30_000;
 
-	private final PartyService partyService;
-	private final Supplier<String> playerNameSupplier;
+	/** World regions we know flags for, in display order. */
+	private static final WorldRegion[] KNOWN_REGIONS = {
+		WorldRegion.UNITED_STATES_OF_AMERICA,
+		WorldRegion.UNITED_KINGDOM,
+		WorldRegion.AUSTRALIA,
+		WorldRegion.GERMANY,
+		WorldRegion.BRAZIL,
+		WorldRegion.JAPAN,
+		WorldRegion.SINGAPORE,
+		WorldRegion.SOUTH_AFRICA,
+	};
+
+	private static final class ActivityGroup
+	{
+		final String label;
+		final Activity[] activities;
+
+		ActivityGroup(String label, Activity... activities)
+		{
+			this.label = label;
+			this.activities = activities;
+		}
+	}
+
+	private static final ActivityGroup[] ACTIVITY_GROUPS = {
+		new ActivityGroup("Raids",
+			Activity.CHAMBERS_OF_XERIC, Activity.THEATRE_OF_BLOOD, Activity.TOMBS_OF_AMASCUT),
+		new ActivityGroup("Godwars",
+			Activity.KREEARRA, Activity.GENERAL_GRAARDOR, Activity.KRIL_TSUTSAROTH,
+			Activity.COMMANDER_ZILYANA),
+		new ActivityGroup("Other",
+			Activity.NEX, Activity.NIGHTMARE, Activity.CORPOREAL_BEAST, Activity.BARBARIAN_ASSAULT,
+			Activity.ZALCANO, Activity.HUEYCOATL, Activity.YAMA),
+	};
+
+	private static final String SORT_NEWEST = "Newest first";
+	private static final String SORT_OLDEST = "Oldest first";
+	private static final String SORT_PING   = "Lowest ping";
+	private static final String SORT_SPOTS  = "Most spots open";
+	private static final String SORT_FULL   = "Closest to full";
+
 	private final Supplier<String> friendsChatOwnerSupplier;
 	private final IntSupplier worldSupplier;
-	private final PartyState partyState;
-	private final LiveParty liveParty;
-	private final Supplier<AccountType> accountTypeSupplier;
 	private final Supplier<int[]> mapRegionsSupplier;
-	private final IntFunction<WorldRegion> worldRegionResolver;
-	private final KillcountService killcountService;
 	private final ConfigManager configManager;
 
 	private final JPanel activityListPanel = new JPanel();
@@ -90,6 +126,12 @@ class SearchPanel extends JPanel
 	private final JTabbedPane roleTabs = new JTabbedPane();
 	/** Collapsible content: the role tabs plus the separate learner mark. */
 	private final JPanel roleContent = new JPanel();
+	private final Set<WorldRegion> selectedRegions = EnumSet.allOf(WorldRegion.class);
+	/** Keeps a handle to each region checkbox so Reset can sync their visual state. */
+	private final Map<WorldRegion, JCheckBox> regionCheckboxes = new HashMap<>();
+	private boolean regionsExpanded;
+	private final JButton regionToggle = new JButton();
+	private final JPanel regionContent = new JPanel();
 	/** Self-mark (not a role): tags us as a learner to the host when we apply. */
 	private final JCheckBox imLearnerCheck = new JCheckBox("I'm a learner");
 	private Activity recommended;
@@ -97,9 +139,17 @@ class SearchPanel extends JPanel
 	private final JButton searchToggle = new JButton();
 	private final JPanel searchContent = new JPanel();
 	private final JTextField textField = new JTextField();
+	private final JTextField maxPingField = new JTextField();
 
 	private final JComboBox<String> lootFilter = new JComboBox<>(new String[]{"Any loot", "FFA", "Split"});
 	private final JCheckBox ironmanFilter = new JCheckBox("Ironman parties only");
+	private final JComboBox<String> learnerComboBox = new JComboBox<>(
+		new String[]{"Any", "Learner only", "Hide learner raids"});
+	private final JCheckBox hideIneligibleFilter = new JCheckBox("Hide parties I can't join");
+	private final JComboBox<String> sortComboBox = new JComboBox<>(
+		new String[]{SORT_NEWEST, SORT_OLDEST, SORT_PING, SORT_SPOTS, SORT_FULL});
+	private final JLabel activeFiltersLabel = new JLabel();
+	private final JButton resetButton = new JButton("Reset");
 	private final JTextField codeField = new JTextField();
 	private final JButton joinButton = new JButton("Join");
 	private final JButton searchButton = new JButton("Refresh");
@@ -112,27 +162,20 @@ class SearchPanel extends JPanel
 	/** Live party-list socket; non-null only while the Search tab is visible. */
 	private PartySubscription subscription;
 
-	private final Map<String, Long> cooldownExpiry = new HashMap<>();
-	private final Map<String, JButton> applyButtons = new HashMap<>();
-	private final Map<String, Party> partiesById = new HashMap<>();
-
-	private Timer uiTimer;
-
 	SearchPanel(PartyService partyService, Supplier<String> playerNameSupplier,
 		Supplier<String> friendsChatOwnerSupplier, IntSupplier worldSupplier, PartyState partyState,
 		LiveParty liveParty, Supplier<AccountType> accountTypeSupplier, Supplier<int[]> mapRegionsSupplier,
-		IntFunction<WorldRegion> worldRegionResolver, KillcountService killcountService, ConfigManager configManager)
+		IntFunction<WorldRegion> worldRegionResolver, KillcountService killcountService, ConfigManager configManager,
+		WorldPinger worldPinger, IntFunction<String> worldAddressResolver,
+		Supplier<Set<String>> friendNamesSupplier, FavoritesService favoritesService,
+		SpriteManager spriteManager)
 	{
-		this.partyService = partyService;
-		this.playerNameSupplier = playerNameSupplier;
+		super(partyService, playerNameSupplier, partyState, liveParty, accountTypeSupplier,
+			killcountService, worldPinger, worldRegionResolver, worldAddressResolver,
+			favoritesService, friendNamesSupplier, spriteManager);
 		this.friendsChatOwnerSupplier = friendsChatOwnerSupplier;
 		this.worldSupplier = worldSupplier;
-		this.partyState = partyState;
-		this.liveParty = liveParty;
-		this.accountTypeSupplier = accountTypeSupplier;
 		this.mapRegionsSupplier = mapRegionsSupplier;
-		this.worldRegionResolver = worldRegionResolver;
-		this.killcountService = killcountService;
 		this.configManager = configManager;
 
 		// Restore the filters the player last used, before the UI is built from them.
@@ -148,6 +191,7 @@ class SearchPanel extends JPanel
 		north.add(buildActivityFilter());
 		north.add(buildRoleFilter());
 		north.add(buildTextFilter());
+		north.add(buildRegionFilter());
 		north.add(buildControls());
 		north.add(buildJoinByCode());
 		add(north, BorderLayout.NORTH);
@@ -173,28 +217,16 @@ class SearchPanel extends JPanel
 		statusLabel.setFont(FontManager.getRunescapeSmallFont());
 		add(statusLabel, BorderLayout.SOUTH);
 
-		searchButton.setToolTipText("Refresh the list of open parties");
-		searchButton.addActionListener(e -> search());
+		updateActiveFiltersLabel();
 
 		// While the tab is visible: re-check whether we've moved near a different
-		// activity, and keep the list current. When the live socket is connected it
-		// pushes changes, so this only re-renders to refresh the "searching Xm" age
-		// labels (no network); when it isn't, this is the REST polling fallback.
+		// activity, and re-render to refresh the "searching Xm" age labels. The live
+		// socket pushes list changes, so this does no network I/O.
 		autoRefreshTimer = new Timer(10_000, e -> {
 			if (isShowing())
 			{
 				applyRecommendation();
-				if (isSocketLive())
-				{
-					if (lastResults != null)
-					{
-						showResults(lastResults);
-					}
-				}
-				else
-				{
-					search();
-				}
+				renderCurrent();
 			}
 		});
 		autoRefreshTimer.start();
@@ -210,15 +242,7 @@ class SearchPanel extends JPanel
 			{
 				startSubscription();
 				applyRecommendation();
-				if (isSocketLive() && lastResults != null)
-				{
-					// Socket already has the current list — render it without a REST hit.
-					showResults(lastResults);
-				}
-				else
-				{
-					search();
-				}
+				renderCurrent();
 				updateJoinButton();
 			}
 
@@ -256,8 +280,39 @@ class SearchPanel extends JPanel
 	{
 		JPanel controls = cappedRow(new BorderLayout(0, 6));
 		controls.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
+
+		// Sort row
+		JPanel sortRow = cappedRow(new BorderLayout(4, 0));
+		JLabel sortLabel = new JLabel("Sort");
+		sortLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		sortLabel.setFont(FontManager.getRunescapeSmallFont());
+		sortComboBox.addActionListener(e -> filtersChanged());
+		sortRow.add(sortLabel, BorderLayout.WEST);
+		sortRow.add(sortComboBox, BorderLayout.CENTER);
+
+		// Bottom row: active-filters badge + reset + refresh button
+		JPanel bottomRow = cappedRow(new BorderLayout(4, 0));
+		activeFiltersLabel.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
+		activeFiltersLabel.setFont(FontManager.getRunescapeSmallFont());
+		resetButton.setFocusPainted(false);
+		resetButton.setFont(FontManager.getRunescapeSmallFont());
+		resetButton.setToolTipText("Clear all filters");
+		resetButton.addActionListener(e -> resetAllFilters());
+
+		JPanel badgePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+		badgePanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		badgePanel.add(activeFiltersLabel);
+		badgePanel.add(resetButton);
+
 		searchButton.setFocusPainted(false);
-		controls.add(searchButton, BorderLayout.CENTER);
+		searchButton.setToolTipText("Refresh the list of open parties");
+		searchButton.addActionListener(e -> renderCurrent());
+
+		bottomRow.add(badgePanel, BorderLayout.WEST);
+		bottomRow.add(searchButton, BorderLayout.EAST);
+
+		controls.add(sortRow, BorderLayout.NORTH);
+		controls.add(bottomRow, BorderLayout.CENTER);
 		return controls;
 	}
 
@@ -295,7 +350,7 @@ class SearchPanel extends JPanel
 		scroll.setBorder(BorderFactory.createEmptyBorder());
 		scroll.getVerticalScrollBar().setUnitIncrement(16);
 		// Show ~6 rows; the rest scroll.
-		scroll.setPreferredSize(new Dimension(10, 120));
+		scroll.setPreferredSize(new Dimension(10, 170));
 		panel.add(scroll, BorderLayout.CENTER);
 		return panel;
 	}
@@ -492,16 +547,6 @@ class SearchPanel extends JPanel
 		return false;
 	}
 
-	/** The roles still open on an ad: the live {@code neededRoles}, else the full comp. */
-	private static List<String> neededRolesOf(Party party)
-	{
-		if (party.getNeededRoles() != null && !party.getNeededRoles().isEmpty())
-		{
-			return party.getNeededRoles();
-		}
-		return party.getRequiredRoles();
-	}
-
 	private JPanel buildTextFilter()
 	{
 		JPanel panel = cappedRow(new BorderLayout(0, 4));
@@ -534,12 +579,59 @@ class SearchPanel extends JPanel
 			}
 		});
 
-		// The text field plus the loot and ironman filters all live under "Search".
+		// The text field plus loot, ironman, learner and hide-ineligible filters live under "Search".
 		lootFilter.addActionListener(e -> filtersChanged());
 		ironmanFilter.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		ironmanFilter.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		ironmanFilter.setFocusPainted(false);
 		ironmanFilter.addActionListener(e -> filtersChanged());
+
+		learnerComboBox.setToolTipText("Filter by learner-raid status");
+		learnerComboBox.addActionListener(e -> filtersChanged());
+
+		hideIneligibleFilter.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		hideIneligibleFilter.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		hideIneligibleFilter.setFocusPainted(false);
+		hideIneligibleFilter.setToolTipText("Hide parties you can't join due to ironman rule or KC requirement");
+		hideIneligibleFilter.addActionListener(e -> filtersChanged());
+
+		maxPingField.setToolTipText("Hide parties whose world ping exceeds this threshold (ms). Leave blank for no limit.");
+		maxPingField.getDocument().addDocumentListener(new DocumentListener()
+		{
+			@Override
+			public void insertUpdate(DocumentEvent e)
+			{
+				filtersChanged();
+			}
+
+			@Override
+			public void removeUpdate(DocumentEvent e)
+			{
+				filtersChanged();
+			}
+
+			@Override
+			public void changedUpdate(DocumentEvent e)
+			{
+				filtersChanged();
+			}
+		});
+
+		JLabel maxPingLabel = new JLabel("Max ping (ms)");
+		maxPingLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		maxPingLabel.setFont(FontManager.getRunescapeSmallFont());
+		JPanel maxPingRow = new JPanel(new BorderLayout(4, 0));
+		maxPingRow.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		maxPingRow.add(maxPingLabel, BorderLayout.WEST);
+		maxPingRow.add(maxPingField, BorderLayout.CENTER);
+
+		JLabel learnerLabel = new JLabel("Learner raids");
+		learnerLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		learnerLabel.setFont(FontManager.getRunescapeSmallFont());
+		JPanel learnerRow = new JPanel(new BorderLayout(4, 0));
+		learnerRow.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		learnerRow.add(learnerLabel, BorderLayout.WEST);
+		learnerRow.add(learnerComboBox, BorderLayout.CENTER);
 
 		searchContent.setLayout(new BoxLayout(searchContent, BoxLayout.Y_AXIS));
 		searchContent.setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -547,6 +639,9 @@ class SearchPanel extends JPanel
 		searchContent.add(searchRow(textField));
 		searchContent.add(searchRow(lootFilter));
 		searchContent.add(searchRow(ironmanFilter));
+		searchContent.add(searchRow(learnerRow));
+		searchContent.add(searchRow(hideIneligibleFilter));
+		searchContent.add(searchRow(maxPingRow));
 		searchContent.setVisible(searchExpanded);
 		panel.add(searchContent, BorderLayout.CENTER);
 
@@ -579,6 +674,128 @@ class SearchPanel extends JPanel
 		searchToggle.setText("Search");
 	}
 
+	/**
+	 * Collapsible region multi-select: a 2-column grid of flag checkboxes for each
+	 * known world region. All ticked by default (no filter). Deselecting a region
+	 * hides parties whose host world belongs to that region. Unchecked regions show
+	 * a dimmed flag so the on/off state is visually distinct.
+	 */
+	private JPanel buildRegionFilter()
+	{
+		JPanel panel = cappedRow(new BorderLayout(0, 4));
+		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
+
+		styleCollapsibleHeader(regionToggle);
+		updateRegionToggleText();
+		regionToggle.addActionListener(e -> setRegionsExpanded(!regionsExpanded));
+		panel.add(regionToggle, BorderLayout.NORTH);
+
+		JPanel grid = new JPanel(new GridLayout(0, 2, 2, 2));
+		grid.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		grid.setBorder(BorderFactory.createEmptyBorder(4, 2, 4, 2));
+
+		for (WorldRegion region : KNOWN_REGIONS)
+		{
+			JCheckBox check = new JCheckBox(shortNameOf(region));
+			check.setSelected(selectedRegions.contains(region));
+			check.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+			check.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			check.setFont(FontManager.getRunescapeSmallFont());
+			check.setFocusPainted(false);
+			check.setMargin(new Insets(0, 0, 0, 0));
+			check.setIconTextGap(2);
+			ImageIcon flag = WorldFlags.forRegion(region);
+			if (flag != null)
+			{
+				// Bright flag = region included; dimmed flag = region filtered out.
+				check.setSelectedIcon(flag);
+				check.setIcon(dimIcon(flag));
+			}
+			check.addActionListener(e -> {
+				if (check.isSelected())
+				{
+					selectedRegions.add(region);
+				}
+				else
+				{
+					selectedRegions.remove(region);
+				}
+				updateRegionToggleText();
+				filtersChanged();
+			});
+			regionCheckboxes.put(region, check);
+			grid.add(check);
+		}
+
+		regionContent.setLayout(new BorderLayout());
+		regionContent.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		regionContent.add(grid);
+		regionContent.setVisible(regionsExpanded);
+		panel.add(regionContent, BorderLayout.CENTER);
+
+		return panel;
+	}
+
+	private void setRegionsExpanded(boolean expanded)
+	{
+		regionsExpanded = expanded;
+		regionContent.setVisible(expanded);
+		updateRegionToggleText();
+		persistFilters();
+		revalidate();
+		repaint();
+	}
+
+	private void updateRegionToggleText()
+	{
+		regionToggle.setIcon(regionsExpanded ? CARET_EXPANDED : CARET_COLLAPSED);
+		int deselected = 0;
+		for (WorldRegion r : KNOWN_REGIONS)
+		{
+			if (!selectedRegions.contains(r))
+			{
+				deselected++;
+			}
+		}
+		regionToggle.setText(deselected == 0 ? "Regions"
+			: "Regions (" + (KNOWN_REGIONS.length - deselected) + "/" + KNOWN_REGIONS.length + ")");
+	}
+
+	/**
+	 * Produce a semi-transparent (dimmed) copy of {@code source} to indicate a
+	 * deselected/inactive state on region checkboxes.
+	 */
+	private static ImageIcon dimIcon(ImageIcon source)
+	{
+		if (source == null)
+		{
+			return null;
+		}
+		java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(
+			source.getIconWidth(), source.getIconHeight(), java.awt.image.BufferedImage.TYPE_INT_ARGB);
+		java.awt.Graphics2D g = out.createGraphics();
+		g.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, 0.30f));
+		g.drawImage(source.getImage(), 0, 0, null);
+		g.dispose();
+		return new ImageIcon(out);
+	}
+
+	private static String shortNameOf(WorldRegion region)
+	{
+		switch (region)
+		{
+			case UNITED_STATES_OF_AMERICA: return "US";
+			case UNITED_KINGDOM: return "UK";
+			case AUSTRALIA: return "AU";
+			case GERMANY: return "DE";
+			case BRAZIL: return "BR";
+			case JAPAN: return "JP";
+			case SINGAPORE: return "SG";
+			case SOUTH_AFRICA: return "ZA";
+			default: return region.name().substring(0, Math.min(2, region.name().length()));
+		}
+	}
+
 	private void setAllActivities(boolean selected)
 	{
 		if (selected)
@@ -602,53 +819,79 @@ class SearchPanel extends JPanel
 		return button;
 	}
 
-	/** Rebuild the checkbox list, recommended activity first and pre-checked. */
+	/** Rebuild the grouped checkbox list. The nearby activity is highlighted in its group. */
 	private void rebuildActivityList()
 	{
 		activityListPanel.removeAll();
-		for (Activity activity : orderedActivities())
+		for (ActivityGroup group : ACTIVITY_GROUPS)
 		{
-			boolean nearby = activity == recommended;
-			JCheckBox box = new JCheckBox(activity.getDisplayName() + (nearby ? "  (nearby)" : ""));
-			box.setSelected(selectedActivities.contains(activity));
-			box.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-			box.setForeground(nearby ? ColorScheme.BRAND_ORANGE : ColorScheme.LIGHT_GRAY_COLOR);
-			box.setFont(FontManager.getRunescapeSmallFont());
-			box.setFocusPainted(false);
-			box.setAlignmentX(Component.LEFT_ALIGNMENT);
-			box.addActionListener(e -> {
-				if (box.isSelected())
-				{
-					selectedActivities.add(activity);
-				}
-				else
-				{
-					selectedActivities.remove(activity);
-				}
-				filtersChanged();
-			});
-			activityListPanel.add(box);
+			// Group header: label + per-group All / None toggles.
+			JPanel header = cappedRow(new BorderLayout(4, 0));
+			header.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+			header.setBorder(BorderFactory.createCompoundBorder(
+				BorderFactory.createMatteBorder(0, 0, 1, 0, ColorScheme.MEDIUM_GRAY_COLOR),
+				BorderFactory.createEmptyBorder(4, 4, 4, 4)));
+
+			JLabel groupLabel = new JLabel(group.label);
+			groupLabel.setForeground(ColorScheme.BRAND_ORANGE);
+			groupLabel.setFont(new JLabel().getFont().deriveFont(Font.BOLD));
+			header.add(groupLabel, BorderLayout.WEST);
+
+			JPanel headerButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
+			headerButtons.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+			JButton allBtn = miniButton("All");
+			allBtn.addActionListener(e -> setActivitiesInGroup(group, true));
+			JButton noneBtn = miniButton("None");
+			noneBtn.addActionListener(e -> setActivitiesInGroup(group, false));
+			headerButtons.add(allBtn);
+			headerButtons.add(noneBtn);
+			header.add(headerButtons, BorderLayout.EAST);
+			activityListPanel.add(header);
+
+			// Activity checkboxes
+			for (Activity activity : group.activities)
+			{
+				boolean nearby = activity == recommended;
+				JCheckBox box = new JCheckBox(activity.getDisplayName() + (nearby ? "  (nearby)" : ""));
+				box.setSelected(selectedActivities.contains(activity));
+				box.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+				box.setForeground(nearby ? ColorScheme.BRAND_ORANGE : ColorScheme.LIGHT_GRAY_COLOR);
+				box.setFont(FontManager.getRunescapeSmallFont());
+				box.setFocusPainted(false);
+				box.setAlignmentX(Component.LEFT_ALIGNMENT);
+				box.addActionListener(e -> {
+					if (box.isSelected())
+					{
+						selectedActivities.add(activity);
+					}
+					else
+					{
+						selectedActivities.remove(activity);
+					}
+					filtersChanged();
+				});
+				activityListPanel.add(box);
+			}
 		}
 		activityListPanel.revalidate();
 		activityListPanel.repaint();
 	}
 
-	/** Activities with the nearby one (if any) floated to the top. */
-	private List<Activity> orderedActivities()
+	private void setActivitiesInGroup(ActivityGroup group, boolean selected)
 	{
-		List<Activity> ordered = new ArrayList<>();
-		if (recommended != null)
+		for (Activity a : group.activities)
 		{
-			ordered.add(recommended);
-		}
-		for (Activity activity : Activity.values())
-		{
-			if (activity != recommended)
+			if (selected)
 			{
-				ordered.add(activity);
+				selectedActivities.add(a);
+			}
+			else
+			{
+				selectedActivities.remove(a);
 			}
 		}
-		return ordered;
+		rebuildActivityList();
+		filtersChanged();
 	}
 
 	/**
@@ -717,18 +960,25 @@ class SearchPanel extends JPanel
 	private void filtersChanged()
 	{
 		persistFilters();
+		updateActiveFiltersLabel();
 		reapplyFilters();
 	}
 
 	// ---- filter persistence (remembered across sessions) ---------------------
 
-	private static final String KEY_ACTIVITIES = "searchActivities";
-	private static final String KEY_ROLES = "searchRoles";
-	private static final String KEY_LOOT = "searchLoot";
-	private static final String KEY_IRONMAN = "searchIronman";
-	private static final String KEY_LEARNER = "searchLearner";
-	private static final String KEY_ROLES_EXPANDED = "searchRolesExpanded";
-	private static final String KEY_SEARCH_EXPANDED = "searchTextExpanded";
+	private static final String KEY_ACTIVITIES        = "searchActivities";
+	private static final String KEY_ROLES             = "searchRoles";
+	private static final String KEY_LOOT              = "searchLoot";
+	private static final String KEY_IRONMAN           = "searchIronman";
+	private static final String KEY_LEARNER           = "searchLearner";
+	private static final String KEY_ROLES_EXPANDED    = "searchRolesExpanded";
+	private static final String KEY_SEARCH_EXPANDED   = "searchTextExpanded";
+	private static final String KEY_REGIONS           = "searchRegions";
+	private static final String KEY_REGIONS_EXPANDED  = "searchRegionsExpanded";
+	private static final String KEY_MAX_PING          = "searchMaxPing";
+	private static final String KEY_SORT              = "searchSort";
+	private static final String KEY_LEARNER_FILTER    = "searchLearnerFilter";
+	private static final String KEY_HIDE_INELIGIBLE   = "searchHideIneligible";
 
 	/** Save the current filter selection so it's restored next session. */
 	private void persistFilters()
@@ -740,6 +990,25 @@ class SearchPanel extends JPanel
 		put(KEY_LEARNER, Boolean.toString(imLearnerCheck.isSelected()));
 		put(KEY_ROLES_EXPANDED, Boolean.toString(rolesExpanded));
 		put(KEY_SEARCH_EXPANDED, Boolean.toString(searchExpanded));
+		// Save which known regions are selected (non-KNOWN regions are always on).
+		StringBuilder regionsStr = new StringBuilder();
+		for (WorldRegion r : KNOWN_REGIONS)
+		{
+			if (selectedRegions.contains(r))
+			{
+				if (regionsStr.length() > 0)
+				{
+					regionsStr.append(',');
+				}
+				regionsStr.append(r.name());
+			}
+		}
+		put(KEY_REGIONS, regionsStr.toString());
+		put(KEY_REGIONS_EXPANDED, Boolean.toString(regionsExpanded));
+		put(KEY_MAX_PING, maxPingField.getText().trim());
+		put(KEY_SORT, (String) sortComboBox.getSelectedItem());
+		put(KEY_LEARNER_FILTER, (String) learnerComboBox.getSelectedItem());
+		put(KEY_HIDE_INELIGIBLE, Boolean.toString(hideIneligibleFilter.isSelected()));
 	}
 
 	/** Restore the saved filter selection into the in-memory state and the controls. */
@@ -782,6 +1051,42 @@ class SearchPanel extends JPanel
 		imLearnerCheck.setSelected(Boolean.parseBoolean(get(KEY_LEARNER)));
 		rolesExpanded = Boolean.parseBoolean(get(KEY_ROLES_EXPANDED));
 		searchExpanded = Boolean.parseBoolean(get(KEY_SEARCH_EXPANDED));
+
+		// Regions: start from allOf, then remove any KNOWN region the user deselected.
+		String regionsStr = get(KEY_REGIONS);
+		if (regionsStr != null && !regionsStr.isEmpty())
+		{
+			java.util.Set<String> savedNames = new java.util.HashSet<>();
+			for (String name : regionsStr.split(","))
+			{
+				savedNames.add(name.trim());
+			}
+			for (WorldRegion r : KNOWN_REGIONS)
+			{
+				if (!savedNames.contains(r.name()))
+				{
+					selectedRegions.remove(r);
+				}
+			}
+		}
+		regionsExpanded = Boolean.parseBoolean(get(KEY_REGIONS_EXPANDED));
+
+		String maxPing = get(KEY_MAX_PING);
+		if (maxPing != null && !maxPing.isEmpty())
+		{
+			maxPingField.setText(maxPing);
+		}
+		String sort = get(KEY_SORT);
+		if (sort != null)
+		{
+			sortComboBox.setSelectedItem(sort);
+		}
+		String learnerFilter = get(KEY_LEARNER_FILTER);
+		if (learnerFilter != null)
+		{
+			learnerComboBox.setSelectedItem(learnerFilter);
+		}
+		hideIneligibleFilter.setSelected(Boolean.parseBoolean(get(KEY_HIDE_INELIGIBLE)));
 	}
 
 	private static <T> String idsOf(Set<T> values, java.util.function.Function<T, String> id)
@@ -866,52 +1171,6 @@ class SearchPanel extends JPanel
 		leaveCurrentThen(() -> doApply(party, chosenRole));
 	}
 
-	private boolean meetsIronmanRule(Party party)
-	{
-		return !party.isIronmanOnly() || AccountTypes.isIronman(accountTypeSupplier.get());
-	}
-
-	private enum KcStatus
-	{
-		/** Meets the requirement (or there is none / it can't be checked). */
-		OK,
-		/** Hiscore lookup in progress; not yet known. */
-		PENDING,
-		/** Known to be below the required killcount. */
-		BELOW
-	}
-
-	/**
-	 * Whether the local player meets a party's minimum-killcount requirement, looked
-	 * up from the hiscores. Only blocks when we positively know they're below; an
-	 * unranked/unknown killcount (-1) doesn't block (the host still sees it and can
-	 * decide). Triggers an async lookup the first time, refreshing buttons when done.
-	 */
-	private KcStatus kcStatus(Party party)
-	{
-		Activity activity = Activity.fromId(party.getActivity());
-		int minKc = party.getMinKillCount();
-		int minHard = activity != null && activity.hasHardMode() ? party.getMinHardModeKillCount() : 0;
-		if ((minKc <= 0 && minHard <= 0) || activity == null)
-		{
-			return KcStatus.OK;
-		}
-		String me = playerNameSupplier.get();
-		if (me == null)
-		{
-			return KcStatus.OK; // login gating handles this
-		}
-		KillcountService.Killcount kc = killcountService.cached(me, activity);
-		if (kc == null)
-		{
-			killcountService.lookup(me, activity, this::updateAllButtons);
-			return KcStatus.PENDING;
-		}
-		boolean below = (minKc > 0 && kc.killCount >= 0 && kc.killCount < minKc)
-			|| (minHard > 0 && kc.hardModeKillCount >= 0 && kc.hardModeKillCount < minHard);
-		return below ? KcStatus.BELOW : KcStatus.OK;
-	}
-
 	private LootRule lootFilterValue()
 	{
 		String selected = (String) lootFilter.getSelectedItem();
@@ -926,46 +1185,18 @@ class SearchPanel extends JPanel
 		return null; // "Any loot"
 	}
 
-	/** A combined "Split , Ironman only , Host HCIM" tag line for a card, or null. */
-	private String tagLine(Party party)
+	/** Re-render the latest list pushed by the socket; no network (the feed is live). */
+	void renderCurrent()
 	{
-		List<String> tags = new ArrayList<>();
-		if (party.isLearnerRaid())
+		if (lastResults != null)
 		{
-			tags.add(party.learnerLabel());
+			showResults(lastResults);
 		}
-		LootRule loot = LootRule.fromName(party.getLootRule());
-		if (loot != LootRule.UNSPECIFIED)
-		{
-			tags.add(loot.getDisplayName());
-		}
-		if (party.isIronmanOnly())
-		{
-			tags.add("Ironman only");
-		}
-		// The host's account type is shown as a badge next to their name, not text.
-		return tags.isEmpty() ? null : String.join(", ", tags);
-	}
-
-	private void search()
-	{
-		String player = playerNameSupplier.get();
-		// Fetch every open party; we filter client-side by the checked activities,
-		// loot, ironman and free text. No pre-clear, so refreshes don't flicker.
-		partyService.searchParties(null, player,
-			parties -> SwingUtilities.invokeLater(() -> showResults(parties)),
-			error -> SwingUtilities.invokeLater(() -> setStatus("Refresh failed: " + error.getMessage())));
-	}
-
-	private boolean isSocketLive()
-	{
-		return subscription != null && subscription.isConnected();
 	}
 
 	/**
-	 * Subscribe to the live party list. The server pushes the full list on subscribe
-	 * and after every change; we render it on the EDT, same path as a REST refresh. If
-	 * the socket isn't connected (older server), {@link #autoRefreshTimer} polls REST.
+	 * Subscribe to the live party list. The server pushes the full list on (re)connect and
+	 * after every change; we render it on the EDT. This is the only source of list data.
 	 */
 	private void startSubscription()
 	{
@@ -975,7 +1206,7 @@ class SearchPanel extends JPanel
 		}
 		subscription = partyService.subscribeParties(
 			parties -> SwingUtilities.invokeLater(() -> acceptPushedParties(parties)),
-			error -> { /* the REST fallback in autoRefreshTimer covers a down socket */ });
+			error -> { /* transient socket drop; a reconnect re-subscribes and re-snapshots */ });
 	}
 
 	/** Stop receiving the live list (the plugin's socket stays open for hosting). */
@@ -1017,7 +1248,21 @@ class SearchPanel extends JPanel
 
 		LootRule wantLoot = lootFilterValue();
 		boolean ironOnly = ironmanFilter.isSelected();
+		boolean hideIneligible = hideIneligibleFilter.isSelected();
+		int learnerIdx = learnerComboBox.getSelectedIndex(); // 0=Any, 1=Learner only, 2=Hide learner
 		String text = textField.getText().trim().toLowerCase();
+		int maxPing = parseMaxPing();
+
+		// Region filter is active when at least one known region is deselected.
+		boolean regionFilterActive = false;
+		for (WorldRegion r : KNOWN_REGIONS)
+		{
+			if (!selectedRegions.contains(r))
+			{
+				regionFilterActive = true;
+				break;
+			}
+		}
 
 		// Show only joinable parties matching every active filter (full ones hidden).
 		List<Party> visible = new ArrayList<>();
@@ -1042,6 +1287,28 @@ class SearchPanel extends JPanel
 				{
 					continue;
 				}
+				// Learner-raid filter (feature 6).
+				if (learnerIdx == 1 && !party.isLearnerRaid())
+				{
+					continue; // "Learner only" — hide non-learner parties
+				}
+				if (learnerIdx == 2 && party.isLearnerRaid())
+				{
+					continue; // "Hide learner raids" — hide learner parties
+				}
+				// Hide-ineligible filter (feature 5): skip parties the player can't join.
+				// A PENDING KC check is never treated as BELOW — don't over-filter.
+				if (hideIneligible)
+				{
+					if (!meetsIronmanRule(party))
+					{
+						continue;
+					}
+					if (kcStatus(party) == KcStatus.BELOW)
+					{
+						continue;
+					}
+				}
 				if (!matchesRoleFilter(party, act))
 				{
 					continue;
@@ -1050,12 +1317,75 @@ class SearchPanel extends JPanel
 				{
 					continue;
 				}
+
+				Integer worldNum = parseWorldNum(party);
+
+				// Region filter: skip parties whose host world has a deselected region.
+				if (regionFilterActive && worldNum != null)
+				{
+					WorldRegion region = worldRegionResolver.apply(worldNum);
+					if (region != null && !selectedRegions.contains(region))
+					{
+						continue;
+					}
+				}
+
+				// Max ping filter: skip parties whose world ping exceeds the threshold.
+				// Parties with no known ping yet are always shown (never over-filtered on
+				// unknown data); they will be re-evaluated when the ping result arrives.
+				if (maxPing > 0 && worldNum != null && worldPinger != null)
+				{
+					Integer ping = worldPinger.getCachedPing(worldNum);
+					if (ping != null && ping >= 0 && ping > maxPing)
+					{
+						continue;
+					}
+				}
+
 				visible.add(party);
 			}
 		}
 
+		// Sort the visible list by the chosen order, then float friends to the top.
+		Comparator<Party> comp = buildComparator();
+		if (friendNamesSupplier != null)
+		{
+			Set<String> friends = friendNamesSupplier.get();
+			if (friends != null && !friends.isEmpty())
+			{
+				Comparator<Party> friendFirst = Comparator.comparingInt(
+					(Party p) -> {
+						String key = p.getHost() == null ? "" : normalize(p.getHost()).toLowerCase();
+						return friends.contains(key) ? 0 : 1;
+					});
+				comp = friendFirst.thenComparing(comp);
+			}
+		}
+		visible.sort(comp);
+
+		// Request pings for all visible parties. No-op if already cached or in flight.
+		if (worldPinger != null)
+		{
+			for (Party party : visible)
+			{
+				Integer worldNum = parseWorldNum(party);
+				if (worldNum != null)
+				{
+					String address = worldAddressResolver != null ? worldAddressResolver.apply(worldNum) : null;
+					worldPinger.requestPing(worldNum, address,
+						() -> javax.swing.SwingUtilities.invokeLater(this::reapplyFilters));
+				}
+			}
+		}
+
 		// Skip the rebuild (and its flicker) when nothing rendered would change.
-		String signature = selectedSignature() + "|" + roleSignature() + "|" + text + "|" + signatureOf(visible);
+		String signature = selectedSignature() + "|" + roleSignature() + "|" + regionSignature() + "|"
+			+ maxPingField.getText().trim() + "|" + text + "|" + pingSignatureOf(visible) + "|" + signatureOf(visible)
+			+ "|s" + sortComboBox.getSelectedIndex()
+			+ "|l" + learnerComboBox.getSelectedIndex()
+			+ "|h" + hideIneligibleFilter.isSelected()
+			+ "|f" + friendSignatureOf(visible)
+			+ "|v" + favSignatureOf(visible);
 		if (signature.equals(renderedSignature))
 		{
 			return;
@@ -1075,7 +1405,6 @@ class SearchPanel extends JPanel
 			setStatus(visible.size() + " open " + (visible.size() == 1 ? "party" : "parties") + ".");
 			for (Party party : visible)
 			{
-				partiesById.put(party.getId(), party);
 				resultsPanel.add(buildPartyCard(Activity.fromId(party.getActivity()), party));
 				resultsPanel.add(Box.createVerticalStrut(6));
 			}
@@ -1149,459 +1478,246 @@ class SearchPanel extends JPanel
 		return sb.toString();
 	}
 
-	private static long ageMinutes(long now, long createdAt)
+	/** Parse the max-ping field value, or -1 if blank or non-numeric. */
+	private int parseMaxPing()
 	{
-		return createdAt <= 0 ? -1 : Math.max(0, (now - createdAt) / 60_000);
+		String text = maxPingField.getText().trim();
+		if (text.isEmpty())
+		{
+			return -1;
+		}
+		try
+		{
+			return Integer.parseInt(text);
+		}
+		catch (NumberFormatException e)
+		{
+			return -1;
+		}
 	}
 
-	/** Human-readable age, e.g. "just now", "12m", "1h 5m"; null when unknown. */
-	private static String formatAge(long createdAt)
+	/** Signature of the selected regions so deselecting one triggers a re-render. */
+	private String regionSignature()
 	{
-		if (createdAt <= 0)
+		StringBuilder sb = new StringBuilder();
+		for (WorldRegion r : KNOWN_REGIONS)
 		{
-			return null;
+			if (selectedRegions.contains(r))
+			{
+				sb.append(r.name()).append(',');
+			}
 		}
-		long mins = ageMinutes(System.currentTimeMillis(), createdAt);
-		if (mins < 1)
-		{
-			return "just now";
-		}
-		if (mins < 60)
-		{
-			return mins + "m";
-		}
-		return (mins / 60) + "h " + (mins % 60) + "m";
+		return sb.toString();
 	}
 
 	/**
-	 * Greedily pack a comma-separated string into lines no longer than {@code max}
-	 * characters, so a long value wraps across several single-line label rows.
-	 * Continued lines keep a trailing comma to show they run on.
+	 * Signature of cached pings for the visible parties so that a ping arriving
+	 * via callback causes a re-render and updates the world label.
 	 */
-	private static List<String> wrapByComma(String text, int max)
+	private String pingSignatureOf(List<Party> parties)
 	{
-		List<String> lines = new ArrayList<>();
-		StringBuilder line = new StringBuilder();
-		for (String part : text.split(", "))
+		if (worldPinger == null)
 		{
-			if (line.length() == 0)
+			return "";
+		}
+		StringBuilder sb = new StringBuilder();
+		for (Party p : parties)
+		{
+			Integer wn = parseWorldNum(p);
+			if (wn != null)
 			{
-				line.append(part);
-			}
-			else if (line.length() + 2 + part.length() <= max)
-			{
-				line.append(", ").append(part);
-			}
-			else
-			{
-				lines.add(line + ",");
-				line = new StringBuilder(part);
+				Integer ping = worldPinger.getCachedPing(wn);
+				sb.append(wn).append(':').append(ping != null ? ping : '?').append(',');
 			}
 		}
-		if (line.length() > 0)
-		{
-			lines.add(line.toString());
-		}
-		return lines;
+		return sb.toString();
 	}
 
-	private JPanel buildPartyCard(Activity activity, Party party)
+	/** Build a sort comparator for the chosen sort order. */
+	private Comparator<Party> buildComparator()
 	{
-		// Cap height dynamically: a fixed maximum computed before the children
-		// are added collapses the card under BoxLayout and hides its text.
-		JPanel card = new JPanel(new BorderLayout(0, 4))
+		String selected = (String) sortComboBox.getSelectedItem();
+		if (selected == null)
 		{
-			@Override
-			public Dimension getMaximumSize()
+			selected = SORT_NEWEST;
+		}
+		switch (selected)
+		{
+			case SORT_OLDEST:
+				return Comparator.comparingLong(Party::getCreatedAt);
+			case SORT_PING:
+				return (a, b) -> Integer.compare(pingForSort(a), pingForSort(b));
+			case SORT_SPOTS:
+				return (a, b) -> {
+					int slotsA = a.getCapacity() > 0 ? a.getCapacity() - a.getSize() : -1;
+					int slotsB = b.getCapacity() > 0 ? b.getCapacity() - b.getSize() : -1;
+					return Integer.compare(slotsB, slotsA); // descending
+				};
+			case SORT_FULL:
+				return (a, b) -> {
+					float fa = a.getCapacity() > 0 ? (float) a.getSize() / a.getCapacity() : 0f;
+					float fb = b.getCapacity() > 0 ? (float) b.getSize() / b.getCapacity() : 0f;
+					return Float.compare(fb, fa); // descending
+				};
+			default: // SORT_NEWEST
+				return (a, b) -> Long.compare(b.getCreatedAt(), a.getCreatedAt());
+		}
+	}
+
+	/** Ping value used for sorting: unknown near-last, unreachable last. */
+	private int pingForSort(Party party)
+	{
+		Integer wn = parseWorldNum(party);
+		if (wn == null || worldPinger == null)
+		{
+			return Integer.MAX_VALUE - 1;
+		}
+		Integer ping = worldPinger.getCachedPing(wn);
+		if (ping == null)
+		{
+			return Integer.MAX_VALUE - 1; // not yet measured
+		}
+		return ping < 0 ? Integer.MAX_VALUE : ping; // unreachable → absolute last
+	}
+
+	/** Signature of which visible-party hosts are friends, so sort changes trigger a re-render. */
+	private String friendSignatureOf(List<Party> parties)
+	{
+		if (friendNamesSupplier == null)
+		{
+			return "";
+		}
+		Set<String> friends = friendNamesSupplier.get();
+		if (friends == null || friends.isEmpty())
+		{
+			return "";
+		}
+		StringBuilder sb = new StringBuilder();
+		for (Party p : parties)
+		{
+			String key = p.getHost() == null ? "" : normalize(p.getHost()).toLowerCase();
+			if (friends.contains(key))
 			{
-				return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-			}
-		};
-		card.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		card.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-		card.setAlignmentX(Component.LEFT_ALIGNMENT);
-
-		JPanel info = new JPanel(new GridLayout(0, 1));
-		info.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-
-		// Activity name first, since the list now mixes activities. The title reflects
-		// the raid difficulty (CoX CM / HMT / ToA invocation) when set.
-		JLabel activityLabel = new JLabel(activity != null
-			? activity.displayName(party.isHardMode(), party.getInvocation())
-			: party.getActivity());
-		activityLabel.setForeground(Color.WHITE);
-
-		JLabel host = new JLabel(party.getHost() == null ? "Unknown host" : party.getHost());
-		host.setForeground(ColorScheme.BRAND_ORANGE);
-		host.setFont(FontManager.getRunescapeSmallFont());
-		ImageIcon hostIcon = AccountIcons.forType(AccountTypes.fromName(party.getHostAccountType()));
-		if (hostIcon != null)
-		{
-			host.setIcon(hostIcon);
-			host.setIconTextGap(4);
-		}
-
-		String capacity = party.getCapacity() > 0
-			? party.getSize() + "/" + party.getCapacity()
-			: String.valueOf(party.getSize());
-		StringBuilder sub = new StringBuilder(capacity).append(" players");
-		String age = formatAge(party.getCreatedAt());
-		if (age != null)
-		{
-			sub.append(", searching ").append(age);
-		}
-		JLabel meta = new JLabel(sub.toString());
-		meta.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		meta.setFont(FontManager.getRunescapeSmallFont());
-
-		info.add(host);
-		JLabel worldLabel = buildWorldLabel(party);
-		if (worldLabel != null)
-		{
-			info.add(worldLabel);
-		}
-		info.add(meta);
-
-		String tagLine = tagLine(party);
-		if (tagLine != null)
-		{
-			JLabel tags = new JLabel(tagLine);
-			tags.setForeground(ColorScheme.BRAND_ORANGE);
-			tags.setFont(FontManager.getRunescapeSmallFont());
-			info.add(tags);
-		}
-
-		String requirement = requirementText(activity, party);
-		if (requirement != null)
-		{
-			JLabel req = new JLabel(requirement);
-			req.setForeground(ColorScheme.PROGRESS_INPROGRESS_COLOR);
-			req.setFont(FontManager.getRunescapeSmallFont());
-			info.add(req);
-		}
-
-		// Roles still needed (ToB/CoX), wrapped across rows so the full list shows.
-		String needs = neededRolesText(activity, party);
-		if (needs != null)
-		{
-			for (String line : wrapByComma(needs, 30))
-			{
-				JLabel roles = new JLabel(line);
-				roles.setForeground(ColorScheme.BRAND_ORANGE);
-				roles.setFont(FontManager.getRunescapeSmallFont());
-				info.add(roles);
+				sb.append(p.getId()).append(',');
 			}
 		}
-
-		if (party.getDescription() != null && !party.getDescription().isEmpty())
-		{
-			JLabel desc = new JLabel(party.getDescription());
-			desc.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-			desc.setFont(FontManager.getRunescapeSmallFont());
-			info.add(desc);
-		}
-
-		// CoX raid layout the host is advertising (kept live via heartbeat). Wrapped
-		// across rows by comma so the full rotation is visible, not truncated.
-		if (party.getLayout() != null && !party.getLayout().isEmpty())
-		{
-			for (String line : wrapByComma("Layout: " + party.getLayout(), 30))
-			{
-				JLabel layout = new JLabel(line);
-				layout.setForeground(ColorScheme.PROGRESS_INPROGRESS_COLOR);
-				layout.setFont(FontManager.getRunescapeSmallFont());
-				info.add(layout);
-			}
-		}
-
-		JButton applyButton = new JButton("Apply");
-		applyButton.setFocusPainted(false);
-		// One listener that dispatches by state: cancel the active application,
-		// or apply (leaving the current party first if any).
-		applyButton.addActionListener(e -> {
-			if (isActive(party))
-			{
-				cancel(party);
-			}
-			else
-			{
-				apply(party);
-			}
-		});
-		applyButtons.put(party.getId(), applyButton);
-
-		JPanel buttonWrap = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
-		buttonWrap.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		buttonWrap.add(applyButton);
-
-		// Header row: activity title takes the available width (the action button is
-		// pinned to the right). Keeping the button out of the info column means the
-		// "x/y players, searching ..." line gets the full card width and isn't truncated.
-		JPanel header = new JPanel(new BorderLayout(6, 0));
-		header.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		header.add(activityLabel, BorderLayout.CENTER);
-		header.add(buttonWrap, BorderLayout.EAST);
-
-		card.add(header, BorderLayout.NORTH);
-		card.add(info, BorderLayout.CENTER);
-
-		return card;
+		return sb.toString();
 	}
 
 	/**
-	 * A "World 302" label with the host world's country flag, or null when the ad
-	 * has no world. The flag is omitted when the region can't be resolved (the
-	 * world list isn't loaded yet, or the world is unknown).
+	 * Signature of which visible parties are currently favourited, so toggling a star
+	 * (here or on the Favorites tab) invalidates the cached render and rebuilds the icons.
 	 */
-	private JLabel buildWorldLabel(Party party)
+	private String favSignatureOf(List<Party> parties)
 	{
-		String raw = party.getWorld();
-		if (raw == null || raw.trim().isEmpty())
+		if (favoritesService == null)
 		{
-			return null;
+			return "";
 		}
-		String digits = raw.replaceAll("\\D", "");
-		JLabel label = new JLabel("World " + (digits.isEmpty() ? raw.trim() : digits));
-		label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		label.setFont(FontManager.getRunescapeSmallFont());
-
-		if (!digits.isEmpty() && digits.length() <= 5 && worldRegionResolver != null)
+		StringBuilder sb = new StringBuilder();
+		for (Party p : parties)
 		{
-			WorldRegion region = worldRegionResolver.apply(Integer.parseInt(digits));
-			ImageIcon flag = WorldFlags.forRegion(region);
-			if (flag != null)
+			if (favoritesService.hasAnyFavorite(p))
 			{
-				label.setIcon(flag);
-				label.setIconTextGap(4);
+				sb.append(p.getId()).append(favoritesService.isFavorite(p.getHost()) ? "H" : "").append(',');
 			}
 		}
-		return label;
+		return sb.toString();
 	}
 
-	private String requirementText(Activity activity, Party party)
+	/** Count the number of non-default filters currently active. */
+	private int countActiveFilters()
 	{
-		if (party.getMinKillCount() <= 0 && party.getMinHardModeKillCount() <= 0)
+		int count = 0;
+		if (selectedActivities.size() < Activity.values().length)
 		{
-			return null;
+			count++;
 		}
-
-		StringBuilder req = new StringBuilder("Req: ");
-		boolean any = false;
-		if (party.getMinKillCount() > 0)
+		if (!selectedRoles.isEmpty())
 		{
-			req.append(party.getMinKillCount()).append(" KC");
-			any = true;
+			count++;
 		}
-		if (activity != null && activity.hasHardMode() && party.getMinHardModeKillCount() > 0)
+		if (sortComboBox.getSelectedIndex() > 0)
 		{
-			if (any)
+			count++;
+		}
+		if (lootFilterValue() != null)
+		{
+			count++;
+		}
+		if (ironmanFilter.isSelected())
+		{
+			count++;
+		}
+		if (learnerComboBox.getSelectedIndex() > 0)
+		{
+			count++;
+		}
+		if (!maxPingField.getText().trim().isEmpty())
+		{
+			count++;
+		}
+		for (WorldRegion r : KNOWN_REGIONS)
+		{
+			if (!selectedRegions.contains(r))
 			{
-				req.append(", ");
-			}
-			req.append(party.getMinHardModeKillCount()).append(' ').append(activity.getHardModeLabel()).append(" KC");
-		}
-		return req.toString();
-	}
-
-	/**
-	 * A "Needs: North freeze, Range x2" summary of a role party's still-open roles,
-	 * or null when the activity has no roles / nothing's open.
-	 */
-	private static String neededRolesText(Activity activity, Party party)
-	{
-		if (activity == null || !activity.hasRoles())
-		{
-			return null;
-		}
-		List<String> needed = neededRolesOf(party);
-		if (needed == null || needed.isEmpty())
-		{
-			return null;
-		}
-		// Count occurrences keeping first-seen order.
-		Map<String, Integer> counts = new java.util.LinkedHashMap<>();
-		for (String id : needed)
-		{
-			counts.merge(id, 1, Integer::sum);
-		}
-		List<String> parts = new ArrayList<>();
-		for (Map.Entry<String, Integer> entry : counts.entrySet())
-		{
-			String name = Role.displayNameOf(entry.getKey());
-			parts.add(entry.getValue() > 1 ? name + " x" + entry.getValue() : name);
-		}
-		return "Needs: " + String.join(", ", parts);
-	}
-
-	/**
-	 * Force the applicant to pick one of a role party's still-open roles. Returns
-	 * the chosen role id, or null if they cancelled (or there's nothing to choose).
-	 */
-	private String promptForRole(Party party, Activity activity)
-	{
-		List<Role> options = new ArrayList<>();
-		List<String> needed = neededRolesOf(party);
-		if (needed != null)
-		{
-			for (String id : needed)
-			{
-				Role role = Role.fromId(id);
-				if (role != null && !options.contains(role))
-				{
-					options.add(role);
-				}
+				count++;
+				break;
 			}
 		}
-		if (options.isEmpty())
+		if (hideIneligibleFilter.isSelected())
 		{
-			// No advertised roles to choose from - fall back to the full role set
-			// for the party's difficulty (CoX normal vs Challenge Mode).
-			options.addAll(activity.roles(party.isHardMode()));
+			count++;
 		}
-		if (options.isEmpty())
-		{
-			return null;
-		}
-		Role[] choices = options.toArray(new Role[0]);
-		Role pick = (Role) JOptionPane.showInputDialog(this, "Which role will you fill?",
-			"Choose a role", JOptionPane.QUESTION_MESSAGE, null, choices, choices[0]);
-		return pick != null ? pick.getId() : null;
+		return count;
 	}
 
-	private boolean isActive(Party party)
+	/** Refresh the active-filters label and show/hide the reset button accordingly. */
+	private void updateActiveFiltersLabel()
 	{
-		return partyState.isInParty() && !partyState.isHost()
-			&& partyState.getCurrentParty().getId().equals(party.getId());
+		int count = countActiveFilters();
+		if (count == 0)
+		{
+			activeFiltersLabel.setText("");
+			resetButton.setVisible(false);
+		}
+		else
+		{
+			activeFiltersLabel.setText(count + (count == 1 ? " active filter" : " active filters"));
+			resetButton.setVisible(true);
+		}
 	}
 
-	private boolean isOwnParty(Party party)
+	/** Reset every filter to its default state. */
+	private void resetAllFilters()
 	{
-		String me = playerNameSupplier.get();
-		return me != null && party.getHost() != null
-			&& normalize(me).equalsIgnoreCase(normalize(party.getHost()));
-	}
-
-	private void apply(Party party)
-	{
-		String player = playerNameSupplier.get();
-		if (player == null)
+		selectedActivities.addAll(EnumSet.allOf(Activity.class));
+		selectedRoles.clear();
+		for (WorldRegion r : KNOWN_REGIONS)
 		{
-			setStatus("Log in before applying to a party.");
-			return;
-		}
-		if (isOwnParty(party))
-		{
-			setStatus("You can't apply to your own party.");
-			return;
-		}
-		if (!meetsIronmanRule(party))
-		{
-			setStatus("This party is for ironman accounts.");
-			return;
-		}
-		if (kcStatus(party) == KcStatus.BELOW)
-		{
-			setStatus("You don't meet this party's minimum killcount.");
-			updateAllButtons();
-			return;
-		}
-		if (cooldownRemainingSeconds(party.getId()) > 0)
-		{
-			setStatus("On cooldown for this party.");
-			return;
-		}
-
-		// ToB/CoX: the applicant must commit to one of the party's open roles.
-		Activity activity = Activity.fromId(party.getActivity());
-		String role = null;
-		if (activity != null && activity.hasRoles())
-		{
-			role = promptForRole(party, activity);
-			if (role == null)
+			selectedRegions.add(r);
+			JCheckBox cb = regionCheckboxes.get(r);
+			if (cb != null)
 			{
-				return; // cancelled the role dialog
+				cb.setSelected(true);
 			}
 		}
-
-		JButton button = applyButtons.get(party.getId());
-		if (button != null)
-		{
-			button.setEnabled(false);
-			button.setText("Applying...");
-		}
-
-		// Leave whatever party we're currently in first (one party at a time).
-		final String chosenRole = role;
-		leaveCurrentThen(() -> doApply(party, chosenRole));
+		lootFilter.setSelectedIndex(0);        // "Any loot"
+		ironmanFilter.setSelected(false);
+		learnerComboBox.setSelectedIndex(0);   // "Any"
+		hideIneligibleFilter.setSelected(false);
+		maxPingField.setText("");
+		sortComboBox.setSelectedIndex(0);      // "Newest first"
+		updateRoleToggleText();
+		updateRegionToggleText();
+		rebuildActivityList();
+		filtersChanged();
 	}
 
-	private void leaveCurrentThen(Runnable next)
+	@Override
+	protected void updateAllButtons()
 	{
-		if (!partyState.isInParty())
-		{
-			next.run();
-			return;
-		}
-
-		// Tear down the party we're currently in: remove our ad if we were hosting,
-		// and close the live room. Membership is P2P now, so this is synchronous.
-		Party current = partyState.getCurrentParty();
-		if (partyState.isHost())
-		{
-			partyService.disbandParty(current.getId(), playerNameSupplier.get(), partyState.getHostKey(),
-				p -> { }, e -> { });
-		}
-		liveParty.leave();
-		partyState.clear();
-		next.run();
-	}
-
-	private void doApply(Party party, String role)
-	{
-		String passphrase = party.getPassphrase();
-		if (passphrase == null || passphrase.isEmpty())
-		{
-			setStatus("This party has no live room to join.");
-			updateAllButtons();
-			return;
-		}
-
-		boolean learner = imLearnerCheck.isSelected();
-		liveParty.joinParty(passphrase, party.getActivity(), party.getCapacity(), role, learner);
-		partyState.setMember(party);
-		String roleSuffix = role != null ? " as " + Role.displayNameOf(role) : "";
-		String learnerSuffix = learner ? " (learner)" : "";
-		setStatus("Joined " + party.getHost() + "'s room" + roleSuffix + learnerSuffix + " - awaiting host approval.");
-		updateAllButtons();
-	}
-
-	private void cancel(Party party)
-	{
-		JButton button = applyButtons.get(party.getId());
-		if (button != null)
-		{
-			button.setEnabled(false);
-			button.setText("Leaving...");
-		}
-
-		liveParty.leave();
-		partyState.clear();
-		cooldownExpiry.put(party.getId(), System.currentTimeMillis() + COOLDOWN_MS);
-		setStatus("Left. You can re-apply to this party in " + (COOLDOWN_MS / 1000) + "s.");
-		maybeStartTimer();
-		updateAllButtons();
-	}
-
-	private void updateAllButtons()
-	{
-		for (Map.Entry<String, JButton> entry : applyButtons.entrySet())
-		{
-			Party party = partiesById.get(entry.getKey());
-			if (party != null)
-			{
-				updateApplyButton(entry.getValue(), party);
-			}
-		}
+		super.updateAllButtons();
 		updateJoinButton();
 	}
 
@@ -1613,143 +1729,16 @@ class SearchPanel extends JPanel
 		joinButton.setToolTipText(loggedIn ? null : "Log in to join a party");
 	}
 
-	private void updateApplyButton(JButton button, Party party)
-	{
-		// You can browse parties while logged out, but applying needs an account.
-		if (playerNameSupplier.get() == null)
-		{
-			button.setText("Log in");
-			button.setEnabled(false);
-			button.setToolTipText("Log in to apply to a party");
-			return;
-		}
-		if (isOwnParty(party))
-		{
-			button.setText("Your party");
-			button.setEnabled(false);
-			button.setToolTipText("You host this party - manage it on the Current tab");
-			return;
-		}
-		if (isActive(party))
-		{
-			button.setText("Cancel");
-			button.setEnabled(true);
-			button.setToolTipText("Withdraw your application");
-			return;
-		}
-		if (!meetsIronmanRule(party))
-		{
-			button.setText("Iron only");
-			button.setEnabled(false);
-			button.setToolTipText("This party is for ironman accounts");
-			return;
-		}
-		if (party.isFull())
-		{
-			button.setText("Full");
-			button.setEnabled(false);
-			button.setToolTipText(null);
-			return;
-		}
-		long remaining = cooldownRemainingSeconds(party.getId());
-		if (remaining > 0)
-		{
-			button.setText("Wait " + remaining + "s");
-			button.setEnabled(false);
-			button.setToolTipText("Recently applied to this party");
-			return;
-		}
-		KcStatus kc = kcStatus(party);
-		if (kc == KcStatus.BELOW)
-		{
-			button.setText("Need KC");
-			button.setEnabled(false);
-			button.setToolTipText("You don't meet this party's minimum killcount ("
-				+ requirementText(Activity.fromId(party.getActivity()), party) + ")");
-			return;
-		}
-		if (kc == KcStatus.PENDING)
-		{
-			button.setText("Checking KC...");
-			button.setEnabled(false);
-			button.setToolTipText("Looking up your killcount on the hiscores");
-			return;
-		}
-		button.setText("Apply");
-		button.setEnabled(true);
-		button.setToolTipText(partyState.isInParty() ? "Applying will leave your current party" : null);
-	}
-
-	private boolean isMemberInParty()
-	{
-		return partyState.isInParty() && !partyState.isHost();
-	}
-
-	/** Normalise a player name for comparison (RuneLite uses nbsp in names). */
-	private static String normalize(String name)
-	{
-		return name == null ? "" : name.replace('\u00A0', ' ').trim();
-	}
-
-	private long cooldownRemainingSeconds(String partyId)
-	{
-		Long expiry = cooldownExpiry.get(partyId);
-		if (expiry == null)
-		{
-			return 0;
-		}
-		long remainingMs = expiry - System.currentTimeMillis();
-		if (remainingMs <= 0)
-		{
-			cooldownExpiry.remove(partyId);
-			return 0;
-		}
-		return (remainingMs + 999) / 1000; // round up
-	}
-
-	/** Start the 1s ticker if there's anything live to refresh. */
-	private void maybeStartTimer()
-	{
-		if (hasActiveCooldowns() || isMemberInParty())
-		{
-			ensureTimer();
-		}
-	}
-
-	private void ensureTimer()
-	{
-		if (uiTimer == null)
-		{
-			uiTimer = new Timer(1000, e -> {
-				updateAllButtons();
-				if (!hasActiveCooldowns() && !isMemberInParty())
-				{
-					uiTimer.stop();
-				}
-			});
-		}
-		if (!uiTimer.isRunning())
-		{
-			uiTimer.start();
-		}
-	}
-
-	private boolean hasActiveCooldowns()
-	{
-		long now = System.currentTimeMillis();
-		for (Long expiry : cooldownExpiry.values())
-		{
-			if (expiry > now)
-			{
-				return true;
-			}
-		}
-		return false;
-	}
-
-	private void setStatus(String text)
+	@Override
+	protected void setStatus(String text)
 	{
 		statusLabel.setText(text);
+	}
+
+	@Override
+	protected boolean isLocalLearner()
+	{
+		return imLearnerCheck.isSelected();
 	}
 
 	/**

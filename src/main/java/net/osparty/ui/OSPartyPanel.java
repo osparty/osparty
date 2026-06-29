@@ -1,8 +1,9 @@
 package net.osparty.ui;
 
-import net.osparty.OSPartyConfig;
+import net.osparty.FavoritesService;
 import net.osparty.HostApplicationHandler;
 import net.osparty.KillcountService;
+import net.osparty.OSPartyConfig;
 import net.osparty.api.PartyService;
 import net.osparty.model.Party;
 import net.osparty.party.LiveParty;
@@ -12,6 +13,7 @@ import java.awt.BorderLayout;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.image.BufferedImage;
+import java.util.Set;
 import java.util.function.IntConsumer;
 import java.util.function.IntFunction;
 import java.util.function.IntSupplier;
@@ -24,9 +26,11 @@ import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingConstants;
+import net.osparty.WorldPinger;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.SkillIconManager;
+import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.PluginPanel;
@@ -36,10 +40,9 @@ import net.runelite.client.util.ImageUtil;
 import net.runelite.client.util.LinkBrowser;
 
 /**
- * Root side-panel. Hosts Search / Create tabs, plus a "Current" tab that only
- * appears while the player is in a party (hosting or joined). All three tabs
- * share a single {@link PartyState} so the membership rule (one party at a
- * time) and the Current tab's visibility stay in sync.
+ * Root side-panel. Hosts Search / Favorites always, plus Create when idle and Current
+ * while in a party (hosting or joined). All tabs share a single {@link PartyState}
+ * so the one-party-at-a-time rule and tab visibility stay in sync.
  */
 public class OSPartyPanel extends PluginPanel
 {
@@ -52,10 +55,15 @@ public class OSPartyPanel extends PluginPanel
 	private final PartyState partyState;
 	private final LiveParty liveParty;
 	private final SearchPanel searchPanel;
+	private final FriendsPanel favoritesPanel;
 	private final MaterialTabGroup tabGroup;
 	private final MaterialTab searchTab;
+	private final MaterialTab createTab;
+	private final MaterialTab favesTab;
 	private final MaterialTab currentTab;
 	private boolean wasInParty;
+	/** Whether the tab bar is in the in-party layout (Current shown, Create hidden). */
+	private boolean inPartyTabLayout;
 
 	public OSPartyPanel(PartyService partyService, OSPartyConfig config, Supplier<String> playerNameSupplier,
 		HostApplicationHandler hostApplicationHandler, Supplier<String> friendsChatOwnerSupplier,
@@ -63,7 +71,10 @@ public class OSPartyPanel extends PluginPanel
 		RuneWatchService runeWatchService, Supplier<AccountType> accountTypeSupplier,
 		KillcountService killcountService, SkillIconManager skillIconManager, IntConsumer worldHopper,
 		Supplier<int[]> mapRegionsSupplier, IntFunction<WorldRegion> worldRegionResolver,
-		Supplier<String> coxLayoutSupplier, ConfigManager configManager, Gson gson)
+		Supplier<String> coxLayoutSupplier, ConfigManager configManager, Gson gson,
+		WorldPinger worldPinger, IntFunction<String> worldAddressResolver,
+		Supplier<Set<String>> friendNamesSupplier, FavoritesService favoritesService,
+		SpriteManager spriteManager)
 	{
 		super(false);
 
@@ -78,7 +89,15 @@ public class OSPartyPanel extends PluginPanel
 
 		searchPanel = new SearchPanel(partyService, playerNameSupplier,
 			friendsChatOwnerSupplier, worldSupplier, partyState, liveParty, accountTypeSupplier,
-			mapRegionsSupplier, worldRegionResolver, killcountService, configManager);
+			mapRegionsSupplier, worldRegionResolver, killcountService, configManager,
+			worldPinger, worldAddressResolver, friendNamesSupplier, favoritesService, spriteManager);
+		favoritesPanel = new FriendsPanel(partyService, playerNameSupplier, partyState,
+			liveParty, accountTypeSupplier, killcountService, worldPinger, worldRegionResolver,
+			worldAddressResolver, favoritesService, friendNamesSupplier, spriteManager);
+
+		// Cross-notify: toggling a favorite in Search refreshes the Favorites tab and vice versa.
+		searchPanel.setOnFavoriteChanged(favoritesPanel::render);
+		favoritesPanel.setOnFavoriteChanged(searchPanel::renderCurrent);
 		CreatePanel createPanel = new CreatePanel(partyService, config, playerNameSupplier, partyState, liveParty,
 			accountTypeSupplier, mapRegionsSupplier, coxLayoutSupplier, configManager, gson);
 		CurrentPanel currentPanel = new CurrentPanel(partyService, playerNameSupplier,
@@ -90,15 +109,17 @@ public class OSPartyPanel extends PluginPanel
 
 		tabGroup = new MaterialTabGroup(display);
 		searchTab = new MaterialTab("Search", tabGroup, searchPanel);
-		MaterialTab createTab = new MaterialTab("Create", tabGroup, createPanel);
+		createTab = new MaterialTab("Create", tabGroup, createPanel);
+		favesTab = new MaterialTab("Favorites", tabGroup, favoritesPanel);
 		currentTab = new MaterialTab("Current", tabGroup, currentPanel);
 
+		// Register every tab with the group (needed for select()), then lay out the
+		// idle bar. In-party swaps Create for Current (see rebuildTabs).
 		tabGroup.addTab(searchTab);
 		tabGroup.addTab(createTab);
+		tabGroup.addTab(favesTab);
 		tabGroup.addTab(currentTab);
-
-		// The Current tab only shows while in a party.
-		currentTab.setVisible(false);
+		rebuildTabs(false);
 		tabGroup.select(searchTab);
 
 		add(tabGroup, BorderLayout.NORTH);
@@ -172,20 +193,55 @@ public class OSPartyPanel extends PluginPanel
 	private void onPartyStateChanged()
 	{
 		boolean inParty = partyState.isInParty();
-		currentTab.setVisible(inParty);
+
+		// Switch away from tabs that are about to be removed from the bar.
+		if (!inParty && currentTab.isSelected())
+		{
+			tabGroup.select(searchTab);
+		}
+		else if (inParty && createTab.isSelected())
+		{
+			tabGroup.select(currentTab);
+		}
+
+		if (inParty != inPartyTabLayout)
+		{
+			inPartyTabLayout = inParty;
+			rebuildTabs(inParty);
+		}
 
 		if (inParty && !wasInParty)
 		{
-			// Just entered a party — jump to the Current tab.
 			tabGroup.select(currentTab);
-		}
-		else if (!inParty && wasInParty && currentTab.isSelected())
-		{
-			// Left the party while viewing it — fall back to Search.
-			tabGroup.select(searchTab);
 		}
 
 		wasInParty = inParty;
+		revalidate();
+		repaint();
+	}
+
+	/**
+	 * Rebuild the tab bar for idle vs in-party. Idle: Search | Create | Favorites.
+	 * In-party: Search | Current | Favorites (Create hidden — you can only be in one party).
+	 */
+	private void rebuildTabs(boolean inParty)
+	{
+		tabGroup.remove(searchTab);
+		tabGroup.remove(createTab);
+		tabGroup.remove(favesTab);
+		tabGroup.remove(currentTab);
+
+		tabGroup.add(searchTab);
+		if (inParty)
+		{
+			tabGroup.add(currentTab);
+		}
+		else
+		{
+			tabGroup.add(createTab);
+		}
+		tabGroup.add(favesTab);
+
 		tabGroup.revalidate();
 		tabGroup.repaint();
 	}

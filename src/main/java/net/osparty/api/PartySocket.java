@@ -10,6 +10,8 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
@@ -60,7 +62,10 @@ public class PartySocket extends WebSocketListener
 		return t;
 	});
 
-	private volatile Consumer<List<Party>> searchListener;
+	private final List<Consumer<List<Party>>> searchListeners = new CopyOnWriteArrayList<>();
+	// One-shot lookups awaiting a directed byCode/byHost reply, keyed by the echoed code/host.
+	private final Map<String, Consumer<Party>> pendingByCode = new ConcurrentHashMap<>();
+	private final Map<String, Consumer<Party>> pendingByHost = new ConcurrentHashMap<>();
 	private volatile boolean started;
 	private volatile boolean closed;
 	private volatile boolean connected;
@@ -144,7 +149,7 @@ public class PartySocket extends WebSocketListener
 	/** Register the listener that wants the live party list; pushes the current list now. */
 	public void setSearchListener(Consumer<List<Party>> listener)
 	{
-		searchListener = listener;
+		searchListeners.add(listener);
 		if (connected)
 		{
 			send(subscribeFrame());
@@ -155,13 +160,9 @@ public class PartySocket extends WebSocketListener
 	/** Stop receiving the list firehose (the connection stays up for hosting). */
 	public void clearSearchListener(Consumer<List<Party>> listener)
 	{
-		if (searchListener == listener)
+		if (searchListeners.remove(listener) && searchListeners.isEmpty() && connected)
 		{
-			searchListener = null;
-			if (connected)
-			{
-				send(gson.toJson(Collections.singletonMap("type", "unsubscribe")));
-			}
+			send(gson.toJson(Collections.singletonMap("type", "unsubscribe")));
 		}
 	}
 
@@ -228,6 +229,32 @@ public class PartySocket extends WebSocketListener
 		}
 	}
 
+	// --- One-shot lookups (request/response over the socket) ---
+
+	/** Look up a party by invite code; {@code onResult} gets the party, or null if none/offline. */
+	public void getByCode(String code, Consumer<Party> onResult)
+	{
+		if (code == null || !connected)
+		{
+			onResult.accept(null);
+			return;
+		}
+		pendingByCode.put(code, onResult);
+		send(gson.toJson(new LookupFrame("getByCode", code, null)));
+	}
+
+	/** Look up the ad hosted by a player; {@code onResult} gets the party, or null if none/offline. */
+	public void getByHost(String host, Consumer<Party> onResult)
+	{
+		if (host == null || !connected)
+		{
+			onResult.accept(null);
+			return;
+		}
+		pendingByHost.put(host, onResult);
+		send(gson.toJson(new LookupFrame("getByHost", null, host)));
+	}
+
 	// --- WebSocket callbacks ---
 
 	@Override
@@ -235,7 +262,7 @@ public class PartySocket extends WebSocketListener
 	{
 		connected = true;
 		attempt = 0;
-		if (searchListener != null)
+		if (!searchListeners.isEmpty())
 		{
 			send(subscribeFrame());
 		}
@@ -301,6 +328,12 @@ public class PartySocket extends WebSocketListener
 				break;
 			case "error":
 				handleError(frame.detail);
+				break;
+			case "byCode":
+				completeLookup(pendingByCode, frame.id, frame.party);
+				break;
+			case "byHost":
+				completeLookup(pendingByHost, frame.id, frame.party);
 				break;
 			default:
 				break;
@@ -399,10 +432,27 @@ public class PartySocket extends WebSocketListener
 
 	private void emitSearch()
 	{
-		Consumer<List<Party>> listener = searchListener;
-		if (listener != null)
+		if (searchListeners.isEmpty())
 		{
-			listener.accept(snapshot());
+			return;
+		}
+		List<Party> snap = snapshot();
+		for (Consumer<List<Party>> listener : searchListeners)
+		{
+			listener.accept(snap);
+		}
+	}
+
+	private static void completeLookup(Map<String, Consumer<Party>> pending, String key, Party party)
+	{
+		if (key == null)
+		{
+			return;
+		}
+		Consumer<Party> callback = pending.remove(key);
+		if (callback != null)
+		{
+			callback.accept(party);
 		}
 	}
 
@@ -511,6 +561,20 @@ public class PartySocket extends WebSocketListener
 			this.type = type;
 			this.id = id;
 			this.key = key;
+		}
+	}
+
+	private static final class LookupFrame
+	{
+		final String type;
+		final String code;
+		final String host;
+
+		LookupFrame(String type, String code, String host)
+		{
+			this.type = type;
+			this.code = code;
+			this.host = host;
 		}
 	}
 }
