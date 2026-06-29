@@ -16,6 +16,7 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.GridLayout;
 import java.awt.Insets;
+import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -31,8 +32,10 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.Timer;
 import net.runelite.api.vars.AccountType;
+import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
+import net.runelite.client.util.ImageUtil;
 import net.runelite.http.api.worlds.WorldRegion;
 
 /**
@@ -56,6 +59,9 @@ abstract class PartyCardPanel extends JPanel
 	protected final IntFunction<String> worldAddressResolver;
 	protected final FavoritesService favoritesService;
 	protected final Supplier<Set<String>> friendNamesSupplier;
+
+	private volatile BufferedImage memberStarImg;
+	private volatile BufferedImage freeStarImg;
 
 	// ---- mutable apply state ------------------------------------------------
 	protected final Map<String, JButton> applyButtons = new HashMap<>();
@@ -88,7 +94,8 @@ abstract class PartyCardPanel extends JPanel
 		IntFunction<WorldRegion> worldRegionResolver,
 		IntFunction<String> worldAddressResolver,
 		FavoritesService favoritesService,
-		Supplier<Set<String>> friendNamesSupplier)
+		Supplier<Set<String>> friendNamesSupplier,
+		SpriteManager spriteManager)
 	{
 		this.partyService = partyService;
 		this.playerNameSupplier = playerNameSupplier;
@@ -101,6 +108,14 @@ abstract class PartyCardPanel extends JPanel
 		this.worldAddressResolver = worldAddressResolver;
 		this.favoritesService = favoritesService;
 		this.friendNamesSupplier = friendNamesSupplier;
+		if (spriteManager != null)
+		{
+			// 1131 = WORLD_SWITCHER_STAR_MEMBERS, 1130 = WORLD_SWITCHER_STAR_FREE
+			spriteManager.getSpriteAsync(1131, 0,
+				img -> { if (img != null) memberStarImg = ImageUtil.resizeImage(img, 14, 14); });
+			spriteManager.getSpriteAsync(1130, 0,
+				img -> { if (img != null) freeStarImg = ImageUtil.resizeImage(img, 14, 14); });
+		}
 	}
 
 	// ---- abstract hooks for subclasses -------------------------------------
@@ -478,19 +493,27 @@ abstract class PartyCardPanel extends JPanel
 			hostLabel.setToolTipText("OSRS Friend");
 		}
 
-		// Star (favourite) button: ★ orange if host is fav, ★ grey if a member is fav, ☆ otherwise.
+		// Favorite button: member-world star when favourited, free-world star when not.
 		boolean hostFav = favoritesService != null && favoritesService.isFavorite(party.getHost());
 		boolean anyFav = favoritesService != null && favoritesService.hasAnyFavorite(party);
 
-		JButton starBtn = new JButton(anyFav ? "★" : "☆");
-		starBtn.setFont(FontManager.getRunescapeSmallFont());
+		JButton starBtn = new JButton();
 		starBtn.setFocusPainted(false);
 		starBtn.setContentAreaFilled(false);
 		starBtn.setBorderPainted(false);
 		starBtn.setMargin(new Insets(0, 2, 0, 2));
-		starBtn.setForeground(hostFav ? ColorScheme.BRAND_ORANGE
-			: anyFav ? ColorScheme.MEDIUM_GRAY_COLOR
-			: Color.DARK_GRAY);
+		if (memberStarImg != null && freeStarImg != null)
+		{
+			starBtn.setIcon(new ImageIcon(anyFav ? memberStarImg : freeStarImg));
+		}
+		else
+		{
+			starBtn.setText(anyFav ? "★" : "☆");
+			starBtn.setFont(FontManager.getRunescapeSmallFont());
+			starBtn.setForeground(hostFav ? ColorScheme.BRAND_ORANGE
+				: anyFav ? ColorScheme.MEDIUM_GRAY_COLOR
+				: Color.DARK_GRAY);
+		}
 		starBtn.setToolTipText(hostFav ? "Remove host from Favorites" : "Add host to Favorites");
 		starBtn.addActionListener(e -> {
 			if (favoritesService != null && party.getHost() != null)
@@ -498,10 +521,17 @@ abstract class PartyCardPanel extends JPanel
 				favoritesService.toggle(party.getHost());
 				boolean nowHostFav = favoritesService.isFavorite(party.getHost());
 				boolean nowAnyFav = favoritesService.hasAnyFavorite(party);
-				starBtn.setText(nowAnyFav ? "★" : "☆");
-				starBtn.setForeground(nowHostFav ? ColorScheme.BRAND_ORANGE
-					: nowAnyFav ? ColorScheme.MEDIUM_GRAY_COLOR
-					: Color.DARK_GRAY);
+				if (memberStarImg != null && freeStarImg != null)
+				{
+					starBtn.setIcon(new ImageIcon(nowAnyFav ? memberStarImg : freeStarImg));
+				}
+				else
+				{
+					starBtn.setText(nowAnyFav ? "★" : "☆");
+					starBtn.setForeground(nowHostFav ? ColorScheme.BRAND_ORANGE
+						: nowAnyFav ? ColorScheme.MEDIUM_GRAY_COLOR
+						: Color.DARK_GRAY);
+				}
 				starBtn.setToolTipText(nowHostFav ? "Remove host from Favorites" : "Add host to Favorites");
 				onFavoriteToggled(party);
 			}

@@ -30,6 +30,7 @@ import net.osparty.WorldPinger;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.SkillIconManager;
+import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.ui.PluginPanel;
@@ -39,7 +40,7 @@ import net.runelite.client.util.ImageUtil;
 import net.runelite.client.util.LinkBrowser;
 
 /**
- * Root side-panel. Hosts Search / Faves always, plus Create when idle and Current
+ * Root side-panel. Hosts Search / Favorites always, plus Create when idle and Current
  * while in a party (hosting or joined). All tabs share a single {@link PartyState}
  * so the one-party-at-a-time rule and tab visibility stay in sync.
  */
@@ -71,7 +72,8 @@ public class OSPartyPanel extends PluginPanel
 		Supplier<int[]> mapRegionsSupplier, IntFunction<WorldRegion> worldRegionResolver,
 		Supplier<String> coxLayoutSupplier, ConfigManager configManager, Gson gson,
 		WorldPinger worldPinger, IntFunction<String> worldAddressResolver,
-		Supplier<Set<String>> friendNamesSupplier, FavoritesService favoritesService)
+		Supplier<Set<String>> friendNamesSupplier, FavoritesService favoritesService,
+		SpriteManager spriteManager)
 	{
 		super(false);
 
@@ -87,10 +89,10 @@ public class OSPartyPanel extends PluginPanel
 		searchPanel = new SearchPanel(partyService, playerNameSupplier,
 			friendsChatOwnerSupplier, worldSupplier, partyState, liveParty, accountTypeSupplier,
 			mapRegionsSupplier, worldRegionResolver, killcountService, configManager,
-			worldPinger, worldAddressResolver, friendNamesSupplier, favoritesService);
+			worldPinger, worldAddressResolver, friendNamesSupplier, favoritesService, spriteManager);
 		FriendsPanel favesPanel = new FriendsPanel(partyService, playerNameSupplier, partyState,
 			liveParty, accountTypeSupplier, killcountService, worldPinger, worldRegionResolver,
-			worldAddressResolver, favoritesService, friendNamesSupplier);
+			worldAddressResolver, favoritesService, friendNamesSupplier, spriteManager);
 		CreatePanel createPanel = new CreatePanel(partyService, config, playerNameSupplier, partyState, liveParty,
 			accountTypeSupplier, mapRegionsSupplier, coxLayoutSupplier, configManager, gson);
 		CurrentPanel currentPanel = new CurrentPanel(partyService, playerNameSupplier,
@@ -103,7 +105,7 @@ public class OSPartyPanel extends PluginPanel
 		tabGroup = new MaterialTabGroup(display);
 		searchTab = new MaterialTab("Search", tabGroup, searchPanel);
 		createTab = new MaterialTab("Create", tabGroup, createPanel);
-		favesTab = new MaterialTab("Faves", tabGroup, favesPanel);
+		favesTab = new MaterialTab("Favorites", tabGroup, favesPanel);
 		currentTab = new MaterialTab("Current", tabGroup, currentPanel);
 
 		// Register every tab with the group (needed for select()), then lay out the
@@ -214,8 +216,8 @@ public class OSPartyPanel extends PluginPanel
 	}
 
 	/**
-	 * Rebuild the tab bar for idle vs in-party. Idle: Search | Create | Faves.
-	 * In-party: Search | Current | Faves (Create hidden — you can only be in one party).
+	 * Rebuild the tab bar for idle vs in-party. Idle: Search | Create | Favorites.
+	 * In-party: Search | Current | Favorites (Create hidden — you can only be in one party).
 	 */
 	private void rebuildTabs(boolean inParty)
 	{

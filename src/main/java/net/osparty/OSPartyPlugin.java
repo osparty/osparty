@@ -58,6 +58,7 @@ import net.runelite.client.util.HotkeyListener;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.SkillIconManager;
 import net.runelite.client.game.chatbox.ChatboxPanelManager;
+import net.runelite.client.game.SpriteManager;
 import net.runelite.client.game.WorldService;
 import net.runelite.client.util.WorldUtil;
 import net.runelite.http.api.worlds.WorldRegion;
@@ -219,6 +220,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 	@Inject
 	private FavoritesService favoritesService;
+
+	@Inject
+	private SpriteManager spriteManager;
 	/** Snapshot of the local player's friends list, updated each game tick. */
 	private volatile Set<String> friendNames = java.util.Collections.emptySet();
 
@@ -317,7 +321,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			this::getFriendsChatOwner, this::getCurrentWorld, itemManager, liveParty, runeWatchService,
 			this::getAccountType, killcountService, skillIconManager, this::hopTo, this::getMapRegions,
 			this::regionForWorld, this::getCoxLayout, configManager, gson,
-			worldPinger, this::worldAddressForNum, this::getFriendNames, favoritesService);
+			worldPinger, this::worldAddressForNum, this::getFriendNames, favoritesService, spriteManager);
 
 		navButton = NavigationButton.builder()
 			.tooltip("OSParty")

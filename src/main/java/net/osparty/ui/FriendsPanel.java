@@ -29,12 +29,14 @@ import javax.swing.SwingUtilities;
 import javax.swing.event.AncestorEvent;
 import javax.swing.event.AncestorListener;
 import net.runelite.api.vars.AccountType;
+import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
+import net.runelite.client.util.ImageUtil;
 import net.runelite.http.api.worlds.WorldRegion;
 
 /**
- * The "Faves" tab. Shows two collapsible sections:
+ * The "Favorites" tab. Shows two collapsible sections:
  * <ol>
  *   <li><b>Favorites</b> — open parties where the host or any member is in the
  *       player's local favourites list (starred from the Search tab).
@@ -67,11 +69,12 @@ class FriendsPanel extends PartyCardPanel
 		IntFunction<WorldRegion> worldRegionResolver,
 		IntFunction<String> worldAddressResolver,
 		FavoritesService favoritesService,
-		Supplier<Set<String>> friendNamesSupplier)
+		Supplier<Set<String>> friendNamesSupplier,
+		SpriteManager spriteManager)
 	{
 		super(partyService, playerNameSupplier, partyState, liveParty, accountTypeSupplier,
 			killcountService, worldPinger, worldRegionResolver, worldAddressResolver,
-			favoritesService, friendNamesSupplier);
+			favoritesService, friendNamesSupplier, spriteManager);
 
 		setLayout(new BorderLayout(0, 0));
 		setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -82,31 +85,61 @@ class FriendsPanel extends PartyCardPanel
 		sections.setLayout(new BoxLayout(sections, BoxLayout.Y_AXIS));
 		sections.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
-		// Favorites section
-		JPanel favHeader = buildSectionHeader("★  Favorites", new Color(0xFF8C00),
-			() -> { favExpanded = !favExpanded; render(); });
-		favoritesCount = (JLabel) favHeader.getClientProperty("count");
-		favoritesContent = new JPanel();
-		favoritesContent.setLayout(new BoxLayout(favoritesContent, BoxLayout.Y_AXIS));
-		favoritesContent.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		favoritesContent.setAlignmentX(Component.LEFT_ALIGNMENT);
-
 		// Friends section
-		JPanel friendsHeader = buildSectionHeader("♥  Friends", new Color(0x56A0D3),
+		JPanel friendsHeader = buildSectionHeader("Friends", new Color(0x56A0D3),
 			() -> { friendsExpanded = !friendsExpanded; render(); });
 		friendsCount = (JLabel) friendsHeader.getClientProperty("count");
+		JLabel friendsTitleLabel = (JLabel) friendsHeader.getClientProperty("title");
 		friendsContent = new JPanel();
 		friendsContent.setLayout(new BoxLayout(friendsContent, BoxLayout.Y_AXIS));
 		friendsContent.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		friendsContent.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-		sections.add(favHeader);
-		sections.add(favoritesContent);
-		sections.add(Box.createVerticalStrut(6));
+		// Favorites section
+		JPanel favHeader = buildSectionHeader("Favorites", new Color(0xFF8C00),
+			() -> { favExpanded = !favExpanded; render(); });
+		favoritesCount = (JLabel) favHeader.getClientProperty("count");
+		JLabel favTitleLabel = (JLabel) favHeader.getClientProperty("title");
+		favoritesContent = new JPanel();
+		favoritesContent.setLayout(new BoxLayout(favoritesContent, BoxLayout.Y_AXIS));
+		favoritesContent.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		favoritesContent.setAlignmentX(Component.LEFT_ALIGNMENT);
+
 		sections.add(friendsHeader);
 		sections.add(friendsContent);
 		sections.add(Box.createVerticalStrut(6));
+		sections.add(favHeader);
+		sections.add(favoritesContent);
+		sections.add(Box.createVerticalStrut(6));
 		sections.add(Box.createVerticalGlue());
+
+		if (spriteManager != null)
+		{
+			// 782 = TAB_FRIENDS
+			if (friendsTitleLabel != null)
+			{
+				spriteManager.getSpriteAsync(782, 0, img -> {
+					if (img != null)
+					{
+						java.awt.image.BufferedImage scaled = ImageUtil.resizeImage(img, 12, 12);
+						friendsTitleLabel.setIcon(new javax.swing.ImageIcon(scaled));
+						friendsTitleLabel.setText("  Friends");
+					}
+				});
+			}
+			// 1131 = WORLD_SWITCHER_STAR_MEMBERS
+			if (favTitleLabel != null)
+			{
+				spriteManager.getSpriteAsync(1131, 0, img -> {
+					if (img != null)
+					{
+						java.awt.image.BufferedImage scaled = ImageUtil.resizeImage(img, 12, 12);
+						favTitleLabel.setIcon(new javax.swing.ImageIcon(scaled));
+						favTitleLabel.setText("  Favorites");
+					}
+				});
+			}
+		}
 
 		JScrollPane scroll = new JScrollPane(sections);
 		scroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
@@ -322,6 +355,7 @@ class FriendsPanel extends PartyCardPanel
 		});
 		header.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
 		header.putClientProperty("count", countLabel);
+		header.putClientProperty("title", titleLabel);
 		return header;
 	}
 

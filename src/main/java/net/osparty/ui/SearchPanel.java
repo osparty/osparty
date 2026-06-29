@@ -57,6 +57,7 @@ import javax.swing.event.AncestorEvent;
 import javax.swing.event.AncestorListener;
 import net.runelite.api.vars.AccountType;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.util.ImageUtil;
 import net.runelite.client.ui.FontManager;
@@ -166,11 +167,12 @@ class SearchPanel extends PartyCardPanel
 		LiveParty liveParty, Supplier<AccountType> accountTypeSupplier, Supplier<int[]> mapRegionsSupplier,
 		IntFunction<WorldRegion> worldRegionResolver, KillcountService killcountService, ConfigManager configManager,
 		WorldPinger worldPinger, IntFunction<String> worldAddressResolver,
-		Supplier<Set<String>> friendNamesSupplier, FavoritesService favoritesService)
+		Supplier<Set<String>> friendNamesSupplier, FavoritesService favoritesService,
+		SpriteManager spriteManager)
 	{
 		super(partyService, playerNameSupplier, partyState, liveParty, accountTypeSupplier,
 			killcountService, worldPinger, worldRegionResolver, worldAddressResolver,
-			favoritesService, friendNamesSupplier);
+			favoritesService, friendNamesSupplier, spriteManager);
 		this.friendsChatOwnerSupplier = friendsChatOwnerSupplier;
 		this.worldSupplier = worldSupplier;
 		this.mapRegionsSupplier = mapRegionsSupplier;
