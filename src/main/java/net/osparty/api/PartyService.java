@@ -16,6 +16,16 @@ public interface PartyService
 {
 	void searchParties(Activity activity, String player, Consumer<List<Party>> onSuccess, Consumer<Throwable> onError);
 
+	/**
+	 * Subscribe to live updates of the open-party list over a WebSocket. The server
+	 * pushes a full snapshot on connect and incremental changes after; {@code onParties}
+	 * is invoked (on a background thread) with the complete current list each time it
+	 * changes. Reconnects automatically. Returns a handle to close when done; callers
+	 * should poll {@link #searchParties} as a fallback while {@link PartySubscription#isConnected()}
+	 * is false (e.g. against an older server without the socket).
+	 */
+	PartySubscription subscribeParties(Consumer<List<Party>> onParties, Consumer<Throwable> onError);
+
 	void getPartyByCode(String code, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
 	void getPartyByHost(String host, Consumer<Party> onSuccess, Consumer<Throwable> onError);

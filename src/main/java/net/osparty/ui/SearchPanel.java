@@ -3,6 +3,7 @@ package net.osparty.ui;
 import net.osparty.KillcountService;
 import net.osparty.OSPartyConfig;
 import net.osparty.api.PartyService;
+import net.osparty.api.PartySubscription;
 import net.osparty.model.AccountTypes;
 import net.osparty.model.Activity;
 import net.osparty.model.LootRule;
@@ -108,6 +109,8 @@ class SearchPanel extends JPanel
 	private List<Party> lastResults;
 	private String renderedSignature;
 	private Timer autoRefreshTimer;
+	/** Live party-list socket; non-null only while the Search tab is visible. */
+	private PartySubscription subscription;
 
 	private final Map<String, Long> cooldownExpiry = new HashMap<>();
 	private final Map<String, JButton> applyButtons = new HashMap<>();
@@ -173,31 +176,56 @@ class SearchPanel extends JPanel
 		searchButton.setToolTipText("Refresh the list of open parties");
 		searchButton.addActionListener(e -> search());
 
-		// Auto-refresh every 10s while the tab is visible, and re-check whether we've
-		// moved near a different activity.
+		// While the tab is visible: re-check whether we've moved near a different
+		// activity, and keep the list current. When the live socket is connected it
+		// pushes changes, so this only re-renders to refresh the "searching Xm" age
+		// labels (no network); when it isn't, this is the REST polling fallback.
 		autoRefreshTimer = new Timer(10_000, e -> {
 			if (isShowing())
 			{
 				applyRecommendation();
-				search();
+				if (isSocketLive())
+				{
+					if (lastResults != null)
+					{
+						showResults(lastResults);
+					}
+				}
+				else
+				{
+					search();
+				}
 			}
 		});
 		autoRefreshTimer.start();
 
-		// Populate as soon as the Search tab is opened.
+		// Subscribe to the live list only while the Search tab is visible. The socket
+		// itself is owned by the plugin (always open, also used for hosting), so this
+		// just toggles the list firehose with a cheap subscribe/unsubscribe — no
+		// connection churn — sparing the server from pushing to users not looking.
 		addAncestorListener(new AncestorListener()
 		{
 			@Override
 			public void ancestorAdded(AncestorEvent event)
 			{
+				startSubscription();
 				applyRecommendation();
-				search();
+				if (isSocketLive() && lastResults != null)
+				{
+					// Socket already has the current list — render it without a REST hit.
+					showResults(lastResults);
+				}
+				else
+				{
+					search();
+				}
 				updateJoinButton();
 			}
 
 			@Override
 			public void ancestorRemoved(AncestorEvent event)
 			{
+				stopSubscription();
 			}
 
 			@Override
@@ -927,6 +955,60 @@ class SearchPanel extends JPanel
 		partyService.searchParties(null, player,
 			parties -> SwingUtilities.invokeLater(() -> showResults(parties)),
 			error -> SwingUtilities.invokeLater(() -> setStatus("Refresh failed: " + error.getMessage())));
+	}
+
+	private boolean isSocketLive()
+	{
+		return subscription != null && subscription.isConnected();
+	}
+
+	/**
+	 * Subscribe to the live party list. The server pushes the full list on subscribe
+	 * and after every change; we render it on the EDT, same path as a REST refresh. If
+	 * the socket isn't connected (older server), {@link #autoRefreshTimer} polls REST.
+	 */
+	private void startSubscription()
+	{
+		if (subscription != null)
+		{
+			return;
+		}
+		subscription = partyService.subscribeParties(
+			parties -> SwingUtilities.invokeLater(() -> acceptPushedParties(parties)),
+			error -> { /* the REST fallback in autoRefreshTimer covers a down socket */ });
+	}
+
+	/** Stop receiving the live list (the plugin's socket stays open for hosting). */
+	private void stopSubscription()
+	{
+		if (subscription != null)
+		{
+			subscription.close();
+			subscription = null;
+		}
+	}
+
+	/**
+	 * A list pushed by the socket. Keep it as the latest result even when the tab is
+	 * hidden (so returning to it shows current data) but only repaint when visible.
+	 */
+	private void acceptPushedParties(List<Party> parties)
+	{
+		lastResults = parties;
+		if (isShowing())
+		{
+			showResults(parties);
+		}
+	}
+
+	/** Unsubscribe and stop timers; called when the plugin shuts down. */
+	void dispose()
+	{
+		if (autoRefreshTimer != null)
+		{
+			autoRefreshTimer.stop();
+		}
+		stopSubscription();
 	}
 
 	private void showResults(List<Party> parties)

@@ -149,13 +149,35 @@ All endpoints are under the versioned base path **`/api/v1`**.
 | GET    | `/api/v1/parties`                | `?activity={id}&player={name}` | —         | `Party[]` |
 | GET    | `/api/v1/parties/by-code/{code}` | —                              | —         | `Party`   |
 | POST   | `/api/v1/parties`                | `PartyRequest`                 | host key  | `Party`   |
+| PUT    | `/api/v1/parties/{id}`           | `PartyUpdate` (partial)        | host key  | `Party`   |
 | PUT    | `/api/v1/parties/{id}/heartbeat` | `?size&world&layout&roles`     | host key  | `Party`   |
 | DELETE | `/api/v1/parties/{id}`           | —                              | host key  | `Party`   |
+| WS     | `/api/v1/ws/parties`             | subscribe + host/update/unhost | host key¹ | `Party[]` |
 
-While hosting, the plugin **heartbeats** the ad every 30s (`PUT …/heartbeat`) so
-the backend doesn't reap it as stale, and pushes occupancy / world / CoX layout /
-still-open roles as they change. The API replaces any previous ad from the same
-host and rate-limits `POST` to 1/5s per IP.
+¹ Over the socket the connection is the host's identity; the key is the
+reclaim credential carried on `host`/`resume` (and accepted on writes).
+
+The API replaces any previous ad from the same host and rate-limits `POST` to
+1/5s per IP.
+
+### Live socket
+
+The plugin keeps **one WebSocket** to **`/api/v1/ws/parties`** open for the whole
+session (`PartySocket`), used for both reading and hosting:
+
+- **Search read** — while the Search tab is visible the plugin `subscribe`s and
+  renders the `snapshot` + `created`/`updated`/`removed` deltas, so list load is
+  driven by *changes*, not by user count. Off the tab it `unsubscribe`s; the
+  connection stays up.
+- **Host write** — creating a party sends `host` (the `hosted` ack carries the
+  server id); field changes send `update`; disband sends `unhost`. **The open
+  socket is the keep-alive** — there's no periodic heartbeat. A brief disconnect
+  keeps the ad alive for a grace window and the plugin `resume`s it (same id) on
+  reconnect.
+
+If the socket can't connect (older server / WS blocked) everything **falls back to
+REST** — `POST` to create, `PUT …/{id}/heartbeat` to keep alive, `DELETE` to
+disband — so the plugin works against either. See the API repo for the schema.
 
 ### Host authentication
 

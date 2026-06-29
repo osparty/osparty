@@ -60,12 +60,14 @@ public class PartyApiClient implements PartyService
 
 	private final OkHttpClient httpClient;
 	private final Gson gson;
+	private final PartySocket partySocket;
 
 	@Inject
-	private PartyApiClient(OkHttpClient httpClient, Gson gson)
+	private PartyApiClient(OkHttpClient httpClient, Gson gson, PartySocket partySocket)
 	{
 		this.httpClient = httpClient;
 		this.gson = gson;
+		this.partySocket = partySocket;
 	}
 
 	private HttpUrl.Builder baseUrl()
@@ -102,6 +104,29 @@ public class PartyApiClient implements PartyService
 	}
 
 	@Override
+	public PartySubscription subscribeParties(Consumer<List<Party>> onParties, Consumer<Throwable> onError)
+	{
+		// The connection is owned by PartySocket (plugin-lifetime); registering a listener
+		// subscribes it to the live list. Closing the handle just unregisters — it does not
+		// drop the socket (a host still needs it open).
+		partySocket.setSearchListener(onParties);
+		return new PartySubscription()
+		{
+			@Override
+			public boolean isConnected()
+			{
+				return partySocket.isConnected();
+			}
+
+			@Override
+			public void close()
+			{
+				partySocket.clearSearchListener(onParties);
+			}
+		};
+	}
+
+	@Override
 	public void getPartyByCode(String code, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
 		HttpUrl url = baseUrl()
@@ -130,12 +155,25 @@ public class PartyApiClient implements PartyService
 	@Override
 	public void createParty(PartyRequest partyRequest, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
+		// Prefer the socket: it advertises the ad and is its own keep-alive.
+		if (partySocket.isConnected())
+		{
+			partySocket.host(partyRequest, hostKey, onSuccess, onError);
+			return;
+		}
+		// REST fallback (socket down / older server). Bind the ad to the socket so it's
+		// kept alive and resumed once the connection comes up.
 		HttpUrl url = baseUrl().addPathSegment("parties").build();
 		RequestBody body = RequestBody.create(JSON, gson.toJson(partyRequest));
 		Request.Builder request = new Request.Builder().url(url).post(body);
-		// The host credential the server binds to this party's session for later checks.
 		withHostKey(request, hostKey);
-		enqueue(request.build(), Party.class, onSuccess, onError);
+		enqueue(request.build(), Party.class,
+			(Party party) ->
+			{
+				partySocket.setHosting(party.getId(), hostKey);
+				onSuccess.accept(party);
+			},
+			onError);
 	}
 
 	/**
@@ -147,6 +185,14 @@ public class PartyApiClient implements PartyService
 	public void heartbeat(String partyId, int size, int world, String layout, String roles, String hostKey,
 		Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
+		// With the socket open there's no keep-alive to send — the connection is the
+		// keep-alive. Just push the changed fields (deduped inside PartySocket).
+		if (partySocket.isConnected())
+		{
+			partySocket.update(partyId, hostKey, patchOf(size, world, layout, roles));
+			return;
+		}
+		// REST fallback: the legacy heartbeat endpoint (also refreshes the ad's TTL).
 		HttpUrl.Builder url = baseUrl()
 			.addPathSegment("parties")
 			.addPathSegment(partyId)
@@ -172,6 +218,29 @@ public class PartyApiClient implements PartyService
 		Request.Builder request = new Request.Builder().url(url.build()).put(body);
 		withHostKey(request, hostKey);
 		enqueue(request.build(), Party.class, onSuccess, onError);
+	}
+
+	/** A partial update mirroring the server's PartyUpdate (Gson omits the null fields). */
+	private static PartyPatch patchOf(int size, int world, String layout, String roles)
+	{
+		PartyPatch patch = new PartyPatch();
+		if (size > 0)
+		{
+			patch.size = size;
+		}
+		if (world > 0)
+		{
+			patch.world = Integer.toString(world);
+		}
+		if (layout != null && !layout.isEmpty())
+		{
+			patch.layout = layout;
+		}
+		if (roles != null && !roles.isEmpty())
+		{
+			patch.neededRoles = java.util.Arrays.asList(roles.split(","));
+		}
+		return patch;
 	}
 
 	@Override
@@ -233,6 +302,13 @@ public class PartyApiClient implements PartyService
 	@Override
 	public void disbandParty(String partyId, String host, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
+		// Always clear local hosting state; sends an unhost over the socket if it's up.
+		partySocket.unhost(partyId, hostKey);
+		if (partySocket.isConnected())
+		{
+			onSuccess.accept(null); // optimistic — the server removes the ad
+			return;
+		}
 		HttpUrl url = baseUrl()
 			.addPathSegment("parties")
 			.addPathSegment(partyId)
@@ -306,5 +382,14 @@ public class PartyApiClient implements PartyService
 		{
 			this.player = player;
 		}
+	}
+
+	/** Partial ad update sent over the socket; mirrors the server's PartyUpdate fields. */
+	private static final class PartyPatch
+	{
+		Integer size;
+		String world;
+		String layout;
+		List<String> neededRoles;
 	}
 }
