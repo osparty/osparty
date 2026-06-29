@@ -1186,7 +1186,7 @@ class SearchPanel extends PartyCardPanel
 	}
 
 	/** Re-render the latest list pushed by the socket; no network (the feed is live). */
-	private void renderCurrent()
+	void renderCurrent()
 	{
 		if (lastResults != null)
 		{

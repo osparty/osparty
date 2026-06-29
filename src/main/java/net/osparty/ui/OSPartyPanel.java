@@ -55,6 +55,7 @@ public class OSPartyPanel extends PluginPanel
 	private final PartyState partyState;
 	private final LiveParty liveParty;
 	private final SearchPanel searchPanel;
+	private final FriendsPanel favoritesPanel;
 	private final MaterialTabGroup tabGroup;
 	private final MaterialTab searchTab;
 	private final MaterialTab createTab;
@@ -90,9 +91,13 @@ public class OSPartyPanel extends PluginPanel
 			friendsChatOwnerSupplier, worldSupplier, partyState, liveParty, accountTypeSupplier,
 			mapRegionsSupplier, worldRegionResolver, killcountService, configManager,
 			worldPinger, worldAddressResolver, friendNamesSupplier, favoritesService, spriteManager);
-		FriendsPanel favesPanel = new FriendsPanel(partyService, playerNameSupplier, partyState,
+		favoritesPanel = new FriendsPanel(partyService, playerNameSupplier, partyState,
 			liveParty, accountTypeSupplier, killcountService, worldPinger, worldRegionResolver,
 			worldAddressResolver, favoritesService, friendNamesSupplier, spriteManager);
+
+		// Cross-notify: toggling a favorite in Search refreshes the Favorites tab and vice versa.
+		searchPanel.setOnFavoriteChanged(favoritesPanel::render);
+		favoritesPanel.setOnFavoriteChanged(searchPanel::renderCurrent);
 		CreatePanel createPanel = new CreatePanel(partyService, config, playerNameSupplier, partyState, liveParty,
 			accountTypeSupplier, mapRegionsSupplier, coxLayoutSupplier, configManager, gson);
 		CurrentPanel currentPanel = new CurrentPanel(partyService, playerNameSupplier,
@@ -105,7 +110,7 @@ public class OSPartyPanel extends PluginPanel
 		tabGroup = new MaterialTabGroup(display);
 		searchTab = new MaterialTab("Search", tabGroup, searchPanel);
 		createTab = new MaterialTab("Create", tabGroup, createPanel);
-		favesTab = new MaterialTab("Favorites", tabGroup, favesPanel);
+		favesTab = new MaterialTab("Favorites", tabGroup, favoritesPanel);
 		currentTab = new MaterialTab("Current", tabGroup, currentPanel);
 
 		// Register every tab with the group (needed for select()), then lay out the

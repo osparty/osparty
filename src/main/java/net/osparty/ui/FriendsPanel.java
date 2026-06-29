@@ -238,7 +238,7 @@ class FriendsPanel extends PartyCardPanel
 		render();
 	}
 
-	private void render()
+	void render()
 	{
 		applyButtons.clear();
 		partiesById.clear();

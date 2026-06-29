@@ -63,6 +63,8 @@ abstract class PartyCardPanel extends JPanel
 	private volatile BufferedImage memberStarImg;
 	private volatile BufferedImage freeStarImg;
 
+	private Runnable onFavoriteChanged = () -> {};
+
 	// ---- mutable apply state ------------------------------------------------
 	protected final Map<String, JButton> applyButtons = new HashMap<>();
 	protected final Map<String, Party> partiesById = new HashMap<>();
@@ -534,6 +536,7 @@ abstract class PartyCardPanel extends JPanel
 				}
 				starBtn.setToolTipText(nowHostFav ? "Remove host from Favorites" : "Add host to Favorites");
 				onFavoriteToggled(party);
+				onFavoriteChanged.run();
 			}
 		});
 
@@ -643,9 +646,15 @@ abstract class PartyCardPanel extends JPanel
 		return card;
 	}
 
+	/** Notifies the sibling panel (Search↔Favorites) that a favorite was toggled. */
+	void setOnFavoriteChanged(Runnable r)
+	{
+		this.onFavoriteChanged = r;
+	}
+
 	/**
 	 * Called when the star button is clicked. Subclasses can override to refresh
-	 * their results (e.g. the Faves panel removes the party when its host is un-starred).
+	 * their results (e.g. the Favorites panel removes the party when its host is un-starred).
 	 */
 	protected void onFavoriteToggled(Party party)
 	{
