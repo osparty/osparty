@@ -48,11 +48,12 @@ public class OSPartyPanel extends PluginPanel
 	// Hard-coded: PluginHub's build doesn't bundle runelite-plugin.properties, so
 	// reading the version from the classpath there yields "?". Keep this in step
 	// with runelite-plugin.properties on each release.
-	private static final String VERSION = "1.0.2";
+	private static final String VERSION = "1.0.4";
 	private static final String GITHUB_URL = "https://github.com/iodrareg/osparty";
 
 	private final PartyState partyState;
 	private final LiveParty liveParty;
+	private final SearchPanel searchPanel;
 	private final MaterialTabGroup tabGroup;
 	private final MaterialTab searchTab;
 	private final MaterialTab createTab;
@@ -83,7 +84,7 @@ public class OSPartyPanel extends PluginPanel
 		// room — otherwise the tabs and content sit flush against the sidebar edges.
 		setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
-		SearchPanel searchPanel = new SearchPanel(partyService, playerNameSupplier,
+		searchPanel = new SearchPanel(partyService, playerNameSupplier,
 			friendsChatOwnerSupplier, worldSupplier, partyState, liveParty, accountTypeSupplier,
 			mapRegionsSupplier, worldRegionResolver, killcountService, configManager,
 			worldPinger, worldAddressResolver, friendNamesSupplier, favoritesService);
@@ -159,6 +160,12 @@ public class OSPartyPanel extends PluginPanel
 		footer.add(version, BorderLayout.EAST);
 
 		return footer;
+	}
+
+	/** Release the live party-list socket (and timers). Call when the plugin unloads. */
+	public void dispose()
+	{
+		searchPanel.dispose();
 	}
 
 	/**

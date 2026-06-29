@@ -151,6 +151,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Inject
 	private OSPartyConfig config;
 
+	@Inject
+	private net.osparty.api.PartySocket partySocket;
+
 	private OSPartyPanel panel;
 	private NavigationButton navButton;
 	private ApplicantOverlay applicantOverlay;
@@ -252,6 +255,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// the live party itself runs peer-to-peer (see LiveParty).
 		PartyService partyService = apiClient;
 
+		// Open the live socket for the plugin session: search reads and host writes both
+		// run over it, and an open connection is the host's keep-alive.
+		partySocket.start();
+
 		applicantOverlay = new ApplicantOverlay();
 		overlayManager.add(applicantOverlay);
 
@@ -331,6 +338,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		keyManager.unregisterKeyListener(pingHotkeyListener);
 		mouseManager.unregisterMouseListener(pingMouseListener);
 		pingHotkeyDown = false;
+		if (panel != null)
+		{
+			panel.dispose();
+		}
+		partySocket.stop();
 		clientToolbar.removeNavigation(navButton);
 		overlayManager.remove(applicantOverlay);
 		overlayManager.remove(fcRequestOverlay);
