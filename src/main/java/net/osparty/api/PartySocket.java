@@ -1,6 +1,7 @@
 package net.osparty.api;
 
 import net.osparty.model.Party;
+import net.osparty.model.PartyDelta;
 import net.osparty.model.PartyRequest;
 import com.google.gson.Gson;
 import java.io.IOException;
@@ -10,6 +11,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
@@ -63,6 +65,8 @@ public class PartySocket extends WebSocketListener
 	});
 
 	private final List<Consumer<List<Party>>> searchListeners = new CopyOnWriteArrayList<>();
+	// Activity to scope the live list to (null = all). Kept across reconnects so onOpen re-sends it.
+	private volatile String subscribeActivity;
 	// One-shot lookups awaiting a directed byCode/byHost reply, keyed by the echoed code/host.
 	private final Map<String, Consumer<Party>> pendingByCode = new ConcurrentHashMap<>();
 	private final Map<String, Consumer<Party>> pendingByHost = new ConcurrentHashMap<>();
@@ -149,6 +153,16 @@ public class PartySocket extends WebSocketListener
 	/** Register the listener that wants the live party list; pushes the current list now. */
 	public void setSearchListener(Consumer<List<Party>> listener)
 	{
+		setSearchListener(listener, null);
+	}
+
+	/**
+	 * Register the live-list listener, scoping the server feed to a single activity ({@code null} =
+	 * all). Scoping cuts the server's fan-out to just the matching ads.
+	 */
+	public void setSearchListener(Consumer<List<Party>> listener, String activity)
+	{
+		subscribeActivity = blankToNull(activity);
 		searchListeners.add(listener);
 		if (connected)
 		{
@@ -157,12 +171,34 @@ public class PartySocket extends WebSocketListener
 		listener.accept(snapshot());
 	}
 
+	/**
+	 * Re-scope the live feed to a different activity ({@code null} = all) without re-registering the
+	 * listener. The server replies with a fresh snapshot for the new scope.
+	 */
+	public void setSearchActivity(String activity)
+	{
+		String next = blankToNull(activity);
+		if (Objects.equals(next, subscribeActivity))
+		{
+			return;
+		}
+		subscribeActivity = next;
+		if (connected && !searchListeners.isEmpty())
+		{
+			send(subscribeFrame());
+		}
+	}
+
 	/** Stop receiving the list firehose (the connection stays up for hosting). */
 	public void clearSearchListener(Consumer<List<Party>> listener)
 	{
-		if (searchListeners.remove(listener) && searchListeners.isEmpty() && connected)
+		if (searchListeners.remove(listener) && searchListeners.isEmpty())
 		{
-			send(gson.toJson(Collections.singletonMap("type", "unsubscribe")));
+			subscribeActivity = null;
+			if (connected)
+			{
+				send(gson.toJson(Collections.singletonMap("type", "unsubscribe")));
+			}
 		}
 	}
 
@@ -320,6 +356,9 @@ public class PartySocket extends WebSocketListener
 					emitSearch();
 				}
 				break;
+			case "batch":
+				applyBatch(frame);
+				break;
 			case "hosted":
 				handleHosted(frame.party);
 				break;
@@ -368,6 +407,61 @@ public class PartySocket extends WebSocketListener
 			log.debug("Party socket failed ({}); will retry", t.toString());
 		}
 		scheduleReconnect();
+	}
+
+	/**
+	 * Apply a whole tick's changes from a {@code batch} frame: full {@code created} parties are
+	 * upserted, {@code updated} deltas are merged into the party we already hold, and {@code removed}
+	 * ids are dropped — all under one lock, then a single re-emit of the list.
+	 */
+	private void applyBatch(Frame frame)
+	{
+		boolean changed = false;
+		synchronized (parties)
+		{
+			if (frame.created != null)
+			{
+				for (Party party : frame.created)
+				{
+					if (party != null && party.getId() != null)
+					{
+						parties.put(party.getId(), party);
+						changed = true;
+					}
+				}
+			}
+			if (frame.updated != null)
+			{
+				for (PartyDelta delta : frame.updated)
+				{
+					if (delta == null || delta.getId() == null)
+					{
+						continue;
+					}
+					Party existing = parties.get(delta.getId());
+					if (existing != null)
+					{
+						// Unknown ids are ignored; the next snapshot (e.g. on reconnect) heals the gap.
+						delta.applyTo(existing);
+						changed = true;
+					}
+				}
+			}
+			if (frame.removed != null)
+			{
+				for (String id : frame.removed)
+				{
+					if (id != null && parties.remove(id) != null)
+					{
+						changed = true;
+					}
+				}
+			}
+		}
+		if (changed)
+		{
+			emitSearch();
+		}
 	}
 
 	private void handleHosted(Party party)
@@ -489,7 +583,20 @@ public class PartySocket extends WebSocketListener
 
 	private String subscribeFrame()
 	{
-		return gson.toJson(Collections.singletonMap("type", "subscribe"));
+		String activity = subscribeActivity;
+		if (activity == null)
+		{
+			return gson.toJson(Collections.singletonMap("type", "subscribe"));
+		}
+		Map<String, String> frame = new LinkedHashMap<>();
+		frame.put("type", "subscribe");
+		frame.put("activity", activity);
+		return gson.toJson(frame);
+	}
+
+	private static String blankToNull(String value)
+	{
+		return (value == null || value.isBlank()) ? null : value;
 	}
 
 	private String resumeFrame(String id, String key)
@@ -518,6 +625,10 @@ public class PartySocket extends WebSocketListener
 		Party party;
 		String id;
 		String detail;
+		// "batch" frame: a tick's worth of changes, applied together.
+		Party[] created;
+		PartyDelta[] updated;
+		String[] removed;
 	}
 
 	// Outbound frame shapes (Gson omits null fields, so a patch carries only what's set).

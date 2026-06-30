@@ -962,6 +962,12 @@ class SearchPanel extends PartyCardPanel
 		persistFilters();
 		updateActiveFiltersLabel();
 		reapplyFilters();
+		// Narrow/widen the server feed to match: scope to a single activity, else all. No-op on the
+		// socket when the scope is unchanged.
+		if (subscription != null)
+		{
+			subscription.setActivity(scopeActivityId());
+		}
 	}
 
 	// ---- filter persistence (remembered across sessions) ---------------------
@@ -1206,7 +1212,18 @@ class SearchPanel extends PartyCardPanel
 		}
 		subscription = partyService.subscribeParties(
 			parties -> SwingUtilities.invokeLater(() -> acceptPushedParties(parties)),
-			error -> { /* transient socket drop; a reconnect re-subscribes and re-snapshots */ });
+			error -> { /* transient socket drop; a reconnect re-subscribes and re-snapshots */ },
+			scopeActivityId());
+	}
+
+	/**
+	 * The activity to scope the live subscription to: the single selected activity's id, or
+	 * {@code null} (= all) when zero or several are selected, since the server scopes to one. Local
+	 * filtering still narrows the displayed list; this just shrinks the server's fan-out to us.
+	 */
+	private String scopeActivityId()
+	{
+		return selectedActivities.size() == 1 ? selectedActivities.iterator().next().getId() : null;
 	}
 
 	/** Stop receiving the live list (the plugin's socket stays open for hosting). */

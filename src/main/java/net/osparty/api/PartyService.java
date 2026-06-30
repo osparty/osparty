@@ -21,6 +21,13 @@ public interface PartyService
 	 */
 	PartySubscription subscribeParties(Consumer<List<Party>> onParties, Consumer<Throwable> onError);
 
+	/**
+	 * Like {@link #subscribeParties(Consumer, Consumer)} but scopes the server feed to a single
+	 * activity id ({@code null} = all), so the server only fans out the matching ads. Re-scope later
+	 * via {@link PartySubscription#setActivity}.
+	 */
+	PartySubscription subscribeParties(Consumer<List<Party>> onParties, Consumer<Throwable> onError, String activityId);
+
 	/** One-shot lookup of a party by invite code (public or private). */
 	void getPartyByCode(String code, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 

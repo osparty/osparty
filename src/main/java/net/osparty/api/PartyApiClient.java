@@ -54,16 +54,28 @@ public class PartyApiClient implements PartyService
 	@Override
 	public PartySubscription subscribeParties(Consumer<List<Party>> onParties, Consumer<Throwable> onError)
 	{
+		return subscribeParties(onParties, onError, null);
+	}
+
+	@Override
+	public PartySubscription subscribeParties(Consumer<List<Party>> onParties, Consumer<Throwable> onError, String activityId)
+	{
 		// The connection is owned by PartySocket (plugin-lifetime); registering a listener
 		// subscribes it to the live list. Closing the handle just unregisters — it does not
 		// drop the socket (a host still needs it open).
-		partySocket.setSearchListener(onParties);
+		partySocket.setSearchListener(onParties, activityId);
 		return new PartySubscription()
 		{
 			@Override
 			public boolean isConnected()
 			{
 				return partySocket.isConnected();
+			}
+
+			@Override
+			public void setActivity(String activityId)
+			{
+				partySocket.setSearchActivity(activityId);
 			}
 
 			@Override
