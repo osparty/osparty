@@ -61,12 +61,14 @@ abstract class PartyCardPanel extends JPanel
 	protected final IntFunction<WorldRegion> worldRegionResolver;
 	protected final IntFunction<String> worldAddressResolver;
 	protected final FavoritesService favoritesService;
+	protected final net.osparty.BlockListService blockListService;
 	protected final Supplier<Set<String>> friendNamesSupplier;
 
 	private volatile BufferedImage memberStarImg;
 	private volatile BufferedImage freeStarImg;
 
 	private Runnable onFavoriteChanged = () -> {};
+	private Runnable onBlockChanged = () -> {};
 
 	// ---- mutable apply state ------------------------------------------------
 	protected final Map<String, JButton> applyButtons = new HashMap<>();
@@ -102,6 +104,7 @@ abstract class PartyCardPanel extends JPanel
 		IntFunction<WorldRegion> worldRegionResolver,
 		IntFunction<String> worldAddressResolver,
 		FavoritesService favoritesService,
+		net.osparty.BlockListService blockListService,
 		Supplier<Set<String>> friendNamesSupplier,
 		SpriteManager spriteManager)
 	{
@@ -115,6 +118,7 @@ abstract class PartyCardPanel extends JPanel
 		this.worldRegionResolver = worldRegionResolver;
 		this.worldAddressResolver = worldAddressResolver;
 		this.favoritesService = favoritesService;
+		this.blockListService = blockListService;
 		this.friendNamesSupplier = friendNamesSupplier;
 		if (spriteManager != null)
 		{
@@ -582,7 +586,8 @@ abstract class PartyCardPanel extends JPanel
 		}
 
 		// Favorite button: member-world star when favourited, free-world star when not.
-		boolean hostFav = favoritesService != null && favoritesService.isFavorite(party.getHost());
+		long hostHash = party.getHostAccountHash();
+		boolean hostFav = favoritesService != null && favoritesService.isFavorite(hostHash, party.getHost());
 		boolean anyFav = favoritesService != null && favoritesService.hasAnyFavorite(party);
 
 		JButton starBtn = new JButton();
@@ -602,8 +607,8 @@ abstract class PartyCardPanel extends JPanel
 		starBtn.addActionListener(e -> {
 			if (favoritesService != null && party.getHost() != null)
 			{
-				favoritesService.toggle(party.getHost());
-				boolean nowHostFav = favoritesService.isFavorite(party.getHost());
+				favoritesService.toggle(hostHash, party.getHost());
+				boolean nowHostFav = favoritesService.isFavorite(hostHash, party.getHost());
 				boolean nowAnyFav = favoritesService.hasAnyFavorite(party);
 				if (memberStarImg != null && freeStarImg != null)
 				{
@@ -619,12 +624,49 @@ abstract class PartyCardPanel extends JPanel
 			}
 		});
 
-		// Host row: star | name
+		// Block button: a small "no entry" toggle. Blocking a host hides their ads from
+		// search (unless "Show blocked parties" is on); favouriting and blocking are mutually
+		// exclusive, so blocking clears any favourite on the same host.
+		boolean hostBlocked = blockListService != null && blockListService.isBlocked(hostHash, party.getHost());
+		if (hostBlocked)
+		{
+			// Only reachable when "Show blocked parties" is on; grey the name to mark it.
+			hostLabel.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
+			hostLabel.setToolTipText("Blocked host");
+		}
+		JButton blockBtn = new JButton(hostBlocked ? StatusIcons.BLOCK_ON : StatusIcons.BLOCK_OFF);
+		blockBtn.setFocusPainted(false);
+		blockBtn.setContentAreaFilled(false);
+		blockBtn.setBorderPainted(false);
+		blockBtn.setMargin(new Insets(0, 2, 0, 2));
+		blockBtn.setToolTipText(hostBlocked ? "Unblock host" : "Block host");
+		blockBtn.addActionListener(e -> {
+			if (blockListService != null && party.getHost() != null)
+			{
+				boolean wasBlocked = blockListService.isBlocked(hostHash, party.getHost());
+				blockListService.toggle(hostHash, party.getHost());
+				boolean nowBlocked = !wasBlocked;
+				// Favouriting and blocking the same host are mutually exclusive.
+				if (nowBlocked && favoritesService != null && favoritesService.isFavorite(hostHash, party.getHost()))
+				{
+					favoritesService.toggle(hostHash, party.getHost());
+					onFavoriteChanged.run();
+				}
+				blockBtn.setIcon(nowBlocked ? StatusIcons.BLOCK_ON : StatusIcons.BLOCK_OFF);
+				blockBtn.setToolTipText(nowBlocked ? "Unblock host" : "Block host");
+				onBlockToggled(party);
+				onBlockChanged.run();
+			}
+		});
+
+		// Host row: star | name | block. The favourite (left) and block (right) toggles are
+		// kept apart — one common action, one rare/destructive — so they can't be misclicked.
 		JPanel hostRow = new JPanel(new BorderLayout(2, 0));
 		hostRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		hostRow.setAlignmentX(Component.LEFT_ALIGNMENT);
 		hostRow.add(starBtn, BorderLayout.WEST);
 		hostRow.add(hostLabel, BorderLayout.CENTER);
+		hostRow.add(blockBtn, BorderLayout.EAST);
 
 		String capacity = party.getCapacity() > 0
 			? party.getSize() + "/" + party.getCapacity()
@@ -764,11 +806,25 @@ abstract class PartyCardPanel extends JPanel
 		this.onFavoriteChanged = r;
 	}
 
+	/** Notifies the panel that a host was blocked/unblocked (Search re-filters, Favorites refreshes). */
+	void setOnBlockChanged(Runnable r)
+	{
+		this.onBlockChanged = r;
+	}
+
 	/**
 	 * Called when the star button is clicked. Subclasses can override to refresh
 	 * their results (e.g. the Favorites panel removes the party when its host is un-starred).
 	 */
 	protected void onFavoriteToggled(Party party)
+	{
+	}
+
+	/**
+	 * Called when the block button is clicked. Subclasses can override to refresh
+	 * their results (e.g. Search hides the card once its host is blocked).
+	 */
+	protected void onBlockToggled(Party party)
 	{
 	}
 

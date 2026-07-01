@@ -98,6 +98,7 @@ class PartyPanel extends JPanel
 	private final OSPartyConfig config;
 	private final ConfigManager configManager;
 	private final FavoritesService favoritesService;
+	private final net.osparty.BlockListService blockListService;
 
 	/** Skills in the in-game skills-tab layout (row-major, 3 columns), total last. */
 	private static final Skill[] SKILL_LAYOUT = {
@@ -145,7 +146,8 @@ class PartyPanel extends JPanel
 		LiveParty liveParty, RuneWatchService runeWatch, KillcountService killcounts,
 		SkillIconManager skillIcons, IntSupplier currentWorld, IntConsumer worldHopper,
 		Supplier<String> friendsChatOwnerSupplier, Supplier<String> coxLayoutSupplier,
-		OSPartyConfig config, ConfigManager configManager, FavoritesService favoritesService)
+		OSPartyConfig config, ConfigManager configManager, FavoritesService favoritesService,
+		net.osparty.BlockListService blockListService)
 	{
 		this.partyService = partyService;
 		this.playerNameSupplier = playerNameSupplier;
@@ -163,6 +165,7 @@ class PartyPanel extends JPanel
 		this.config = config;
 		this.configManager = configManager;
 		this.favoritesService = favoritesService;
+		this.blockListService = blockListService;
 
 		setLayout(new BorderLayout(0, 8));
 		setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
@@ -577,6 +580,11 @@ class PartyPanel extends JPanel
 		{
 			left.add(star);
 		}
+		JButton block = memberBlock(member);
+		if (block != null)
+		{
+			left.add(block);
+		}
 		if (status == Status.HOST && StatusIcons.CROWN != null)
 		{
 			JLabel crown = new JLabel(StatusIcons.CROWN);
@@ -697,21 +705,61 @@ class PartyPanel extends JPanel
 			return null;
 		}
 		final String rsn = member.getName();
+		final long hash = memberHash(member);
 		JButton star = new JButton();
 		star.setFocusPainted(false);
 		star.setContentAreaFilled(false);
 		star.setBorderPainted(false);
 		star.setMargin(new Insets(0, 2, 0, 2));
-		boolean fav = favoritesService.isFavorite(rsn);
+		boolean fav = favoritesService.isFavorite(hash, rsn);
 		star.setIcon(fav ? StatusIcons.STAR_FILLED : StatusIcons.STAR_OUTLINE);
 		star.setToolTipText(fav ? "Remove " + rsn + " from Favorites" : "Add " + rsn + " to Favorites");
 		star.addActionListener(e -> {
-			favoritesService.toggle(rsn);
-			boolean nowFav = favoritesService.isFavorite(rsn);
+			favoritesService.toggle(hash, rsn);
+			boolean nowFav = favoritesService.isFavorite(hash, rsn);
 			star.setIcon(nowFav ? StatusIcons.STAR_FILLED : StatusIcons.STAR_OUTLINE);
 			star.setToolTipText(nowFav ? "Remove " + rsn + " from Favorites" : "Add " + rsn + " to Favorites");
 		});
 		return star;
+	}
+
+	/** A block-toggle button for any roster member (keyed by accountHash when known). */
+	private JButton memberBlock(RosterMember member)
+	{
+		// You can't block your own account.
+		if (blockListService == null || member.getName() == null || member.isLocal())
+		{
+			return null;
+		}
+		final String rsn = member.getName();
+		final long hash = memberHash(member);
+		JButton block = new JButton();
+		block.setFocusPainted(false);
+		block.setContentAreaFilled(false);
+		block.setBorderPainted(false);
+		block.setMargin(new Insets(0, 2, 0, 2));
+		boolean blocked = blockListService.isBlocked(hash, rsn);
+		block.setIcon(blocked ? StatusIcons.BLOCK_ON : StatusIcons.BLOCK_OFF);
+		block.setToolTipText(blocked ? "Unblock " + rsn : "Block " + rsn);
+		block.addActionListener(e -> {
+			boolean wasBlocked = blockListService.isBlocked(hash, rsn);
+			blockListService.toggle(hash, rsn);
+			boolean nowBlocked = !wasBlocked;
+			if (nowBlocked && favoritesService != null && favoritesService.isFavorite(hash, rsn))
+			{
+				favoritesService.toggle(hash, rsn);
+			}
+			block.setIcon(nowBlocked ? StatusIcons.BLOCK_ON : StatusIcons.BLOCK_OFF);
+			block.setToolTipText(nowBlocked ? "Unblock " + rsn : "Block " + rsn);
+			refresh();
+		});
+		return block;
+	}
+
+	/** The member's self-reported accountHash, or {@code 0} until they've synced. */
+	private static long memberHash(RosterMember member)
+	{
+		return member.getData() != null ? member.getData().getAccountHash() : 0L;
 	}
 
 	private MouseAdapter expandOnClick(RosterMember member)

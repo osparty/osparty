@@ -71,6 +71,18 @@ public interface OSPartyConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "showBlockedParties",
+		name = "Show blocked parties",
+		description = "Show parties whose host is on your block list, greyed out, instead of hiding them from search.",
+		position = 14,
+		section = GENERAL
+	)
+	default boolean showBlockedParties()
+	{
+		return false;
+	}
+
+	@ConfigItem(
 		keyName = "inGamePrompts",
 		name = "In-game join prompts",
 		description = "As a host, show Accept/Decline for new applicants in the in-game chatbox (not just the side panel).",

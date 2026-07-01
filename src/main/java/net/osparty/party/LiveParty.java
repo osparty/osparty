@@ -890,13 +890,20 @@ public class LiveParty
 		state.setLocked(locked);
 
 		List<RosterEntry> roster = new ArrayList<>();
-		roster.add(new RosterEntry(localId, hostName));
+		roster.add(new RosterEntry(localId, hostName, accountHashFor(localId)));
 		for (Map.Entry<Long, String> e : admitted.entrySet())
 		{
-			roster.add(new RosterEntry(e.getKey(), e.getValue()));
+			roster.add(new RosterEntry(e.getKey(), e.getValue(), accountHashFor(e.getKey())));
 		}
 		state.setRoster(roster);
 		return state;
+	}
+
+	/** The accountHash last self-reported by {@code memberId}, or {@code 0} when unknown. */
+	private long accountHashFor(long memberId)
+	{
+		PlayerUpdate update = playerData.get(memberId);
+		return update != null ? update.getAccountHash() : 0L;
 	}
 
 	// ---- inbound message handlers (called from the plugin's @Subscribe) ------

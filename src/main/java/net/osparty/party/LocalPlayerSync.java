@@ -34,6 +34,7 @@ final class LocalPlayerSync
 
 		PlayerUpdate update = new PlayerUpdate();
 		update.setName(local.getName());
+		update.setAccountHash(client.getAccountHash());
 		update.setCombatLevel(local.getCombatLevel());
 		update.setEquipment(equipment(client));
 		update.setInventory(inventory(client));

@@ -25,6 +25,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import javax.swing.BorderFactory;
 import javax.swing.JOptionPane;
@@ -78,6 +79,7 @@ class CreatePanel extends JPanel implements Scrollable
 	private final PartyState partyState;
 	private final LiveParty liveParty;
 	private final Supplier<AccountType> accountTypeSupplier;
+	private final LongSupplier accountHashSupplier;
 	private final Supplier<int[]> mapRegionsSupplier;
 	private final Supplier<String> coxLayoutSupplier;
 	private final ConfigManager configManager;
@@ -134,8 +136,8 @@ class CreatePanel extends JPanel implements Scrollable
 
 	CreatePanel(PartyService partyService, OSPartyConfig config, Supplier<String> playerNameSupplier,
 		PartyState partyState, LiveParty liveParty, Supplier<AccountType> accountTypeSupplier,
-		Supplier<int[]> mapRegionsSupplier, Supplier<String> coxLayoutSupplier, ConfigManager configManager,
-		Gson gson, KillcountService killcountService, IntSupplier worldSupplier)
+		LongSupplier accountHashSupplier, Supplier<int[]> mapRegionsSupplier, Supplier<String> coxLayoutSupplier,
+		ConfigManager configManager, Gson gson, KillcountService killcountService, IntSupplier worldSupplier)
 	{
 		this.gson = gson;
 		this.killcountService = killcountService;
@@ -146,6 +148,7 @@ class CreatePanel extends JPanel implements Scrollable
 		this.partyState = partyState;
 		this.liveParty = liveParty;
 		this.accountTypeSupplier = accountTypeSupplier;
+		this.accountHashSupplier = accountHashSupplier;
 		this.mapRegionsSupplier = mapRegionsSupplier;
 		this.coxLayoutSupplier = coxLayoutSupplier;
 		this.configManager = configManager;
@@ -978,11 +981,12 @@ class CreatePanel extends JPanel implements Scrollable
 		final String hostKey = java.util.UUID.randomUUID().toString();
 		// The passphrase must be generated on the client thread (RuneLite reads item
 		// names to build it), so this is async; advertise once we have it.
+		final long hostAccountHash = accountHashSupplier != null ? accountHashSupplier.getAsLong() : 0L;
 		liveParty.generatePassphrase(passphrase -> {
 			PartyRequest request = new PartyRequest(
-				activityId, player, advertisedDescription, capacity, world, minKc, minHardKc, passphrase,
-				privateParty, lootRule, ironmanOnly, hostAccountType, hardMode, invocation, requiredRoles, hostRole,
-				learner, teacher);
+				activityId, player, hostAccountHash, advertisedDescription, capacity, world, minKc, minHardKc,
+				passphrase, privateParty, lootRule, ironmanOnly, hostAccountType, hardMode, invocation, requiredRoles,
+				hostRole, learner, teacher);
 
 			partyService.createParty(request, hostKey,
 				party -> SwingUtilities.invokeLater(

@@ -29,8 +29,17 @@ public class Party
 	 */
 	private String passphrase;
 
-	/** Host is the first entry. */
-	private List<String> members;
+	/** Host is the first entry. Each carries the member's name plus stable accountHash. */
+	private List<Member> members;
+
+	/**
+	 * @return the host's accountHash (the first member's), or {@code 0} when unknown
+	 * (older host client, or legacy/seed ad). Used for block/favourite matching.
+	 */
+	public long getHostAccountHash()
+	{
+		return members == null || members.isEmpty() ? 0L : members.get(0).getAccountHash();
+	}
 
 	private int minKillCount;
 	private int minHardModeKillCount;

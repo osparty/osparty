@@ -14,6 +14,8 @@ public class PartyRequest
 {
 	private String activity;
 	private String host;
+	/** The host's stable accountHash ({@code client.getAccountHash()}); {@code 0} when unknown. */
+	private long hostAccountHash;
 	private String description;
 	private int capacity;
 	private String world;
