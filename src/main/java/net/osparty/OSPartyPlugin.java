@@ -875,6 +875,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 	}
 
+	@Override
+	public void announceAutoDeclinedBlocked(Applicant applicant, Activity activity)
+	{
+		gameMessage("Auto-declined " + applicant.getName() + " - on your block list.");
+	}
+
 	/**
 	 * A compact, information-dense one-liner about an applicant: combat level,
 	 * activity killcount (+ hard-mode), personal best, total level, account type
@@ -917,6 +923,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		if (runeWatchService.get(applicant.getName()) != null)
 		{
 			parts.add("(!) RuneWatch listed");
+		}
+
+		if (applicant.isBlocked())
+		{
+			parts.add("(!) on your block list");
 		}
 
 		return String.join(", ", parts);

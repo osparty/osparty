@@ -906,6 +906,21 @@ public class LiveParty
 		return update != null ? update.getAccountHash() : 0L;
 	}
 
+	/**
+	 * The live roster to advertise on the party ad: the host first, then admitted members
+	 * (sorted by id for a stable order so the heartbeat dedups), each with their accountHash.
+	 * Excludes pending applicants. Only meaningful while hosting.
+	 */
+	public List<net.osparty.model.Member> rosterMembers()
+	{
+		List<net.osparty.model.Member> out = new ArrayList<>();
+		out.add(new net.osparty.model.Member(hostName, accountHashFor(localId())));
+		admitted.entrySet().stream()
+			.sorted(Map.Entry.comparingByKey())
+			.forEach(e -> out.add(new net.osparty.model.Member(e.getValue(), accountHashFor(e.getKey()))));
+		return out;
+	}
+
 	// ---- inbound message handlers (called from the plugin's @Subscribe) ------
 
 	public void onPlayerUpdate(PlayerUpdate update)

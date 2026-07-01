@@ -16,6 +16,12 @@ public class Applicant
 	/** 0 when unknown. */
 	private long memberId;
 
+	/** Applicant's stable accountHash ({@code 0} when unknown); for block-list matching. */
+	private long accountHash;
+
+	/** True when this applicant is on the host's block list (host-side flag, not sent over the wire). */
+	private boolean blocked;
+
 	/** Ordered: skill name -> level. */
 	private Map<String, Integer> stats;
 

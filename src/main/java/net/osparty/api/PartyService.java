@@ -1,5 +1,6 @@
 package net.osparty.api;
 
+import net.osparty.model.Member;
 import net.osparty.model.Party;
 import net.osparty.model.PartyEditRequest;
 import net.osparty.model.PartyRequest;
@@ -46,10 +47,12 @@ public interface PartyService
 	 * Report live occupancy/world/layout/roles for the hosted ad. With the socket open the
 	 * connection itself is the keep-alive, so this only carries genuine field changes. A
 	 * non-positive {@code size}/{@code world} or null/blank {@code layout}/{@code roles}
-	 * means "unknown" and is left unchanged. {@code hostKey} authorises the mutation.
+	 * means "unknown" and is left unchanged. {@code members} is the live roster (host first,
+	 * with accountHashes) advertised so search clients can block/favourite-match members;
+	 * null/empty leaves it unchanged. {@code hostKey} authorises the mutation.
 	 */
-	void heartbeat(String partyId, int size, int world, String layout, String roles, String hostKey,
-		Consumer<Party> onSuccess, Consumer<Throwable> onError);
+	void heartbeat(String partyId, int size, int world, String layout, String roles, List<Member> members,
+		String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
 	/**
 	 * Host action: edit the advertised settings of a party (description, capacity, loot rule,

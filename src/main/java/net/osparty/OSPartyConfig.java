@@ -83,6 +83,18 @@ public interface OSPartyConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "blockedApplicantAction",
+		name = "Blocked applicant",
+		description = "What to do when a player on your block list applies to your party: warn you (you decide), auto-reject and notify, or auto-reject silently.",
+		position = 15,
+		section = GENERAL
+	)
+	default BlockedApplicantAction blockedApplicantAction()
+	{
+		return BlockedApplicantAction.WARN;
+	}
+
+	@ConfigItem(
 		keyName = "inGamePrompts",
 		name = "In-game join prompts",
 		description = "As a host, show Accept/Decline for new applicants in the in-game chatbox (not just the side panel).",

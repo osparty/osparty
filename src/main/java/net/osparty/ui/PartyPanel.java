@@ -3,6 +3,7 @@ package net.osparty.ui;
 import net.osparty.FavoritesService;
 import net.osparty.HostApplicationHandler;
 import net.osparty.KillcountService;
+import net.osparty.BlockedApplicantAction;
 import net.osparty.OSPartyConfig;
 import net.osparty.PersonalBests;
 import net.osparty.api.PartyService;
@@ -133,6 +134,8 @@ class PartyPanel extends JPanel
 	private final Set<Long> expanded = new HashSet<>();
 	private final Map<Long, Integer> detailTab = new HashMap<>();
 	private final Set<Long> notifiedPending = new HashSet<>();
+	/** Applicants we've already auto-declined for being on the block list, so we reject them once. */
+	private final Set<Long> autoDeclinedBlocked = new HashSet<>();
 	private int lastReportedSize = -1;
 	private String lastReportedLayout;
 	/** Invoked when the host clicks "Edit party"; wired by the owning panel to open the edit form. */
@@ -212,8 +215,8 @@ class PartyPanel extends JPanel
 			if (partyState.isHost() && partyState.getCurrentParty() != null)
 			{
 				partyService.heartbeat(partyState.getCurrentParty().getId(), currentPartySize(),
-					currentWorld.getAsInt(), currentLayout(), currentNeededRolesParam(), partyState.getHostKey(),
-					ok -> { }, err -> { });
+					currentWorld.getAsInt(), currentLayout(), currentNeededRolesParam(), liveParty.rosterMembers(),
+					partyState.getHostKey(), ok -> { }, err -> { });
 			}
 		}).start();
 
@@ -229,8 +232,8 @@ class PartyPanel extends JPanel
 			{
 				lastReportedLayout = layout;
 				partyService.heartbeat(partyState.getCurrentParty().getId(), currentPartySize(),
-					currentWorld.getAsInt(), layout, currentNeededRolesParam(), partyState.getHostKey(),
-					ok -> { }, err -> { });
+					currentWorld.getAsInt(), layout, currentNeededRolesParam(), liveParty.rosterMembers(),
+					partyState.getHostKey(), ok -> { }, err -> { });
 			}
 		}).start();
 
@@ -316,6 +319,7 @@ class PartyPanel extends JPanel
 			expanded.clear();
 			detailTab.clear();
 			notifiedPending.clear();
+			autoDeclinedBlocked.clear();
 			lastReportedSize = -1;
 			lastReportedLayout = null;
 			hostApplicationHandler.setPendingApplicants(java.util.Collections.emptyList(), null);
@@ -356,7 +360,7 @@ class PartyPanel extends JPanel
 		{
 			lastReportedSize = admitted;
 			partyService.heartbeat(party.getId(), admitted, currentWorld.getAsInt(), currentLayout(),
-				currentNeededRolesParam(), partyState.getHostKey(), ok -> { }, err -> { });
+				currentNeededRolesParam(), liveParty.rosterMembers(), partyState.getHostKey(), ok -> { }, err -> { });
 		}
 
 		StringBuilder spots = new StringBuilder();
@@ -510,6 +514,28 @@ class PartyPanel extends JPanel
 				continue;
 			}
 			Applicant applicant = toApplicant(member.getData());
+
+			// Block-list handling: warn (flag + still show), or auto-decline (once).
+			boolean blocked = blockListService != null
+				&& blockListService.isBlocked(applicant.getAccountHash(), applicant.getName());
+			if (blocked)
+			{
+				BlockedApplicantAction action = config.blockedApplicantAction();
+				if (action != null && action.rejects())
+				{
+					if (autoDeclinedBlocked.add(member.getMemberId()))
+					{
+						liveParty.reject(member.getMemberId());
+						if (action == BlockedApplicantAction.REJECT_NOTIFY)
+						{
+							hostApplicationHandler.announceAutoDeclinedBlocked(applicant, activity);
+						}
+					}
+					continue; // don't surface an auto-declined applicant
+				}
+				applicant.setBlocked(true); // WARN: show it, flagged
+			}
+
 			fillKillcount(applicant, activity);
 			pending.add(applicant);
 
@@ -598,6 +624,15 @@ class PartyPanel extends JPanel
 		if (flagged != null)
 		{
 			left.add(runeWatchBadge(flagged));
+		}
+
+		// Block-list warning on a pending applicant (WARN mode; auto-reject removes them instead).
+		if (status == Status.PENDING && blockListService != null
+			&& blockListService.isBlocked(memberHash(member), member.getName()))
+		{
+			JLabel blockedBadge = new JLabel(StatusIcons.BLOCK_ON);
+			blockedBadge.setToolTipText("On your block list");
+			left.add(blockedBadge);
 		}
 
 		JLabel chevron = new JLabel(isExpanded ? StatusIcons.CHEVRON_UP : StatusIcons.CHEVRON_DOWN);
@@ -1172,6 +1207,7 @@ class PartyPanel extends JPanel
 		Applicant applicant = new Applicant();
 		applicant.setMemberId(update.getMemberId());
 		applicant.setName(update.getName());
+		applicant.setAccountHash(update.getAccountHash());
 		applicant.setCombatLevel(update.getCombatLevel());
 		applicant.setStats(update.getStats());
 		applicant.setEquipment(update.getEquipment());
