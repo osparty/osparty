@@ -142,6 +142,14 @@ public class PartyApiClient implements PartyService
 	}
 
 	@Override
+	public void createVoiceChannel(String partyId, String hostKey, Consumer<String> onUrl, Consumer<Throwable> onError)
+	{
+		// One-shot request/reply over the socket, mirroring the getByCode/getByHost lookups. The reply
+		// (or a matching error) resolves exactly one of the callbacks.
+		partySocket.createVoiceChannel(partyId, hostKey, onUrl, onError);
+	}
+
+	@Override
 	public int onlineUsers()
 	{
 		return partySocket.onlineUsers();

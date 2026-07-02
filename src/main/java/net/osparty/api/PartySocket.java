@@ -70,6 +70,8 @@ public class PartySocket extends WebSocketListener
 	// One-shot lookups awaiting a directed byCode/byHost reply, keyed by the echoed code/host.
 	private final Map<String, Consumer<Party>> pendingByCode = new ConcurrentHashMap<>();
 	private final Map<String, Consumer<Party>> pendingByHost = new ConcurrentHashMap<>();
+	// Host createVoiceChannel requests awaiting a voiceChannel reply (or a matching error), keyed by party id.
+	private final Map<String, VoicePending> pendingVoiceChannel = new ConcurrentHashMap<>();
 	private volatile boolean started;
 	private volatile boolean closed;
 	private volatile boolean connected;
@@ -325,6 +327,23 @@ public class PartySocket extends WebSocketListener
 		send(gson.toJson(new LookupFrame("getByHost", null, host)));
 	}
 
+	/**
+	 * Host action: ask the backend's Discord bot to provision a voice channel for the hosted party.
+	 * {@code onUrl} receives the invite URL to share with members; {@code onError} fires if the socket
+	 * is down or the server reports failure. Idempotent server-side, so a retry just echoes the URL.
+	 * Callbacks run on the socket reader thread — marshal to the EDT in the UI.
+	 */
+	public void createVoiceChannel(String id, String key, Consumer<String> onUrl, Consumer<Throwable> onError)
+	{
+		if (id == null || !connected)
+		{
+			onError.accept(new IOException("socket not connected"));
+			return;
+		}
+		pendingVoiceChannel.put(id, new VoicePending(onUrl, onError));
+		send(gson.toJson(new VoiceFrame(id, key)));
+	}
+
 	// --- WebSocket callbacks ---
 
 	@Override
@@ -399,8 +418,11 @@ public class PartySocket extends WebSocketListener
 			case "gone":
 				handleGone(frame.id);
 				break;
+			case "voiceChannel":
+				completeVoiceChannel(frame.id, frame.url);
+				break;
 			case "error":
-				handleError(frame.detail);
+				handleError(frame.id, frame.detail);
 				break;
 			case "byCode":
 				completeLookup(pendingByCode, frame.id, frame.party);
@@ -528,8 +550,19 @@ public class PartySocket extends WebSocketListener
 		}
 	}
 
-	private void handleError(String detail)
+	private void handleError(String id, String detail)
 	{
+		// An error carrying an id may be the rejection of a pending voice-channel request; route it there
+		// first so its onError fires (rather than being mistaken for a host rejection or just logged).
+		if (id != null)
+		{
+			VoicePending voice = pendingVoiceChannel.remove(id);
+			if (voice != null)
+			{
+				voice.onError.accept(new IOException("voice channel failed: " + detail));
+				return;
+			}
+		}
 		HostPending pending = pendingHost;
 		if (pending != null)
 		{
@@ -539,6 +572,19 @@ public class PartySocket extends WebSocketListener
 		else
 		{
 			log.debug("Party socket error frame: {}", detail);
+		}
+	}
+
+	private void completeVoiceChannel(String id, String url)
+	{
+		if (id == null)
+		{
+			return;
+		}
+		VoicePending pending = pendingVoiceChannel.remove(id);
+		if (pending != null)
+		{
+			pending.onUrl.accept(url);
 		}
 	}
 
@@ -662,6 +708,8 @@ public class PartySocket extends WebSocketListener
 		Party party;
 		String id;
 		String detail;
+		// "voiceChannel" frame: the Discord invite URL for the hosted party's provisioned channel.
+		String url;
 		// "batch" frame: a tick's worth of changes, applied together.
 		Party[] created;
 		PartyDelta[] updated;
@@ -725,6 +773,31 @@ public class PartySocket extends WebSocketListener
 			this.type = type;
 			this.code = code;
 			this.host = host;
+		}
+	}
+
+	private static final class VoiceFrame
+	{
+		final String type = "createVoiceChannel";
+		final String id;
+		final String key;
+
+		VoiceFrame(String id, String key)
+		{
+			this.id = id;
+			this.key = key;
+		}
+	}
+
+	private static final class VoicePending
+	{
+		final Consumer<String> onUrl;
+		final Consumer<Throwable> onError;
+
+		VoicePending(Consumer<String> onUrl, Consumer<Throwable> onError)
+		{
+			this.onUrl = onUrl;
+			this.onError = onError;
 		}
 	}
 }

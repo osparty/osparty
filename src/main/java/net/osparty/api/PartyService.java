@@ -66,6 +66,14 @@ public interface PartyService
 	/** Host action: close the ad. {@code hostKey} authorises it. */
 	void disbandParty(String partyId, String host, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
+	/**
+	 * Host action: provision a Discord voice channel for the party via the backend bot. {@code onUrl}
+	 * receives the invite URL to share with members; {@code onError} fires if the socket is down or the
+	 * server can't create one. Idempotent — repeated calls return the same channel's URL. {@code hostKey}
+	 * authorises the request. Callbacks may arrive off the EDT.
+	 */
+	void createVoiceChannel(String partyId, String hostKey, Consumer<String> onUrl, Consumer<Throwable> onError);
+
 	/** @return the server-reported number of connected plugin users, or {@code -1} if not yet known. */
 	int onlineUsers();
 }

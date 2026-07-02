@@ -76,6 +76,7 @@ import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.util.AsyncBufferedImage;
 import net.runelite.client.util.ImageUtil;
+import net.runelite.client.util.LinkBrowser;
 
 /**
  * "Party" tab: the live party the player is in. The roster, statuses and each
@@ -89,6 +90,16 @@ class PartyPanel extends JPanel
 	private static final int TAB_INVENTORY = 2;
 
 	private static final Dimension SLOT_SIZE = new Dimension(36, 32);
+
+	/** Discord "blurple", matching the plugin's discord.png accent, for the voice buttons. */
+	private static final Color DISCORD_BLURPLE = new Color(0x58, 0x65, 0xF2);
+	private static final ImageIcon DISCORD_ICON = loadDiscordIcon();
+
+	private static ImageIcon loadDiscordIcon()
+	{
+		BufferedImage img = ImageUtil.loadImageResource(PartyPanel.class, "/net/osparty/icons/discord.png");
+		return img == null ? null : new ImageIcon(ImageUtil.resizeImage(img, 14, 14));
+	}
 
 	private final PartyService partyService;
 	private final Supplier<String> playerNameSupplier;
@@ -431,6 +442,13 @@ class PartyPanel extends JPanel
 		{
 			content.add(copyRow("Passphrase: " + liveParty.passphrase(), liveParty.passphrase(),
 				"Copy passphrase", "Passphrase copied to clipboard.", ColorScheme.LIGHT_GRAY_COLOR));
+		}
+
+		JComponent voiceRow = buildVoiceRow(party, host);
+		if (voiceRow != null)
+		{
+			content.add(Box.createVerticalStrut(6));
+			content.add(voiceRow);
 		}
 
 		// Ready check at the top (anyone can start; everyone readies up).
@@ -1750,6 +1768,80 @@ class PartyPanel extends JPanel
 	}
 
 	/** A label followed by an OS-safe copy-to-clipboard button (point 27). */
+	/**
+	 * Discord voice-channel controls for the party info section. Once a channel exists (its invite URL
+	 * arrived on the host's {@link PartyStateMessage}, or the host set it locally) everyone sees a
+	 * "Join voice" button. Before that, only the host sees "Create voice channel", which asks the
+	 * backend bot to provision one. Returns null when there is nothing to show (a member with no
+	 * channel yet). The provisioned URL then rides the peer-to-peer party state to every member.
+	 */
+	private JComponent buildVoiceRow(Party party, boolean host)
+	{
+		String url = liveParty.discordInviteUrl();
+		if (url != null)
+		{
+			JButton join = voiceButton("Join voice", "Open the party's Discord voice channel");
+			join.addActionListener(e -> LinkBrowser.browse(url));
+			return wrapVoiceButton(join);
+		}
+		if (!host)
+		{
+			return null; // members wait for the host to create the channel
+		}
+		JButton create = voiceButton("Create voice channel", "Create a Discord voice channel for this party");
+		create.addActionListener(e -> {
+			String partyId = party.getId();
+			if (partyId == null)
+			{
+				return;
+			}
+			create.setEnabled(false);
+			create.setText("Creating channel…");
+			setStatus("Creating Discord voice channel…");
+			partyService.createVoiceChannel(partyId, partyState.getHostKey(),
+				channelUrl -> SwingUtilities.invokeLater(() -> {
+					// Records it on our host state and re-broadcasts so members get a "Join voice" button;
+					// the listener then rebuilds this row to show ours too.
+					liveParty.setDiscordInviteUrl(channelUrl);
+					setStatus("Voice channel created — members can now join.");
+				}),
+				err -> SwingUtilities.invokeLater(() -> {
+					create.setEnabled(true);
+					create.setText("Create voice channel");
+					setStatus("Couldn't create a voice channel. Please try again.");
+				}));
+		});
+		return wrapVoiceButton(create);
+	}
+
+	private JButton voiceButton(String text, String tooltip)
+	{
+		JButton button = new JButton(text);
+		button.setFocusPainted(false);
+		button.setForeground(Color.WHITE);
+		button.setBackground(DISCORD_BLURPLE);
+		button.setFont(FontManager.getRunescapeSmallFont());
+		button.setCursor(new Cursor(Cursor.HAND_CURSOR));
+		button.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
+		button.setToolTipText(tooltip);
+		if (DISCORD_ICON != null)
+		{
+			button.setIcon(DISCORD_ICON);
+			button.setIconTextGap(6);
+		}
+		return button;
+	}
+
+	/** Full-width in a capped row (BorderLayout.CENTER stretches the button), matching "Start ready check". */
+	private JPanel wrapVoiceButton(JButton button)
+	{
+		JPanel row = cappedPanel(new BorderLayout());
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row.setAlignmentX(Component.LEFT_ALIGNMENT);
+		row.add(button, BorderLayout.CENTER);
+		return row;
+	}
+
 	private JPanel copyRow(String labelText, String copyValue, String tooltip, String statusMsg, Color fg)
 	{
 		// BorderLayout so the copy button stays pinned at the right and a long passphrase
