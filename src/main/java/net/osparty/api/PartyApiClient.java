@@ -141,6 +141,12 @@ public class PartyApiClient implements PartyService
 		onSuccess.accept(null); // optimistic — the server removes the ad and broadcasts it
 	}
 
+	@Override
+	public int onlineUsers()
+	{
+		return partySocket.onlineUsers();
+	}
+
 	/** Route a lookup result: the party on success, or a not-found error when null. */
 	private static void deliver(Party party, Consumer<Party> onSuccess, Consumer<Throwable> onError, String notFound)
 	{

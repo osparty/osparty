@@ -63,9 +63,11 @@ import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import net.runelite.api.Skill;
+import net.runelite.api.SpriteID;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.SkillIconManager;
+import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.util.ImageUtil;
@@ -92,6 +94,7 @@ class PartyPanel extends JPanel
 	private final RuneWatchService runeWatch;
 	private final KillcountService killcounts;
 	private final SkillIconManager skillIcons;
+	private final SpriteManager spriteManager;
 	private final IntSupplier currentWorld;
 	private final IntConsumer worldHopper;
 	private final Supplier<String> friendsChatOwnerSupplier;
@@ -150,7 +153,7 @@ class PartyPanel extends JPanel
 		SkillIconManager skillIcons, IntSupplier currentWorld, IntConsumer worldHopper,
 		Supplier<String> friendsChatOwnerSupplier, Supplier<String> coxLayoutSupplier,
 		OSPartyConfig config, ConfigManager configManager, FavoritesService favoritesService,
-		net.osparty.BlockListService blockListService)
+		net.osparty.BlockListService blockListService, SpriteManager spriteManager)
 	{
 		this.partyService = partyService;
 		this.playerNameSupplier = playerNameSupplier;
@@ -161,6 +164,7 @@ class PartyPanel extends JPanel
 		this.runeWatch = runeWatch;
 		this.killcounts = killcounts;
 		this.skillIcons = skillIcons;
+		this.spriteManager = spriteManager;
 		this.currentWorld = currentWorld;
 		this.worldHopper = worldHopper;
 		this.friendsChatOwnerSupplier = friendsChatOwnerSupplier;
@@ -288,9 +292,12 @@ class PartyPanel extends JPanel
 		{
 			return null;
 		}
-		List<String> needed = partyState.isHost()
-			? liveParty.neededRoles(party.getRequiredRoles())
-			: party.getNeededRoles();
+		// Compute from the live roster for host and members alike: roster() carries every
+		// admitted member's role over P2P and neededRoles() subtracts the local member's own
+		// role too, so a non-host no longer sees their own role stuck in "Needs". (The host's
+		// advertised party.getNeededRoles() only refreshes on admit-count changes, so it went
+		// stale for members who picked a role after joining.)
+		List<String> needed = liveParty.neededRoles(party.getRequiredRoles());
 		if (needed == null || needed.isEmpty())
 		{
 			return null;
@@ -687,7 +694,9 @@ class PartyPanel extends JPanel
 			metaRow.add(metaLabel);
 			anyMeta = true;
 		}
-		boolean showFc = hostName != null && data != null;
+		// The friends-chat presence check only matters for CoX, where the raid is formed via
+		// the host's FC; other activities use the in-game party/grouping, so hide it there.
+		boolean showFc = hostName != null && data != null && activity == Activity.CHAMBERS_OF_XERIC;
 		if (showFc)
 		{
 			if (StatusIcons.FRIENDS_CHAT != null)
@@ -707,6 +716,13 @@ class PartyPanel extends JPanel
 		if (anyMeta)
 		{
 			stack.add(metaRow);
+		}
+
+		// ---- vitals line: HP · prayer · spec · run energy (always shown once live) ----
+		JComponent vitals = buildVitalsRow(data);
+		if (vitals != null)
+		{
+			stack.add(vitals);
 		}
 
 		// ---- action buttons ----
@@ -921,6 +937,83 @@ class PartyPanel extends JPanel
 	private static String norm(String name)
 	{
 		return name.replace(' ', ' ').trim();
+	}
+
+	private static final Dimension ORB_ICON = new Dimension(14, 14);
+
+	/**
+	 * A compact, always-visible line of the member's live vitals (current HP, prayer,
+	 * special-attack energy and run energy), each behind its in-game orb icon. Returns
+	 * {@code null} until the member's first live snapshot arrives (no vitals yet).
+	 *
+	 * <p>Laid out as a fixed 4-column grid rather than a FlowLayout: the side panel is
+	 * narrow, and a FlowLayout would wrap the last cell (run energy) onto a second line
+	 * that the height-capped row then hid. The grid keeps all four on one line.
+	 */
+	private JComponent buildVitalsRow(PlayerUpdate data)
+	{
+		if (data == null || data.getCurrentHp() < 0)
+		{
+			return null;
+		}
+		JPanel row = cappedPanel(new GridLayout(1, 4, 2, 0));
+		row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		row.setAlignmentX(Component.LEFT_ALIGNMENT);
+		row.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 0));
+		row.add(vitalCell(SpriteID.MINIMAP_ORB_HITPOINTS_ICON, Integer.toString(data.getCurrentHp()),
+			"Hitpoints " + data.getCurrentHp() + "/" + data.getMaxHp()));
+		row.add(vitalCell(SpriteID.MINIMAP_ORB_PRAYER_ICON, Integer.toString(data.getCurrentPrayer()),
+			"Prayer " + data.getCurrentPrayer() + "/" + data.getMaxPrayer()));
+		row.add(vitalCell(SpriteID.MINIMAP_ORB_SPECIAL_ICON, data.getSpecialPercent() + "%",
+			"Special attack energy"));
+		row.add(vitalCell(SpriteID.MINIMAP_ORB_RUN_ICON, data.getRunEnergy() + "%",
+			"Run energy"));
+		return row;
+	}
+
+	private JComponent vitalCell(int spriteId, String value, String tip)
+	{
+		JPanel cell = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
+		cell.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		JLabel icon = new JLabel();
+		icon.setPreferredSize(ORB_ICON);
+		icon.setToolTipText(tip);
+		loadOrbIcon(icon, spriteId);
+		JLabel val = new JLabel(value);
+		val.setForeground(Color.WHITE);
+		val.setFont(FontManager.getRunescapeSmallFont());
+		val.setToolTipText(tip);
+		cell.add(icon);
+		cell.add(val);
+		return cell;
+	}
+
+	/**
+	 * Load an orb sprite scaled to fit {@link #ORB_ICON} (aspect preserved). Sprites are drawn
+	 * at their native size by {@code addSpriteTo}, which for the wider orbs (e.g. prayer)
+	 * overflowed the fixed-width label and slid under the adjacent number — scaling fixes that.
+	 */
+	private void loadOrbIcon(JLabel label, int spriteId)
+	{
+		if (spriteManager == null)
+		{
+			return;
+		}
+		spriteManager.getSpriteAsync(spriteId, 0, img -> {
+			if (img == null)
+			{
+				return;
+			}
+			double scale = Math.min((double) ORB_ICON.width / img.getWidth(),
+				(double) ORB_ICON.height / img.getHeight());
+			int w = Math.max(1, (int) Math.round(img.getWidth() * scale));
+			int h = Math.max(1, (int) Math.round(img.getHeight() * scale));
+			BufferedImage scaled = ImageUtil.resizeImage(img, w, h);
+			SwingUtilities.invokeLater(() -> {
+				label.setIcon(new ImageIcon(scaled));
+				label.repaint();
+			});
+		});
 	}
 
 	private JComponent buildDetail(Activity activity, RosterMember member)
@@ -1168,16 +1261,28 @@ class PartyPanel extends JPanel
 			return empty;
 		}
 
+		int[] qty = stats.getInventoryQuantities();
 		JPanel grid = new JPanel(new GridLayout(7, 4, 2, 2));
 		grid.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		for (int i = 0; i < 28; i++)
 		{
-			grid.add(itemSlot(i < inv.length ? inv[i] : -1));
+			int id = i < inv.length ? inv[i] : -1;
+			int count = qty != null && i < qty.length ? qty[i] : 1;
+			grid.add(itemSlot(id, count));
 		}
 		return center(grid);
 	}
 
 	private JLabel itemSlot(int itemId)
+	{
+		return itemSlot(itemId, 1);
+	}
+
+	/**
+	 * A single item cell. When {@code quantity > 1} the icon is drawn with its stack
+	 * count (as it appears in-game), so spectators can read dose/charge/stack sizes.
+	 */
+	private JLabel itemSlot(int itemId, int quantity)
 	{
 		JLabel slot = new JLabel();
 		slot.setHorizontalAlignment(SwingConstants.CENTER);
@@ -1188,8 +1293,10 @@ class PartyPanel extends JPanel
 		slot.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		if (itemId > 0)
 		{
-			// Loads asynchronously and repaints the label once the icon is ready.
-			itemManager.getImage(itemId).addTo(slot);
+			// Loads asynchronously and repaints the label once the icon is ready. The
+			// three-arg form stamps the stack-size number for quantities above one.
+			int q = Math.max(1, quantity);
+			itemManager.getImage(itemId, q, q > 1).addTo(slot);
 		}
 		return slot;
 	}
@@ -1212,6 +1319,7 @@ class PartyPanel extends JPanel
 		applicant.setStats(update.getStats());
 		applicant.setEquipment(update.getEquipment());
 		applicant.setInventory(update.getInventory());
+		applicant.setInventoryQuantities(update.getInventoryQuantities());
 		applicant.setKillCount(update.getKillCount());
 		applicant.setHardModeKillCount(update.getHardModeKillCount());
 		applicant.setPbSeconds(update.getPbSeconds());

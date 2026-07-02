@@ -26,6 +26,7 @@ import javax.swing.BorderFactory;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JLabel;
+import javax.swing.Timer;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.SwingConstants;
@@ -58,6 +59,9 @@ public class OSPartyPanel extends PluginPanel
 
 	private final PartyState partyState;
 	private final LiveParty liveParty;
+	private final PartyService partyService;
+	private final JLabel activeUsersLabel = new JLabel();
+	private Timer presenceTimer;
 	private final SearchPanel searchPanel;
 	private final FriendsPanel favoritesPanel;
 	private final CreatePanel createPanel;
@@ -88,6 +92,7 @@ public class OSPartyPanel extends PluginPanel
 		super(false);
 
 		this.liveParty = liveParty;
+		this.partyService = partyService;
 		this.partyState = new PartyState(configManager);
 
 		setLayout(new BorderLayout());
@@ -113,10 +118,12 @@ public class OSPartyPanel extends PluginPanel
 		createPanel = new CreatePanel(partyService, config, playerNameSupplier, partyState, liveParty,
 			accountTypeSupplier, accountHashSupplier, mapRegionsSupplier, coxLayoutSupplier, configManager, gson,
 			killcountService, worldSupplier);
+		// The Create tab's "Join existing" section reuses the Search tab's join-by-code apply flow.
+		createPanel.setJoinByCodeHandler(searchPanel::joinByCode);
 		partyPanel = new PartyPanel(partyService, playerNameSupplier,
 			hostApplicationHandler, partyState, itemManager, liveParty, runeWatchService, killcountService,
 			skillIconManager, worldSupplier, worldHopper, friendsChatOwnerSupplier, coxLayoutSupplier,
-			config, configManager, favoritesService, blockListService);
+			config, configManager, favoritesService, blockListService, spriteManager);
 
 		// Host edit flow: the Party tab's "Edit party" button opens the create form in edit
 		// mode; saving returns to the Party (roster) tab.
@@ -207,18 +214,40 @@ public class OSPartyPanel extends PluginPanel
 		links.add(discord);
 		footer.add(links, BorderLayout.WEST);
 
+		activeUsersLabel.setHorizontalAlignment(SwingConstants.CENTER);
+		activeUsersLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		activeUsersLabel.setFont(FontManager.getRunescapeSmallFont());
+		activeUsersLabel.setToolTipText("Players currently using the plugin");
+		footer.add(activeUsersLabel, BorderLayout.CENTER);
+		updateActiveUsers();
+
 		JLabel version = new JLabel("v" + VERSION);
 		version.setHorizontalAlignment(SwingConstants.RIGHT);
 		version.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		version.setFont(FontManager.getRunescapeSmallFont());
 		footer.add(version, BorderLayout.EAST);
 
+		// The server pushes the live count over the socket; poll the cached value onto the
+		// footer (cheap, no network). Timer fires on the EDT so touching Swing is safe.
+		presenceTimer = new Timer(3000, e -> updateActiveUsers());
+		presenceTimer.start();
+
 		return footer;
+	}
+
+	private void updateActiveUsers()
+	{
+		int online = partyService.onlineUsers();
+		activeUsersLabel.setText(online < 0 ? "" : online + " online");
 	}
 
 	/** Release the live party-list socket (and timers). Call when the plugin unloads. */
 	public void dispose()
 	{
+		if (presenceTimer != null)
+		{
+			presenceTimer.stop();
+		}
 		searchPanel.dispose();
 	}
 

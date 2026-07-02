@@ -196,19 +196,14 @@ class FriendsPanel extends PartyCardPanel
 		scroll.setBorder(BorderFactory.createEmptyBorder());
 		scroll.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
-		// ---- status + refresh row at the bottom ----------------------------
+		// ---- status line at the bottom (same insets/placement as the Search tab) ----
 		statusLabel = new JLabel("Fetching parties…");
 		statusLabel.setFont(FontManager.getRunescapeSmallFont());
 		statusLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		statusLabel.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
 
-		JPanel bottom = new JPanel(new BorderLayout(4, 0));
-		bottom.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		bottom.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
-		bottom.add(statusLabel, BorderLayout.CENTER);
-
 		add(scroll, BorderLayout.CENTER);
-		add(bottom, BorderLayout.SOUTH);
+		add(statusLabel, BorderLayout.SOUTH);
 
 		// Subscribe to the live party list only while this tab is visible; the socket
 		// pushes the full list and every change, so there is no polling.
@@ -348,7 +343,7 @@ class FriendsPanel extends PartyCardPanel
 
 		// Counts live in the per-section badges; the status line only carries the empty state.
 		int total = faves.size() + friendParties.size();
-		setStatus(total == 0 ? "No matching parties right now." : "");
+		setStatus(total == 0 ? "No parties to show." : "");
 
 		updateAllButtons();
 	}

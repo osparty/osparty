@@ -335,6 +335,27 @@ abstract class PartyCardPanel extends JPanel
 				}
 			}
 		}
+		// Fixed-composition activities (ToB) have an exact role make-up for the party size, so
+		// never offer a slot outside it — e.g. a 3-man only needs a North freeze, so South must
+		// not be pickable. Derive the composition from capacity (north-first) and constrain to
+		// it; if we couldn't read the still-needed roles, offer the whole composition instead of
+		// every role the activity supports.
+		List<Role> composition = activity.fixedComposition(party.getCapacity());
+		if (composition != null && !composition.isEmpty())
+		{
+			options.retainAll(composition);
+			if (options.isEmpty())
+			{
+				for (Role role : composition)
+				{
+					if (!options.contains(role))
+					{
+						options.add(role);
+					}
+				}
+			}
+			return options;
+		}
 		if (options.isEmpty())
 		{
 			options.addAll(activity.roles(party.isHardMode()));
@@ -412,7 +433,11 @@ abstract class PartyCardPanel extends JPanel
 			partyService.disbandParty(current.getId(), playerNameSupplier.get(), partyState.getHostKey(),
 				p -> { }, e -> { });
 		}
-		liveParty.leave();
+		// Switch rooms without tearing down the party socket: leaveForSwitch() keeps it open
+		// so the follow-up joinParty() parts the old room and joins the new on the same
+		// connection. A full leave() here would close-then-reopen and lose our applicant
+		// broadcast to the target host (party disbands, but no request arrives).
+		liveParty.leaveForSwitch();
 		partyState.clear();
 		next.run();
 	}
@@ -422,6 +447,9 @@ abstract class PartyCardPanel extends JPanel
 		String passphrase = party.getPassphrase();
 		if (passphrase == null || passphrase.isEmpty())
 		{
+			// No room to switch into — leaveForSwitch() left us still in the old room, so
+			// exit it cleanly now (a lone changeParty(null) doesn't hit the reopen race).
+			liveParty.leave();
 			setStatus("This party has no live room to join.");
 			updateAllButtons();
 			return;

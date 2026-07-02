@@ -19,6 +19,9 @@ import net.runelite.api.Skill;
  */
 final class LocalPlayerSync
 {
+	/** Varp id for special-attack energy (0-1000). {@code VarPlayer.SPECIAL_ATTACK_PERCENT} is deprecated. */
+	private static final int VARP_SPECIAL_ATTACK_PERCENT = 300;
+
 	private LocalPlayerSync()
 	{
 	}
@@ -38,6 +41,15 @@ final class LocalPlayerSync
 		update.setCombatLevel(local.getCombatLevel());
 		update.setEquipment(equipment(client));
 		update.setInventory(inventory(client));
+		update.setInventoryQuantities(inventoryQuantities(client));
+
+		// Live vitals — current values (boosted), always shown in the roster.
+		update.setMaxHp(client.getRealSkillLevel(Skill.HITPOINTS));
+		update.setCurrentHp(client.getBoostedSkillLevel(Skill.HITPOINTS));
+		update.setMaxPrayer(client.getRealSkillLevel(Skill.PRAYER));
+		update.setCurrentPrayer(client.getBoostedSkillLevel(Skill.PRAYER));
+		update.setSpecialPercent(client.getVarpValue(VARP_SPECIAL_ATTACK_PERCENT) / 10);
+		update.setRunEnergy(client.getEnergy() / 100); // getEnergy() is in 1/100th of a percent
 
 		Map<String, Integer> stats = new LinkedHashMap<>();
 		for (Skill skill : Skill.values())
@@ -74,6 +86,22 @@ final class LocalPlayerSync
 			for (int i = 0; i < items.length && i < out.length; i++)
 			{
 				out[i] = items[i] == null ? -1 : items[i].getId();
+			}
+		}
+		return out;
+	}
+
+	/** Stack sizes parallel to {@link #inventory(Client)}; {@code 0} for empty slots. */
+	private static int[] inventoryQuantities(Client client)
+	{
+		int[] out = new int[28];
+		ItemContainer container = client.getItemContainer(InventoryID.INVENTORY);
+		if (container != null)
+		{
+			Item[] items = container.getItems();
+			for (int i = 0; i < items.length && i < out.length; i++)
+			{
+				out[i] = items[i] == null ? 0 : items[i].getQuantity();
 			}
 		}
 		return out;

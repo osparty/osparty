@@ -74,6 +74,7 @@ public class PartySocket extends WebSocketListener
 	private volatile boolean closed;
 	private volatile boolean connected;
 	private volatile WebSocket webSocket;
+	private volatile int onlineUsers = -1;
 	private int attempt;
 
 	// Hosting state (kept across reconnects so we can resume the same ad).
@@ -137,6 +138,12 @@ public class PartySocket extends WebSocketListener
 	public boolean isConnected()
 	{
 		return connected && !closed;
+	}
+
+	/** @return the server-reported count of connected plugin clients, or {@code -1} if unknown. */
+	public int onlineUsers()
+	{
+		return connected ? onlineUsers : -1;
 	}
 
 	/** Force an immediate reconnect attempt (e.g. from a UI "Reconnect" button). */
@@ -401,6 +408,9 @@ public class PartySocket extends WebSocketListener
 			case "byHost":
 				completeLookup(pendingByHost, frame.id, frame.party);
 				break;
+			case "presence":
+				onlineUsers = frame.online;
+				break;
 			default:
 				break;
 		}
@@ -656,6 +666,8 @@ public class PartySocket extends WebSocketListener
 		Party[] created;
 		PartyDelta[] updated;
 		String[] removed;
+		// "presence" frame: the global count of connected plugin clients.
+		int online;
 	}
 
 	// Outbound frame shapes (Gson omits null fields, so a patch carries only what's set).

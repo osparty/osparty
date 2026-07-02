@@ -19,6 +19,7 @@ import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 import net.osparty.PersonalBests;
 import net.runelite.api.Client;
+import net.runelite.api.Skill;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
@@ -373,6 +374,27 @@ public class LiveParty
 			partyService.send(closing);
 		}
 		partyService.changeParty(null);
+		reset();
+		fire();
+	}
+
+	/**
+	 * Leave the current room in preparation for immediately joining another (see
+	 * {@link #joinParty}). Unlike {@link #leave()} this does NOT call
+	 * {@code changeParty(null)} — a follow-up {@code changeParty(passphrase)} parts the
+	 * old room and joins the new one on the same open socket. Closing here and reopening
+	 * in the same turn races RuneLite's WSClient close handshake: the old socket's
+	 * {@code onClosed} nulls the freshly-opened socket, so our applicant broadcast never
+	 * reaches the target host (the party still disbands, but no request arrives).
+	 */
+	public void leaveForSwitch()
+	{
+		if (hosting && isLocalReady())
+		{
+			PartyStateMessage closing = buildState();
+			closing.setClosed(true);
+			partyService.send(closing);
+		}
 		reset();
 		fire();
 	}
@@ -740,6 +762,13 @@ public class LiveParty
 		pruneStaleMembers();
 		expireReadyCheck();
 		flushState();
+		// Live vitals (HP/prayer/spec/run) change often and aren't all covered by StatChanged
+		// (run energy and special attack fire no stat event), so detect changes here and
+		// re-broadcast so peers see a live figure.
+		if (!localDirty && vitalsChanged())
+		{
+			localDirty = true;
+		}
 		// Periodically re-announce ourselves so a peer who joined after our last
 		// broadcast still converges on our gear/stats (the relay has no replay).
 		if (++ticksSinceLocalBroadcast >= LOCAL_REBROADCAST_TICKS)
@@ -856,6 +885,23 @@ public class LiveParty
 	public void markLocalDirty()
 	{
 		localDirty = true;
+	}
+
+	/**
+	 * @return whether our live vitals differ from what we last broadcast, so peers should
+	 * be refreshed. Reads the client, so must run on the client thread (called from {@link #tick()}).
+	 */
+	private boolean vitalsChanged()
+	{
+		PlayerUpdate self = playerData.get(localId());
+		if (self == null)
+		{
+			return false; // nothing sent yet; the normal dirty path handles the first broadcast
+		}
+		return self.getCurrentHp() != client.getBoostedSkillLevel(Skill.HITPOINTS)
+			|| self.getCurrentPrayer() != client.getBoostedSkillLevel(Skill.PRAYER)
+			|| self.getSpecialPercent() != client.getVarpValue(300) / 10
+			|| self.getRunEnergy() != client.getEnergy() / 100;
 	}
 
 	/**

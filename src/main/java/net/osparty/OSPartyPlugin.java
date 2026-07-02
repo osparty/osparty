@@ -635,7 +635,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 		if (fcRequestOverlay != null)
 		{
-			fcRequestOverlay.show(host, title, detail, 3000);
+			fcRequestOverlay.show(host, title, detail, config.fcRequestDurationSecs() * 1000L);
 			gameMessage(host + " — " + detail);
 			if (config.friendsChatRequestSound())
 			{

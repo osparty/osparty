@@ -25,6 +25,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import javax.swing.BorderFactory;
@@ -42,6 +44,7 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSpinner;
 import javax.swing.JTextArea;
+import javax.swing.JTextField;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
@@ -108,6 +111,13 @@ class CreatePanel extends JPanel implements Scrollable
 	private JPanel invocationRow;
 	private final JButton createButton = new JButton("Create party");
 	private final JLabel statusLabel = new JLabel();
+
+	/** "Join existing" section: apply to a party by invite code (delegates the apply logic to the Search tab). */
+	private final JTextField joinCodeField = new JTextField();
+	private final JButton joinCodeButton = new JButton("Join");
+	private JPanel joinExistingSection;
+	/** Runs the actual join-by-code apply; args are (code, statusSink). Set by {@link #setJoinByCodeHandler}. */
+	private BiConsumer<String, Consumer<String>> joinByCodeHandler;
 	private JPanel difficultyHeader;
 	private JPanel rolesHeader;
 
@@ -161,6 +171,10 @@ class CreatePanel extends JPanel implements Scrollable
 		setBackground(ColorScheme.DARK_GRAY_COLOR);
 
 		add(buildFavourites());
+
+		// ---- Join existing ---- (apply to a party by invite code, above the create form)
+		joinExistingSection = buildJoinExisting();
+		add(joinExistingSection);
 
 		// ---- Basics ----
 		add(sectionHeader("Basics"));
@@ -371,6 +385,8 @@ class CreatePanel extends JPanel implements Scrollable
 		boolean loggedIn = playerNameSupplier.get() != null;
 		updateIronmanToggle();
 		refreshValidation();
+		joinCodeButton.setEnabled(loggedIn);
+		joinCodeButton.setToolTipText(loggedIn ? null : "Log in to join a party");
 		if (!loggedIn)
 		{
 			setStatus(LOGIN_HINT);
@@ -1023,6 +1039,53 @@ class CreatePanel extends JPanel implements Scrollable
 		partyState.setHosting(party, hostKey);
 	}
 
+	/**
+	 * The "Join existing" section: an invite-code field + Join button, sitting above the
+	 * create form so hosting and joining live in one place. The apply itself is delegated to
+	 * {@link #joinByCodeHandler} (wired to the Search tab, which owns the apply flow).
+	 */
+	private JPanel buildJoinExisting()
+	{
+		JPanel section = new JPanel();
+		section.setLayout(new BoxLayout(section, BoxLayout.Y_AXIS));
+		section.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		section.setAlignmentX(Component.LEFT_ALIGNMENT);
+		section.add(sectionHeader("Join existing"));
+
+		joinCodeButton.setFocusPainted(false);
+		joinCodeButton.addActionListener(e -> submitJoinByCode());
+		joinCodeField.addActionListener(e -> submitJoinByCode());
+
+		JPanel row = new JPanel(new BorderLayout(6, 0))
+		{
+			@Override
+			public Dimension getMaximumSize()
+			{
+				return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+			}
+		};
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row.add(joinCodeField, BorderLayout.CENTER);
+		row.add(joinCodeButton, BorderLayout.EAST);
+		section.add(field("Join a private party by code", row));
+		return section;
+	}
+
+	private void submitJoinByCode()
+	{
+		if (joinByCodeHandler == null)
+		{
+			return;
+		}
+		joinByCodeHandler.accept(joinCodeField.getText(), this::setStatus);
+	}
+
+	/** Wire the join-by-code apply (owned by the Search tab); {@code (code, statusSink)}. */
+	void setJoinByCodeHandler(BiConsumer<String, Consumer<String>> handler)
+	{
+		this.joinByCodeHandler = handler;
+	}
+
 	/** A bold section divider in the Create form (Basics / Requirements / Difficulty / Roles). */
 	private JPanel sectionHeader(String text)
 	{
@@ -1107,6 +1170,7 @@ class CreatePanel extends JPanel implements Scrollable
 			return;
 		}
 		editing = true;
+		joinExistingSection.setVisible(false); // editing an existing party, not joining another
 		applyPreset(partyToPreset(party));
 		activityDropdown.setEnabled(false);
 		createButton.setText("Save changes");
@@ -1122,6 +1186,7 @@ class CreatePanel extends JPanel implements Scrollable
 			return;
 		}
 		editing = false;
+		joinExistingSection.setVisible(true);
 		activityDropdown.setEnabled(true);
 		createButton.setText("Create party");
 		applyPreset(loadLastPreset());

@@ -30,8 +30,25 @@ public class PlayerUpdate extends PartyMemberMessage
 	/** 28 ids in slot order; {@code <= 0} = empty. */
 	private int[] inventory;
 
+	/** Stack size for each inventory slot, parallel to {@link #inventory}; {@code 0} when empty/unknown. */
+	private int[] inventoryQuantities;
+
 	/** Skill name -> real level. */
 	private Map<String, Integer> stats;
+
+	// ---- live vitals (always shown in the roster); {@code -1} when unknown ----
+	/** Current (boosted) hitpoints. */
+	private int currentHp = -1;
+	/** Max hitpoints (real Hitpoints level). */
+	private int maxHp = -1;
+	/** Current (boosted) prayer points. */
+	private int currentPrayer = -1;
+	/** Max prayer (real Prayer level). */
+	private int maxPrayer = -1;
+	/** Special-attack energy, 0-100. */
+	private int specialPercent = -1;
+	/** Run energy, 0-100. */
+	private int runEnergy = -1;
 
 	/** {@code -1} when unknown. */
 	private int killCount = -1;

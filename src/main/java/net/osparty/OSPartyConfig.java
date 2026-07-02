@@ -8,6 +8,7 @@ import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigSection;
 import net.runelite.client.config.Keybind;
+import net.runelite.client.config.Range;
 
 @ConfigGroup(OSPartyConfig.GROUP)
 public interface OSPartyConfig extends Config
@@ -116,6 +117,19 @@ public interface OSPartyConfig extends Config
 	default boolean receiveFriendsChatRequests()
 	{
 		return true;
+	}
+
+	@Range(min = 1, max = 30)
+	@ConfigItem(
+		keyName = "fcRequestDurationSecs",
+		name = "Join-request popup duration (s)",
+		description = "How long the friends-chat / notice-board join-request popup stays on screen before it disappears.",
+		position = 4,
+		section = GENERAL
+	)
+	default int fcRequestDurationSecs()
+	{
+		return 3;
 	}
 
 	@ConfigItem(

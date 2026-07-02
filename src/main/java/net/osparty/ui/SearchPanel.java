@@ -19,6 +19,8 @@ import java.awt.Cursor;
 import java.awt.Font;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Insets;
@@ -32,6 +34,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.IntFunction;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
@@ -102,16 +105,15 @@ class SearchPanel extends PartyCardPanel
 			Activity.CHAMBERS_OF_XERIC, Activity.THEATRE_OF_BLOOD, Activity.TOMBS_OF_AMASCUT),
 		new ActivityGroup("Godwars",
 			Activity.KREEARRA, Activity.GENERAL_GRAARDOR, Activity.KRIL_TSUTSAROTH,
-			Activity.COMMANDER_ZILYANA),
+			Activity.COMMANDER_ZILYANA, Activity.NEX),
 		new ActivityGroup("Other",
-			Activity.NEX, Activity.NIGHTMARE, Activity.CORPOREAL_BEAST, Activity.BARBARIAN_ASSAULT,
+			Activity.NIGHTMARE, Activity.CORPOREAL_BEAST, Activity.BARBARIAN_ASSAULT,
 			Activity.ZALCANO, Activity.HUEYCOATL, Activity.YAMA),
 	};
 
 	private static final String SORT_NEWEST = "Newest first";
 	private static final String SORT_OLDEST = "Oldest first";
 	private static final String SORT_PING   = "Lowest ping";
-	private static final String SORT_SPOTS  = "Most spots open";
 	private static final String SORT_FULL   = "Closest to full";
 
 	private final Supplier<String> friendsChatOwnerSupplier;
@@ -146,7 +148,28 @@ class SearchPanel extends PartyCardPanel
 	private boolean searchExpanded;
 	private final JButton searchToggle = new JButton();
 	private final JPanel searchContent = new JPanel();
-	private final JTextField textField = new JTextField();
+	/** Prompt text shown in the search bar while it's empty and unfocused. */
+	private static final String SEARCH_PLACEHOLDER = "Search host, activity or description…";
+	private final JTextField textField = new JTextField()
+	{
+		@Override
+		protected void paintComponent(Graphics g)
+		{
+			super.paintComponent(g);
+			if (!getText().isEmpty() || isFocusOwner())
+			{
+				return;
+			}
+			Graphics2D g2 = (Graphics2D) g.create();
+			g2.setColor(ColorScheme.MEDIUM_GRAY_COLOR);
+			g2.setFont(getFont().deriveFont(Font.ITALIC));
+			Insets in = getInsets();
+			int baseline = getBaseline(getWidth(), getHeight());
+			g2.drawString(SEARCH_PLACEHOLDER, in.left + 2,
+				baseline > 0 ? baseline : getHeight() - in.bottom - 3);
+			g2.dispose();
+		}
+	};
 	private final JTextField maxPingField = new JTextField();
 
 	private final JComboBox<String> lootFilter = new JComboBox<>(new String[]{"Any loot", "FFA", "Split"});
@@ -155,11 +178,9 @@ class SearchPanel extends PartyCardPanel
 		new String[]{"Any", "Learner only", "Hide learner raids"});
 	private final JCheckBox hideIneligibleFilter = new JCheckBox("Hide parties I can't join");
 	private final JComboBox<String> sortComboBox = new JComboBox<>(
-		new String[]{SORT_NEWEST, SORT_OLDEST, SORT_PING, SORT_SPOTS, SORT_FULL});
+		new String[]{SORT_NEWEST, SORT_OLDEST, SORT_PING, SORT_FULL});
 	private final JLabel activeFiltersLabel = new JLabel();
 	private final JButton resetButton = new JButton("Reset");
-	private final JTextField codeField = new JTextField();
-	private final JButton joinButton = new JButton("Join");
 	private final JLabel statusLabel = new JLabel();
 	private final JPanel resultsPanel = new JPanel();
 	/** Results scroll vs the offline message + Reconnect button (point 52). */
@@ -202,7 +223,8 @@ class SearchPanel extends PartyCardPanel
 		north.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		north.add(buildFiltersSection());
 		north.add(buildControlsBar());
-		north.add(buildJoinByCode());
+		north.add(buildSearchBar());
+		north.add(buildSortRow());
 		add(north, BorderLayout.NORTH);
 
 		resultsPanel.setLayout(new BoxLayout(resultsPanel, BoxLayout.Y_AXIS));
@@ -224,6 +246,8 @@ class SearchPanel extends PartyCardPanel
 
 		statusLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		statusLabel.setFont(FontManager.getRunescapeSmallFont());
+		// Match the Favorites tab's status line placement (same 4/6 insets) so they line up.
+		statusLabel.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
 		add(statusLabel, BorderLayout.SOUTH);
 
 		updateActiveFiltersLabel();
@@ -252,7 +276,6 @@ class SearchPanel extends PartyCardPanel
 				startSubscription();
 				applyRecommendation();
 				renderCurrent();
-				updateJoinButton();
 			}
 
 			@Override
@@ -282,8 +305,6 @@ class SearchPanel extends PartyCardPanel
 				updateConnectionView();
 			}
 		}).start();
-
-		updateJoinButton();
 	}
 
 	/**
@@ -306,7 +327,6 @@ class SearchPanel extends PartyCardPanel
 		filtersContent.add(buildRoleFilter());
 		filtersContent.add(buildRegionFilter());
 		filtersContent.add(buildTextFilter());
-		filtersContent.add(buildSortRow());
 		filtersContent.setVisible(filtersExpanded);
 		panel.add(filtersContent, BorderLayout.CENTER);
 
@@ -333,14 +353,9 @@ class SearchPanel extends PartyCardPanel
 
 	private JPanel buildSortRow()
 	{
-		JPanel sortRow = cappedRow(new BorderLayout(4, 0));
-		sortRow.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
-		JLabel sortLabel = new JLabel("Sort");
-		sortLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		sortLabel.setFont(FontManager.getRunescapeSmallFont());
 		sortComboBox.addActionListener(e -> filtersChanged());
-		sortRow.add(sortLabel, BorderLayout.WEST);
-		sortRow.add(sortComboBox, BorderLayout.CENTER);
+		JPanel sortRow = labeledRow("Sort", sortComboBox);
+		sortRow.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 		return sortRow;
 	}
 
@@ -371,7 +386,7 @@ class SearchPanel extends PartyCardPanel
 		JPanel panel = cappedRow(new BorderLayout(0, 4));
 		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 
-		styleCollapsibleHeader(activitiesToggle);
+		styleCollapsibleHeader(activitiesToggle, true);
 		updateActivitiesToggleText();
 		activitiesToggle.addActionListener(e -> setActivitiesExpanded(!activitiesExpanded));
 		panel.add(activitiesToggle, BorderLayout.NORTH);
@@ -437,11 +452,23 @@ class SearchPanel extends PartyCardPanel
 	 */
 	private static void styleCollapsibleHeader(JButton toggle)
 	{
+		styleCollapsibleHeader(toggle, false);
+	}
+
+	/**
+	 * @param sub when true this is a nested section under "Filters"; render it a step
+	 * smaller than the top-level "Filters" header so the hierarchy reads clearly.
+	 */
+	private static void styleCollapsibleHeader(JButton toggle, boolean sub)
+	{
 		toggle.setHorizontalAlignment(SwingConstants.LEFT);
 		toggle.setFocusPainted(false);
 		toggle.setContentAreaFilled(false);
 		toggle.setForeground(ColorScheme.BRAND_ORANGE);
-		toggle.setFont(new JLabel().getFont().deriveFont(Font.BOLD));
+		Font base = new JLabel().getFont();
+		toggle.setFont(sub
+			? base.deriveFont(Font.BOLD, base.getSize2D() - 2f)
+			: base.deriveFont(Font.BOLD));
 		toggle.setIconTextGap(6);
 		toggle.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 		toggle.setBorder(BorderFactory.createCompoundBorder(
@@ -459,7 +486,7 @@ class SearchPanel extends PartyCardPanel
 		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 
 		// Collapsible header: clicking it shows/hides the (fairly tall) tabbed picker.
-		styleCollapsibleHeader(roleToggle);
+		styleCollapsibleHeader(roleToggle, true);
 		roleToggle.addActionListener(e -> setRolesExpanded(!rolesExpanded));
 		panel.add(roleToggle, BorderLayout.NORTH);
 
@@ -604,16 +631,12 @@ class SearchPanel extends PartyCardPanel
 		return false;
 	}
 
-	private JPanel buildTextFilter()
+	/**
+	 * The primary search bar, pinned to the top of the tab (outside the collapsible
+	 * filters) so it's always visible. Empty-state prompt is painted by {@link #textField}.
+	 */
+	private JPanel buildSearchBar()
 	{
-		JPanel panel = cappedRow(new BorderLayout(0, 4));
-		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
-
-		// Collapsible header, mirroring the roles section.
-		styleCollapsibleHeader(searchToggle);
-		searchToggle.addActionListener(e -> setSearchExpanded(!searchExpanded));
-		panel.add(searchToggle, BorderLayout.NORTH);
-
 		textField.setToolTipText("Filter by host, description or activity");
 		textField.getDocument().addDocumentListener(new DocumentListener()
 		{
@@ -635,8 +658,40 @@ class SearchPanel extends PartyCardPanel
 				reapplyFilters();
 			}
 		});
+		// Repaint so the placeholder shows/hides as focus comes and goes.
+		textField.addFocusListener(new java.awt.event.FocusAdapter()
+		{
+			@Override
+			public void focusGained(java.awt.event.FocusEvent e)
+			{
+				textField.repaint();
+			}
 
-		// The text field plus loot, ironman, learner and hide-ineligible filters live under "Search".
+			@Override
+			public void focusLost(java.awt.event.FocusEvent e)
+			{
+				textField.repaint();
+			}
+		});
+
+		JPanel bar = cappedRow(new BorderLayout());
+		bar.setBorder(BorderFactory.createEmptyBorder(0, 0, 4, 0));
+		bar.add(textField, BorderLayout.CENTER);
+		return bar;
+	}
+
+	private JPanel buildTextFilter()
+	{
+		JPanel panel = cappedRow(new BorderLayout(0, 4));
+		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
+
+		// Collapsible header for the secondary filters (the search text field itself is
+		// pinned at the top of the tab, see buildSearchBar()).
+		styleCollapsibleHeader(searchToggle, true);
+		searchToggle.addActionListener(e -> setSearchExpanded(!searchExpanded));
+		panel.add(searchToggle, BorderLayout.NORTH);
+
+		// Loot, ironman, learner, hide-ineligible and max-ping filters live under "More filters".
 		lootFilter.addActionListener(e -> filtersChanged());
 		ironmanFilter.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		ironmanFilter.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
@@ -653,6 +708,30 @@ class SearchPanel extends PartyCardPanel
 		hideIneligibleFilter.addActionListener(e -> filtersChanged());
 
 		maxPingField.setToolTipText("Hide parties whose world ping exceeds this threshold (ms). Leave blank for no limit.");
+		// Numeric only: it's a millisecond threshold, so reject any non-digit input outright.
+		((javax.swing.text.AbstractDocument) maxPingField.getDocument()).setDocumentFilter(
+			new javax.swing.text.DocumentFilter()
+			{
+				@Override
+				public void insertString(FilterBypass fb, int offset, String string,
+					javax.swing.text.AttributeSet attr) throws javax.swing.text.BadLocationException
+				{
+					if (string == null || string.chars().allMatch(Character::isDigit))
+					{
+						super.insertString(fb, offset, string, attr);
+					}
+				}
+
+				@Override
+				public void replace(FilterBypass fb, int offset, int length, String text,
+					javax.swing.text.AttributeSet attr) throws javax.swing.text.BadLocationException
+				{
+					if (text == null || text.chars().allMatch(Character::isDigit))
+					{
+						super.replace(fb, offset, length, text, attr);
+					}
+				}
+			});
 		maxPingField.getDocument().addDocumentListener(new DocumentListener()
 		{
 			@Override
@@ -674,31 +753,16 @@ class SearchPanel extends PartyCardPanel
 			}
 		});
 
-		JLabel maxPingLabel = new JLabel("Max ping (ms)");
-		maxPingLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		maxPingLabel.setFont(FontManager.getRunescapeSmallFont());
-		JPanel maxPingRow = new JPanel(new BorderLayout(4, 0));
-		maxPingRow.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		maxPingRow.add(maxPingLabel, BorderLayout.WEST);
-		maxPingRow.add(maxPingField, BorderLayout.CENTER);
-
-		JLabel learnerLabel = new JLabel("Learner raids");
-		learnerLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		learnerLabel.setFont(FontManager.getRunescapeSmallFont());
-		JPanel learnerRow = new JPanel(new BorderLayout(4, 0));
-		learnerRow.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		learnerRow.add(learnerLabel, BorderLayout.WEST);
-		learnerRow.add(learnerComboBox, BorderLayout.CENTER);
-
 		searchContent.setLayout(new BoxLayout(searchContent, BoxLayout.Y_AXIS));
 		searchContent.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		searchContent.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
-		searchContent.add(searchRow(textField));
-		searchContent.add(searchRow(lootFilter));
+		// Labelled dropdown/field rows first, all with a fixed-width descriptor on the left
+		// so they line up; the two self-labelled checkboxes follow.
+		searchContent.add(labeledRow("Loot", lootFilter));
+		searchContent.add(labeledRow("Learner", learnerComboBox));
+		searchContent.add(labeledRow("Max ping", maxPingField));
 		searchContent.add(searchRow(ironmanFilter));
-		searchContent.add(searchRow(learnerRow));
 		searchContent.add(searchRow(hideIneligibleFilter));
-		searchContent.add(searchRow(maxPingRow));
 		searchContent.setVisible(searchExpanded);
 		panel.add(searchContent, BorderLayout.CENTER);
 
@@ -706,11 +770,30 @@ class SearchPanel extends PartyCardPanel
 		return panel;
 	}
 
-	/** One full-width, height-capped row in the Search content column. */
+	/** One full-width, height-capped row (used for self-labelled controls like checkboxes). */
 	private static JPanel searchRow(Component control)
 	{
 		JPanel row = cappedRow(new BorderLayout());
 		row.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
+		row.add(control, BorderLayout.CENTER);
+		return row;
+	}
+
+	/** Width of every filter descriptor label, so left-aligned rows line up their controls. */
+	private static final int FILTER_LABEL_WIDTH = 78;
+
+	/** A row with a fixed-width descriptor on the left and its control filling the rest. */
+	private static JPanel labeledRow(String labelText, Component control)
+	{
+		JPanel row = cappedRow(new BorderLayout(6, 0));
+		row.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
+		JLabel label = new JLabel(labelText);
+		label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		label.setFont(FontManager.getRunescapeSmallFont());
+		Dimension size = new Dimension(FILTER_LABEL_WIDTH, label.getPreferredSize().height);
+		label.setPreferredSize(size);
+		label.setMinimumSize(size);
+		row.add(label, BorderLayout.WEST);
 		row.add(control, BorderLayout.CENTER);
 		return row;
 	}
@@ -728,7 +811,7 @@ class SearchPanel extends PartyCardPanel
 	private void updateSearchToggleText()
 	{
 		searchToggle.setIcon(searchExpanded ? CARET_EXPANDED : CARET_COLLAPSED);
-		searchToggle.setText("Search");
+		searchToggle.setText("More filters");
 	}
 
 	/**
@@ -742,7 +825,7 @@ class SearchPanel extends PartyCardPanel
 		JPanel panel = cappedRow(new BorderLayout(0, 4));
 		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 
-		styleCollapsibleHeader(regionToggle);
+		styleCollapsibleHeader(regionToggle, true);
 		updateRegionToggleText();
 		regionToggle.addActionListener(e -> setRegionsExpanded(!regionsExpanded));
 		panel.add(regionToggle, BorderLayout.NORTH);
@@ -900,25 +983,6 @@ class SearchPanel extends PartyCardPanel
 		recommended = near;
 		rebuildActivityList();
 		reapplyFilters();
-	}
-
-	private JPanel buildJoinByCode()
-	{
-		JPanel panel = cappedRow(new BorderLayout(6, 4));
-		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
-
-		JLabel label = new JLabel("Join private party by code");
-		label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		label.setFont(FontManager.getRunescapeSmallFont());
-
-		joinButton.setFocusPainted(false);
-		joinButton.addActionListener(e -> joinByCode());
-		codeField.addActionListener(e -> joinByCode());
-
-		panel.add(label, BorderLayout.NORTH);
-		panel.add(codeField, BorderLayout.CENTER);
-		panel.add(joinButton, BorderLayout.EAST);
-		return panel;
 	}
 
 	private static JPanel cappedRow(LayoutManager layout)
@@ -1124,45 +1188,50 @@ class SearchPanel extends PartyCardPanel
 		return configManager.getConfiguration(OSPartyConfig.GROUP, key);
 	}
 
-	private void joinByCode()
+	/**
+	 * Look up an invite code and apply to that party. Progress/validation messages go to
+	 * {@code status} so the caller can surface them in its own view (the Create tab hosts
+	 * the join-by-code field now, but the apply logic lives here with the rest of it).
+	 */
+	public void joinByCode(String code, Consumer<String> status)
 	{
-		String code = codeField.getText().trim();
-		if (code.isEmpty())
+		String trimmed = code == null ? "" : code.trim();
+		if (trimmed.isEmpty())
 		{
-			setStatus("Enter an invite code.");
+			status.accept("Enter an invite code.");
 			return;
 		}
 		if (playerNameSupplier.get() == null)
 		{
-			setStatus("Log in before joining.");
+			status.accept("Log in before joining.");
 			return;
 		}
-		setStatus("Looking up code " + code + "...");
-		partyService.getPartyByCode(code,
-			party -> SwingUtilities.invokeLater(() -> joinFetched(party)),
-			error -> SwingUtilities.invokeLater(() -> setStatus("No party found for code " + code + ".")));
+		status.accept("Looking up code " + trimmed + "...");
+		partyService.getPartyByCode(trimmed,
+			party -> SwingUtilities.invokeLater(() -> joinFetched(party, status)),
+			error -> SwingUtilities.invokeLater(() -> status.accept("No party found for code " + trimmed + ".")));
 	}
 
-	private void joinFetched(Party party)
+	private void joinFetched(Party party, Consumer<String> status)
 	{
 		if (party == null)
 		{
-			setStatus("No party found for that code.");
+			status.accept("No party found for that code.");
 			return;
 		}
 		if (isOwnParty(party))
 		{
-			setStatus("That's your own party.");
+			status.accept("That's your own party.");
 			return;
 		}
 		if (!meetsIronmanRule(party))
 		{
-			setStatus("That party is for ironman accounts.");
+			status.accept("That party is for ironman accounts.");
 			return;
 		}
 		if (kcStatus(party) == KcStatus.BELOW)
 		{
-			setStatus("You don't meet that party's minimum killcount.");
+			status.accept("You don't meet that party's minimum killcount.");
 			return;
 		}
 
@@ -1177,7 +1246,6 @@ class SearchPanel extends PartyCardPanel
 			}
 		}
 
-		codeField.setText("");
 		final String chosenRole = role;
 		leaveCurrentThen(() -> doApply(party, chosenRole));
 	}
@@ -1263,13 +1331,7 @@ class SearchPanel extends PartyCardPanel
 			reconnectButton.setFocusPainted(false);
 			reconnectButton.setFont(FontManager.getRunescapeSmallFont());
 			reconnectButton.setAlignmentX(Component.CENTER_ALIGNMENT);
-			reconnectButton.addActionListener(e -> {
-				if (subscription != null)
-				{
-					subscription.reconnect();
-					setStatus("Reconnecting…");
-				}
-			});
+			reconnectButton.addActionListener(e -> attemptReconnect());
 
 			col.add(msg);
 			col.add(Box.createVerticalStrut(8));
@@ -1277,6 +1339,38 @@ class SearchPanel extends PartyCardPanel
 			disconnectedPanel.add(col);
 		}
 		return disconnectedPanel;
+	}
+
+	/** How long to wait for a reconnect to land before telling the user the server didn't answer. */
+	private static final int RECONNECT_TIMEOUT_MS = 8000;
+
+	/**
+	 * Kick off a reconnect and give the user definite feedback: on success the offline view
+	 * clears itself; if nothing has connected within {@link #RECONNECT_TIMEOUT_MS} we report
+	 * that the server didn't respond (rather than showing "Reconnecting…" forever).
+	 */
+	private void attemptReconnect()
+	{
+		if (subscription == null)
+		{
+			return;
+		}
+		subscription.reconnect();
+		setStatus("Reconnecting…");
+		reconnectButton.setEnabled(false);
+		Timer timeout = new Timer(RECONNECT_TIMEOUT_MS, ev -> {
+			reconnectButton.setEnabled(true);
+			if (subscription != null && subscription.isConnected())
+			{
+				setStatus("Reconnected.");
+			}
+			else
+			{
+				setStatus("No response from the OSParty server — it may be offline. Try again shortly.");
+			}
+		});
+		timeout.setRepeats(false);
+		timeout.start();
 	}
 
 	/**
@@ -1500,7 +1594,7 @@ class SearchPanel extends PartyCardPanel
 		{
 			setStatus(filtersActive && totalOpen > 0
 				? "0 of " + totalOpen + " parties match your filters."
-				: "No open parties match your filters.");
+				: "No parties to show.");
 		}
 		else
 		{
@@ -1663,12 +1757,6 @@ class SearchPanel extends PartyCardPanel
 				return Comparator.comparingLong(Party::getCreatedAt);
 			case SORT_PING:
 				return (a, b) -> Integer.compare(pingForSort(a), pingForSort(b));
-			case SORT_SPOTS:
-				return (a, b) -> {
-					int slotsA = a.getCapacity() > 0 ? a.getCapacity() - a.getSize() : -1;
-					int slotsB = b.getCapacity() > 0 ? b.getCapacity() - b.getSize() : -1;
-					return Integer.compare(slotsB, slotsA); // descending
-				};
 			case SORT_FULL:
 				return (a, b) -> {
 					float fa = a.getCapacity() > 0 ? (float) a.getSize() / a.getCapacity() : 0f;
@@ -1829,21 +1917,6 @@ class SearchPanel extends PartyCardPanel
 		updateRegionToggleText();
 		rebuildActivityList();
 		filtersChanged();
-	}
-
-	@Override
-	protected void updateAllButtons()
-	{
-		super.updateAllButtons();
-		updateJoinButton();
-	}
-
-	/** Joining (by code) needs a logged in account, so disable it while logged out. */
-	private void updateJoinButton()
-	{
-		boolean loggedIn = playerNameSupplier.get() != null;
-		joinButton.setEnabled(loggedIn);
-		joinButton.setToolTipText(loggedIn ? null : "Log in to join a party");
 	}
 
 	@Override

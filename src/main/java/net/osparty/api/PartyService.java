@@ -65,4 +65,7 @@ public interface PartyService
 
 	/** Host action: close the ad. {@code hostKey} authorises it. */
 	void disbandParty(String partyId, String host, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError);
+
+	/** @return the server-reported number of connected plugin users, or {@code -1} if not yet known. */
+	int onlineUsers();
 }

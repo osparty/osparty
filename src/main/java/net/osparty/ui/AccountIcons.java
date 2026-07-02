@@ -11,7 +11,8 @@ import net.runelite.client.util.ImageUtil;
  */
 final class AccountIcons
 {
-	private static final int SIZE = 16;
+	/** Upper bound on either dimension; sources are already ~10x13, so they render near-native. */
+	private static final int MAX_SIZE = 14;
 
 	private static final ImageIcon IRONMAN = load("ironman");
 	private static final ImageIcon HARDCORE_IRONMAN = load("hardcore_ironman");
@@ -32,7 +33,18 @@ final class AccountIcons
 			{
 				return null;
 			}
-			return new ImageIcon(ImageUtil.resizeImage(img, SIZE, SIZE));
+			// Scale to fit within MAX_SIZE while preserving the source aspect ratio — a fixed
+			// square resize stretched these portrait (10x13) badges wide and oversized them
+			// versus the host crown. Sources are already small, so this is usually near-native.
+			double scale = Math.min(1.0,
+				Math.min((double) MAX_SIZE / img.getWidth(), (double) MAX_SIZE / img.getHeight()));
+			if (scale >= 1.0)
+			{
+				return new ImageIcon(img);
+			}
+			int w = Math.max(1, (int) Math.round(img.getWidth() * scale));
+			int h = Math.max(1, (int) Math.round(img.getHeight() * scale));
+			return new ImageIcon(ImageUtil.resizeImage(img, w, h));
 		}
 		catch (Exception e)
 		{

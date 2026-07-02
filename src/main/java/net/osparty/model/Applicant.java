@@ -48,6 +48,9 @@ public class Applicant
 	/** 28 OSRS item ids in slot order; {@code <= 0} = empty slot, {@code null} = unknown. */
 	private int[] inventory;
 
+	/** Stack size for each inventory slot, parallel to {@link #inventory}; {@code null} when unknown. */
+	private int[] inventoryQuantities;
+
 	/** Slot order matches {@link #equipment}'s indices. */
 	public enum EquipmentSlot
 	{
