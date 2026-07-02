@@ -1047,6 +1047,37 @@ public class LiveParty
 		return id != 0 && memberId == id;
 	}
 
+	/**
+	 * Whether the local player is admitted (the host, or in the host's authoritative roster). A player
+	 * who has applied but not yet been admitted returns {@code false}, so the UI can hide party internals
+	 * from them until the host lets them in. Also {@code false} until we've received the host's state.
+	 */
+	public boolean isLocalAdmitted()
+	{
+		if (hosting)
+		{
+			return true;
+		}
+		PartyStateMessage state = lastState;
+		long localId = localId();
+		if (state == null || localId == 0)
+		{
+			return false;
+		}
+		if (state.getHostMemberId() == localId)
+		{
+			return true;
+		}
+		for (RosterEntry entry : state.getRoster())
+		{
+			if (entry.getMemberId() == localId)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	public boolean isPendingApplicant(long memberId)
 	{
 		if (!hosting)

@@ -12,8 +12,10 @@ import net.osparty.party.LiveParty;
 import com.google.gson.Gson;
 import net.osparty.runewatch.RuneWatchService;
 import java.awt.BorderLayout;
+import java.awt.Color;
 import java.awt.Cursor;
 import java.awt.FlowLayout;
+import java.awt.GridLayout;
 import java.awt.image.BufferedImage;
 import java.util.Set;
 import java.util.function.IntConsumer;
@@ -58,6 +60,21 @@ public class OSPartyPanel extends PluginPanel
 	private static final String VERSION = "1.0.7";
 	private static final String GITHUB_URL = "https://github.com/iodrareg/osparty";
 	private static final String DISCORD_URL = "https://discord.gg/3xrf7wkb5F";
+
+	/** Discord glyph for the link button: full colour when linked, greyed out when not. */
+	private static final ImageIcon DISCORD_LINK_ICON = loadDiscordIcon(false);
+	private static final ImageIcon DISCORD_LINK_ICON_GREY = loadDiscordIcon(true);
+
+	private static ImageIcon loadDiscordIcon(boolean grey)
+	{
+		BufferedImage img = ImageUtil.loadImageResource(OSPartyPanel.class, "/net/osparty/icons/discord.png");
+		if (img == null)
+		{
+			return null;
+		}
+		BufferedImage sized = ImageUtil.resizeImage(img, 14, 14);
+		return new ImageIcon(grey ? ImageUtil.grayscaleImage(sized) : sized);
+	}
 
 	private final PartyState partyState;
 	private final LiveParty liveParty;
@@ -176,17 +193,19 @@ public class OSPartyPanel extends PluginPanel
 
 	private JPanel buildFooter()
 	{
-		JPanel footer = new JPanel(new BorderLayout());
+		// Two rows: the community links (GitHub + Discord) centered on top, then a status row of
+		// online-count (left) | Discord link state (centre) | version (right).
+		JPanel footer = new JPanel(new GridLayout(2, 1, 0, 2));
 		footer.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		footer.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 
+		// ---- Row 1: GitHub + Discord community buttons, centred ----
 		JButton github = new JButton();
 		github.setToolTipText("Open the OSParty GitHub page");
 		github.setFocusPainted(false);
 		github.setBorder(BorderFactory.createEmptyBorder());
 		github.setContentAreaFilled(false);
 		github.setCursor(new Cursor(Cursor.HAND_CURSOR));
-		github.setHorizontalAlignment(SwingConstants.LEFT);
 		BufferedImage logo = ImageUtil.loadImageResource(getClass(), "/net/osparty/icons/github.png");
 		if (logo != null)
 		{
@@ -195,12 +214,11 @@ public class OSPartyPanel extends PluginPanel
 		else
 		{
 			github.setText("GitHub");
+			github.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			github.setFont(FontManager.getRunescapeSmallFont());
 		}
-		github.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		github.setFont(FontManager.getRunescapeSmallFont());
 		github.addActionListener(e -> LinkBrowser.browse(GITHUB_URL));
 
-		// Placeholder Discord button next to GitHub (icon only; no invite link wired up yet).
 		JButton discord = new JButton();
 		discord.setToolTipText("Open the OSParty Discord");
 		discord.setFocusPainted(false);
@@ -220,27 +238,36 @@ public class OSPartyPanel extends PluginPanel
 		}
 		discord.addActionListener(e -> LinkBrowser.browse(DISCORD_URL));
 
-		configureDiscordLinkButton();
+		JPanel row1 = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 0));
+		row1.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row1.add(github);
+		row1.add(discord);
 
-		JPanel links = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-		links.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		links.add(github);
-		links.add(discord);
-		links.add(discordLinkButton);
-		footer.add(links, BorderLayout.WEST);
+		// ---- Row 2: online (left) | link state (centre) | version (right) ----
+		JPanel row2 = new JPanel(new BorderLayout());
+		row2.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
-		activeUsersLabel.setHorizontalAlignment(SwingConstants.CENTER);
+		activeUsersLabel.setHorizontalAlignment(SwingConstants.LEFT);
 		activeUsersLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		activeUsersLabel.setFont(FontManager.getRunescapeSmallFont());
 		activeUsersLabel.setToolTipText("Players currently using the plugin");
-		footer.add(activeUsersLabel, BorderLayout.CENTER);
-		updateActiveUsers();
+		row2.add(activeUsersLabel, BorderLayout.WEST);
+
+		configureDiscordLinkButton();
+		JPanel linkWrap = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
+		linkWrap.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		linkWrap.add(discordLinkButton);
+		row2.add(linkWrap, BorderLayout.CENTER);
 
 		JLabel version = new JLabel("v" + VERSION);
 		version.setHorizontalAlignment(SwingConstants.RIGHT);
 		version.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		version.setFont(FontManager.getRunescapeSmallFont());
-		footer.add(version, BorderLayout.EAST);
+		row2.add(version, BorderLayout.EAST);
+
+		footer.add(row1);
+		footer.add(row2);
+		updateActiveUsers();
 
 		// The server pushes the live count over the socket; poll the cached value onto the
 		// footer (cheap, no network). Timer fires on the EDT so touching Swing is safe.
@@ -292,17 +319,21 @@ public class OSPartyPanel extends PluginPanel
 	private void applyLinkStatus(DiscordLinkStatus status)
 	{
 		boolean linked = status != null && status.isLinked();
+		discordLinkButton.setIconTextGap(4);
 		if (linked)
 		{
+			// Verified: full-colour Discord glyph + the linked username.
 			discordLinkButton.setText(status.getUsername());
-			discordLinkButton.setIcon(StatusIcons.CHECK);
-			discordLinkButton.setIconTextGap(4);
+			discordLinkButton.setIcon(DISCORD_LINK_ICON);
+			discordLinkButton.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 			discordLinkButton.setToolTipText("Discord linked as " + status.getUsername() + " - click to relink");
 		}
 		else
 		{
+			// Not verified: greyed-out Discord glyph + "Link Discord".
 			discordLinkButton.setText("Link Discord");
-			discordLinkButton.setIcon(null);
+			discordLinkButton.setIcon(DISCORD_LINK_ICON_GREY);
+			discordLinkButton.setForeground(new Color(0x80, 0x80, 0x80));
 			discordLinkButton.setToolTipText("Link your Discord account (for private party voice channels)");
 		}
 		// Let the Party tab re-evaluate its voice buttons (authorize vs create/join) when link state flips.

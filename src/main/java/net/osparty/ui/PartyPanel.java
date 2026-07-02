@@ -381,6 +381,18 @@ class PartyPanel extends JPanel
 		content.add(header);
 		content.add(Box.createVerticalStrut(4));
 
+		// A player who has applied but hasn't been admitted must not see the party's internals (roster,
+		// requirements, ready check, voice channel). Show only a waiting notice and a way to withdraw.
+		if (!host && !liveParty.isLocalAdmitted())
+		{
+			content.add(subLabel("Waiting for the host to accept you…"));
+			content.add(Box.createVerticalStrut(8));
+			content.add(buildActions(party, false));
+			content.revalidate();
+			content.repaint();
+			return;
+		}
+
 		List<RosterMember> roster = liveParty.isConnected() ? liveParty.roster() : null;
 
 		int admitted = roster == null ? 0
@@ -495,11 +507,6 @@ class PartyPanel extends JPanel
 				content.add(Box.createVerticalStrut(4));
 			}
 
-			if (!host && isLocalPending(roster))
-			{
-				content.add(subLabel("Awaiting host approval…"));
-			}
-
 			if (anyPending && host)
 			{
 				content.add(Box.createVerticalStrut(4));
@@ -529,18 +536,6 @@ class PartyPanel extends JPanel
 
 		content.revalidate();
 		content.repaint();
-	}
-
-	private boolean isLocalPending(List<RosterMember> roster)
-	{
-		for (RosterMember member : roster)
-		{
-			if (member.isLocal())
-			{
-				return member.getStatus() == Status.PENDING;
-			}
-		}
-		return false;
 	}
 
 	private void updatePendingApplicants(List<RosterMember> roster, Activity activity)
@@ -876,7 +871,7 @@ class PartyPanel extends JPanel
 		// Host membership controls.
 		if (host && member.getStatus() == Status.PENDING)
 		{
-			JButton admit = smallButton("Admit");
+			JButton admit = smallButton("Accept");
 			admit.addActionListener(e -> admit(activity, member));
 			JButton decline = smallButton("Decline");
 			decline.addActionListener(e -> decline(activity, member));
@@ -1563,7 +1558,7 @@ class PartyPanel extends JPanel
 	{
 		if (!liveParty.admit(member.getMemberId(), member.getName()))
 		{
-			setStatus("Party is full - can't admit " + member.getName() + ".");
+			setStatus("Party is full - can't accept " + member.getName() + ".");
 			return;
 		}
 		notifiedPending.remove(member.getMemberId());
@@ -1571,7 +1566,7 @@ class PartyPanel extends JPanel
 		{
 			hostApplicationHandler.announceResolved(toApplicant(member.getData()), activity, true);
 		}
-		setStatus("Admitted " + member.getName() + ".");
+		setStatus("Accepted " + member.getName() + ".");
 		refresh();
 	}
 
