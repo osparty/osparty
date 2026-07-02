@@ -26,6 +26,7 @@ import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -63,6 +64,7 @@ abstract class PartyCardPanel extends JPanel
 	protected final FavoritesService favoritesService;
 	protected final net.osparty.BlockListService blockListService;
 	protected final Supplier<Set<String>> friendNamesSupplier;
+	protected final net.osparty.OSPartyConfig config;
 
 	private volatile BufferedImage memberStarImg;
 	private volatile BufferedImage freeStarImg;
@@ -106,8 +108,10 @@ abstract class PartyCardPanel extends JPanel
 		FavoritesService favoritesService,
 		net.osparty.BlockListService blockListService,
 		Supplier<Set<String>> friendNamesSupplier,
-		SpriteManager spriteManager)
+		SpriteManager spriteManager,
+		net.osparty.OSPartyConfig config)
 	{
+		this.config = config;
 		this.partyService = partyService;
 		this.playerNameSupplier = playerNameSupplier;
 		this.partyState = partyState;
@@ -134,9 +138,6 @@ abstract class PartyCardPanel extends JPanel
 
 	/** Called by apply/cancel to surface a message to the user. */
 	protected abstract void setStatus(String text);
-
-	/** Whether the local player is marking themselves as a learner when applying. */
-	protected abstract boolean isLocalLearner();
 
 	/** Rebuild per-card Apply buttons after party state changes. */
 	protected void updateAllButtons()
@@ -291,24 +292,33 @@ abstract class PartyCardPanel extends JPanel
 		}
 
 		Activity activity = Activity.fromId(party.getActivity());
+		// The learner mark is a raid-only choice made as part of the application (ToA/ToB/CoX),
+		// shown unless the user disabled the toggle in config.
+		boolean askLearner = activity != null && activity.isRaid() && config.learnerRaidToggle();
 		if (activity != null && activity.hasRoles())
 		{
 			List<Role> opts = roleOptionsFor(party, activity);
-			if (opts.size() > 1)
+			if (opts.size() > 1 || askLearner)
 			{
-				// More than one role to choose: show the inline picker; the join fires
-				// from the picker's button callback (point 15).
-				showInlineRolePicker(party, opts);
+				// Show the inline picker (role choice and/or the learner checkbox); the join
+				// fires from the picker's button callback (point 15).
+				showApplyPicker(party, opts, askLearner);
 				return;
 			}
-			beginApply(party, opts.isEmpty() ? null : opts.get(0).getId());
+			beginApply(party, opts.isEmpty() ? null : opts.get(0).getId(), false);
 			return;
 		}
-		beginApply(party, null);
+		if (askLearner)
+		{
+			// A raid without role selection (ToA): still offer the learner checkbox.
+			showApplyPicker(party, java.util.Collections.emptyList(), true);
+			return;
+		}
+		beginApply(party, null, false);
 	}
 
 	/** Disable the Apply button, show "Applying…", and join (leaving any current party first). */
-	private void beginApply(Party party, String role)
+	private void beginApply(Party party, String role, boolean learner)
 	{
 		JButton button = applyButtons.get(party.getId());
 		if (button != null)
@@ -316,7 +326,7 @@ abstract class PartyCardPanel extends JPanel
 			button.setEnabled(false);
 			button.setText("Applying…");
 		}
-		leaveCurrentThen(() -> doApply(party, role));
+		leaveCurrentThen(() -> doApply(party, role, learner));
 	}
 
 	/** Roles the player may pick when applying: the needed roles, else all activity roles. */
@@ -364,7 +374,12 @@ abstract class PartyCardPanel extends JPanel
 	}
 
 	/** Populate and reveal the card's inline role picker (themed, non-modal). */
-	private void showInlineRolePicker(Party party, List<Role> options)
+	/**
+	 * Inline application picker: an optional "I'm a learner" checkbox (raids only) plus either a
+	 * role button per {@code options} or, when there are no roles (ToA), a single Apply button.
+	 * The chosen role and the learner state are carried into {@link #beginApply}.
+	 */
+	private void showApplyPicker(Party party, List<Role> options, boolean askLearner)
 	{
 		JPanel picker = rolePickers.get(party.getId());
 		if (picker == null)
@@ -372,23 +387,56 @@ abstract class PartyCardPanel extends JPanel
 			return;
 		}
 		picker.removeAll();
-		JLabel prompt = new JLabel("Pick a role:");
-		prompt.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		prompt.setFont(FontManager.getRunescapeSmallFont());
-		prompt.setAlignmentX(Component.LEFT_ALIGNMENT);
-		picker.add(prompt);
-		for (Role role : options)
+
+		final JCheckBox learnerCheck;
+		if (askLearner)
 		{
-			JButton b = new JButton(role.getDisplayName());
-			b.setFocusPainted(false);
-			b.setFont(FontManager.getRunescapeSmallFont());
-			b.setAlignmentX(Component.LEFT_ALIGNMENT);
-			b.addActionListener(e -> {
-				picker.setVisible(false);
-				beginApply(party, role.getId());
-			});
-			picker.add(b);
+			learnerCheck = new JCheckBox("I'm a learner");
+			learnerCheck.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+			learnerCheck.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			learnerCheck.setFont(FontManager.getRunescapeSmallFont());
+			learnerCheck.setFocusPainted(false);
+			learnerCheck.setAlignmentX(Component.LEFT_ALIGNMENT);
+			picker.add(learnerCheck);
 		}
+		else
+		{
+			learnerCheck = null;
+		}
+
+		if (!options.isEmpty())
+		{
+			JLabel prompt = new JLabel("Pick a role:");
+			prompt.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			prompt.setFont(FontManager.getRunescapeSmallFont());
+			prompt.setAlignmentX(Component.LEFT_ALIGNMENT);
+			picker.add(prompt);
+			for (Role role : options)
+			{
+				JButton b = new JButton(role.getDisplayName());
+				b.setFocusPainted(false);
+				b.setFont(FontManager.getRunescapeSmallFont());
+				b.setAlignmentX(Component.LEFT_ALIGNMENT);
+				b.addActionListener(e -> {
+					picker.setVisible(false);
+					beginApply(party, role.getId(), learnerCheck != null && learnerCheck.isSelected());
+				});
+				picker.add(b);
+			}
+		}
+		else
+		{
+			JButton applyBtn = new JButton("Apply");
+			applyBtn.setFocusPainted(false);
+			applyBtn.setFont(FontManager.getRunescapeSmallFont());
+			applyBtn.setAlignmentX(Component.LEFT_ALIGNMENT);
+			applyBtn.addActionListener(e -> {
+				picker.setVisible(false);
+				beginApply(party, null, learnerCheck != null && learnerCheck.isSelected());
+			});
+			picker.add(applyBtn);
+		}
+
 		JButton cancelPick = new JButton("Cancel");
 		cancelPick.setFocusPainted(false);
 		cancelPick.setFont(FontManager.getRunescapeSmallFont());
@@ -442,7 +490,13 @@ abstract class PartyCardPanel extends JPanel
 		next.run();
 	}
 
+	/** Join-by-code and other entry points that don't collect a learner mark. */
 	protected void doApply(Party party, String role)
+	{
+		doApply(party, role, false);
+	}
+
+	protected void doApply(Party party, String role, boolean learner)
 	{
 		String passphrase = party.getPassphrase();
 		if (passphrase == null || passphrase.isEmpty())
@@ -454,7 +508,6 @@ abstract class PartyCardPanel extends JPanel
 			updateAllButtons();
 			return;
 		}
-		boolean learner = isLocalLearner();
 		liveParty.joinParty(passphrase, party.getActivity(), party.getCapacity(), role, learner);
 		partyState.setMember(party);
 		String roleSuffix = role != null ? " as " + Role.displayNameOf(role) : "";

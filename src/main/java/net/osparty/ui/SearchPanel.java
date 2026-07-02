@@ -130,7 +130,7 @@ class SearchPanel extends PartyCardPanel
 	private boolean rolesExpanded;
 	private final JButton roleToggle = new JButton();
 	private final JTabbedPane roleTabs = new JTabbedPane();
-	/** Collapsible content: the role tabs plus the separate learner mark. */
+	/** Collapsible content: the role tabs. */
 	private final JPanel roleContent = new JPanel();
 	private final Set<WorldRegion> selectedRegions = EnumSet.allOf(WorldRegion.class);
 	/** Keeps a handle to each region checkbox so Reset can sync their visual state. */
@@ -142,8 +142,6 @@ class SearchPanel extends PartyCardPanel
 	private boolean filtersExpanded;
 	private final JButton filtersToggle = new JButton();
 	private final JPanel filtersContent = new JPanel();
-	/** Self-mark (not a role): tags us as a learner to the host when we apply. */
-	private final JCheckBox imLearnerCheck = new JCheckBox("I'm a learner");
 	private Activity recommended;
 	private boolean searchExpanded;
 	private final JButton searchToggle = new JButton();
@@ -201,11 +199,12 @@ class SearchPanel extends PartyCardPanel
 		IntFunction<WorldRegion> worldRegionResolver, KillcountService killcountService, ConfigManager configManager,
 		WorldPinger worldPinger, IntFunction<String> worldAddressResolver,
 		Supplier<Set<String>> friendNamesSupplier, FavoritesService favoritesService,
-		net.osparty.BlockListService blockListService, SpriteManager spriteManager)
+		net.osparty.BlockListService blockListService, SpriteManager spriteManager,
+		OSPartyConfig config)
 	{
 		super(partyService, playerNameSupplier, partyState, liveParty, accountTypeSupplier,
 			killcountService, worldPinger, worldRegionResolver, worldAddressResolver,
-			favoritesService, blockListService, friendNamesSupplier, spriteManager);
+			favoritesService, blockListService, friendNamesSupplier, spriteManager, config);
 		this.friendsChatOwnerSupplier = friendsChatOwnerSupplier;
 		this.worldSupplier = worldSupplier;
 		this.mapRegionsSupplier = mapRegionsSupplier;
@@ -499,26 +498,10 @@ class SearchPanel extends PartyCardPanel
 		roleTabs.addTab("CM", buildRoleTab(Activity.CHAMBERS_OF_XERIC, true));
 		roleTabs.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-		// A learner mark separate from the roles: re-broadcasts live if toggled while
-		// already applied; otherwise it's read when we apply (see doApply).
-		imLearnerCheck.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		imLearnerCheck.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		imLearnerCheck.setFont(FontManager.getRunescapeSmallFont());
-		imLearnerCheck.setFocusPainted(false);
-		imLearnerCheck.setAlignmentX(Component.LEFT_ALIGNMENT);
-		imLearnerCheck.setBorder(BorderFactory.createEmptyBorder(6, 4, 2, 4));
-		imLearnerCheck.addActionListener(e -> {
-			if (isMemberInParty())
-			{
-				liveParty.setLocalLearner(imLearnerCheck.isSelected());
-			}
-			persistFilters();
-		});
-
+		// (The "I'm a learner" mark now lives in the apply picker, chosen per application.)
 		roleContent.setLayout(new BoxLayout(roleContent, BoxLayout.Y_AXIS));
 		roleContent.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		roleContent.add(roleTabs);
-		roleContent.add(imLearnerCheck);
 		roleContent.setVisible(rolesExpanded);
 		panel.add(roleContent, BorderLayout.CENTER);
 
@@ -1030,7 +1013,6 @@ class SearchPanel extends PartyCardPanel
 	private static final String KEY_ROLES             = "searchRoles";
 	private static final String KEY_LOOT              = "searchLoot";
 	private static final String KEY_IRONMAN           = "searchIronman";
-	private static final String KEY_LEARNER           = "searchLearner";
 	private static final String KEY_ROLES_EXPANDED    = "searchRolesExpanded";
 	private static final String KEY_SEARCH_EXPANDED   = "searchTextExpanded";
 	private static final String KEY_REGIONS           = "searchRegions";
@@ -1050,7 +1032,6 @@ class SearchPanel extends PartyCardPanel
 		put(KEY_ROLES, idsOf(selectedRoles, Role::getId));
 		put(KEY_LOOT, (String) lootFilter.getSelectedItem());
 		put(KEY_IRONMAN, Boolean.toString(ironmanFilter.isSelected()));
-		put(KEY_LEARNER, Boolean.toString(imLearnerCheck.isSelected()));
 		put(KEY_ROLES_EXPANDED, Boolean.toString(rolesExpanded));
 		put(KEY_SEARCH_EXPANDED, Boolean.toString(searchExpanded));
 		// Save which known regions are selected (non-KNOWN regions are always on).
@@ -1121,7 +1102,6 @@ class SearchPanel extends PartyCardPanel
 			lootFilter.setSelectedItem(loot);
 		}
 		ironmanFilter.setSelected(Boolean.parseBoolean(get(KEY_IRONMAN)));
-		imLearnerCheck.setSelected(Boolean.parseBoolean(get(KEY_LEARNER)));
 		rolesExpanded = Boolean.parseBoolean(get(KEY_ROLES_EXPANDED));
 		searchExpanded = Boolean.parseBoolean(get(KEY_SEARCH_EXPANDED));
 
@@ -1923,12 +1903,6 @@ class SearchPanel extends PartyCardPanel
 	protected void setStatus(String text)
 	{
 		statusLabel.setText(text);
-	}
-
-	@Override
-	protected boolean isLocalLearner()
-	{
-		return imLearnerCheck.isSelected();
 	}
 
 	/**

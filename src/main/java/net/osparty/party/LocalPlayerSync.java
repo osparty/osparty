@@ -1,10 +1,14 @@
 package net.osparty.party;
 
 import net.osparty.model.Applicant.EquipmentSlot;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import net.runelite.api.Client;
+import net.runelite.api.EnumComposition;
+import net.runelite.api.EnumID;
 import net.runelite.api.EquipmentInventorySlot;
 import net.runelite.api.FriendsChatManager;
 import net.runelite.api.InventoryID;
@@ -12,6 +16,8 @@ import net.runelite.api.Item;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.Player;
 import net.runelite.api.Skill;
+import net.runelite.api.gameval.ItemID;
+import net.runelite.api.gameval.VarbitID;
 
 /**
  * Builds a {@link PlayerUpdate} from the local client's live state. Reads item
@@ -21,6 +27,21 @@ final class LocalPlayerSync
 {
 	/** Varp id for special-attack energy (0-1000). {@code VarPlayer.SPECIAL_ATTACK_PERCENT} is deprecated. */
 	private static final int VARP_SPECIAL_ATTACK_PERCENT = 300;
+
+	/** Rune-pouch slot varbits (rune type + amount), up to 6 slots on the divine pouch. */
+	private static final int[] RUNE_POUCH_TYPE_VARBITS = {
+		VarbitID.RUNE_POUCH_TYPE_1, VarbitID.RUNE_POUCH_TYPE_2, VarbitID.RUNE_POUCH_TYPE_3,
+		VarbitID.RUNE_POUCH_TYPE_4, VarbitID.RUNE_POUCH_TYPE_5, VarbitID.RUNE_POUCH_TYPE_6,
+	};
+	private static final int[] RUNE_POUCH_AMOUNT_VARBITS = {
+		VarbitID.RUNE_POUCH_QUANTITY_1, VarbitID.RUNE_POUCH_QUANTITY_2, VarbitID.RUNE_POUCH_QUANTITY_3,
+		VarbitID.RUNE_POUCH_QUANTITY_4, VarbitID.RUNE_POUCH_QUANTITY_5, VarbitID.RUNE_POUCH_QUANTITY_6,
+	};
+	/** All rune-pouch item ids (standard/locked and divine/locked). */
+	private static final int[] RUNE_POUCH_ITEMS = {
+		ItemID.BH_RUNE_POUCH, ItemID.BH_RUNE_POUCH_TROUVER,
+		ItemID.DIVINE_RUNE_POUCH, ItemID.DIVINE_RUNE_POUCH_TROUVER,
+	};
 
 	private LocalPlayerSync()
 	{
@@ -42,6 +63,7 @@ final class LocalPlayerSync
 		update.setEquipment(equipment(client));
 		update.setInventory(inventory(client));
 		update.setInventoryQuantities(inventoryQuantities(client));
+		captureRunePouch(client, update);
 
 		// Live vitals — current values (boosted), always shown in the roster.
 		update.setMaxHp(client.getRealSkillLevel(Skill.HITPOINTS));
@@ -50,6 +72,7 @@ final class LocalPlayerSync
 		update.setCurrentPrayer(client.getBoostedSkillLevel(Skill.PRAYER));
 		update.setSpecialPercent(client.getVarpValue(VARP_SPECIAL_ATTACK_PERCENT) / 10);
 		update.setRunEnergy(client.getEnergy() / 100); // getEnergy() is in 1/100th of a percent
+		update.setSpellbook(client.getVarbitValue(VarbitID.SPELLBOOK));
 
 		Map<String, Integer> stats = new LinkedHashMap<>();
 		for (Skill skill : Skill.values())
@@ -105,6 +128,69 @@ final class LocalPlayerSync
 			}
 		}
 		return out;
+	}
+
+	/**
+	 * Populate the rune-pouch contents when the player is carrying a rune pouch. The rune
+	 * types/amounts live in client varbits (only the owner can read them), so we resolve the
+	 * rune-type index to an item id here via {@link EnumID#RUNEPOUCH_RUNE} and ship the item
+	 * ids + amounts for spectators to render directly.
+	 */
+	private static void captureRunePouch(Client client, PlayerUpdate update)
+	{
+		ItemContainer inventory = client.getItemContainer(InventoryID.INVENTORY);
+		if (inventory == null || !containsRunePouch(inventory))
+		{
+			return;
+		}
+		EnumComposition runeEnum = client.getEnum(EnumID.RUNEPOUCH_RUNE);
+		List<Integer> ids = new ArrayList<>();
+		List<Integer> amounts = new ArrayList<>();
+		List<String> names = new ArrayList<>();
+		for (int i = 0; i < RUNE_POUCH_TYPE_VARBITS.length; i++)
+		{
+			int runeType = client.getVarbitValue(RUNE_POUCH_TYPE_VARBITS[i]);
+			int amount = client.getVarbitValue(RUNE_POUCH_AMOUNT_VARBITS[i]);
+			if (runeType == 0 || amount <= 0)
+			{
+				continue;
+			}
+			int itemId = runeEnum != null ? runeEnum.getIntValue(runeType) : -1;
+			if (itemId <= 0)
+			{
+				continue;
+			}
+			ids.add(itemId);
+			amounts.add(amount);
+			// Resolve the name here (client thread); spectators can't call getItemComposition off it.
+			names.add(client.getItemDefinition(itemId).getName());
+		}
+		if (ids.isEmpty())
+		{
+			return;
+		}
+		update.setRunePouch(ids.stream().mapToInt(Integer::intValue).toArray());
+		update.setRunePouchAmounts(amounts.stream().mapToInt(Integer::intValue).toArray());
+		update.setRunePouchNames(names.toArray(new String[0]));
+	}
+
+	private static boolean containsRunePouch(ItemContainer inventory)
+	{
+		for (Item item : inventory.getItems())
+		{
+			if (item == null)
+			{
+				continue;
+			}
+			for (int pouchId : RUNE_POUCH_ITEMS)
+			{
+				if (item.getId() == pouchId)
+				{
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	private static int[] equipment(Client client)

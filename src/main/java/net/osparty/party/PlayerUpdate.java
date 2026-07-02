@@ -33,6 +33,15 @@ public class PlayerUpdate extends PartyMemberMessage
 	/** Stack size for each inventory slot, parallel to {@link #inventory}; {@code 0} when empty/unknown. */
 	private int[] inventoryQuantities;
 
+	/** Resolved rune item ids inside the carried rune pouch; {@code null} when none is carried. */
+	private int[] runePouch;
+
+	/** Amount of each {@link #runePouch} rune, parallel to it. */
+	private int[] runePouchAmounts;
+
+	/** Display name of each {@link #runePouch} rune, parallel to it (resolved on the owner's client thread). */
+	private String[] runePouchNames;
+
 	/** Skill name -> real level. */
 	private Map<String, Integer> stats;
 
@@ -49,6 +58,9 @@ public class PlayerUpdate extends PartyMemberMessage
 	private int specialPercent = -1;
 	/** Run energy, 0-100. */
 	private int runEnergy = -1;
+
+	/** Active spellbook: 0 standard, 1 ancient, 2 lunar, 3 arceuus; {@code -1} when unknown. */
+	private int spellbook = -1;
 
 	/** {@code -1} when unknown. */
 	private int killCount = -1;

@@ -97,11 +97,12 @@ class FriendsPanel extends PartyCardPanel
 		FavoritesService favoritesService,
 		net.osparty.BlockListService blockListService,
 		Supplier<Set<String>> friendNamesSupplier,
-		SpriteManager spriteManager)
+		SpriteManager spriteManager,
+		net.osparty.OSPartyConfig config)
 	{
 		super(partyService, playerNameSupplier, partyState, liveParty, accountTypeSupplier,
 			killcountService, worldPinger, worldRegionResolver, worldAddressResolver,
-			favoritesService, blockListService, friendNamesSupplier, spriteManager);
+			favoritesService, blockListService, friendNamesSupplier, spriteManager, config);
 
 		setLayout(new BorderLayout(0, 0));
 		setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -234,12 +235,6 @@ class FriendsPanel extends PartyCardPanel
 	protected void setStatus(String text)
 	{
 		statusLabel.setText(text);
-	}
-
-	@Override
-	protected boolean isLocalLearner()
-	{
-		return false;
 	}
 
 	/** When a star is toggled in this panel, re-render (unfavouriting removes a card). */

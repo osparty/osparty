@@ -105,10 +105,11 @@ public class OSPartyPanel extends PluginPanel
 			friendsChatOwnerSupplier, worldSupplier, partyState, liveParty, accountTypeSupplier,
 			mapRegionsSupplier, worldRegionResolver, killcountService, configManager,
 			worldPinger, worldAddressResolver, friendNamesSupplier, favoritesService, blockListService,
-			spriteManager);
+			spriteManager, config);
 		favoritesPanel = new FriendsPanel(partyService, playerNameSupplier, partyState,
 			liveParty, accountTypeSupplier, killcountService, worldPinger, worldRegionResolver,
-			worldAddressResolver, favoritesService, blockListService, friendNamesSupplier, spriteManager);
+			worldAddressResolver, favoritesService, blockListService, friendNamesSupplier, spriteManager,
+			config);
 
 		// Cross-notify: toggling a favorite/block in Search refreshes the Favorites tab and vice versa.
 		searchPanel.setOnFavoriteChanged(favoritesPanel::render);

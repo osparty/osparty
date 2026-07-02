@@ -51,6 +51,15 @@ public class Applicant
 	/** Stack size for each inventory slot, parallel to {@link #inventory}; {@code null} when unknown. */
 	private int[] inventoryQuantities;
 
+	/** Resolved rune item ids in the carried rune pouch; {@code null} when none. */
+	private int[] runePouch;
+
+	/** Amount of each {@link #runePouch} rune, parallel to it. */
+	private int[] runePouchAmounts;
+
+	/** Display name of each {@link #runePouch} rune, parallel to it. */
+	private String[] runePouchNames;
+
 	/** Slot order matches {@link #equipment}'s indices. */
 	public enum EquipmentSlot
 	{

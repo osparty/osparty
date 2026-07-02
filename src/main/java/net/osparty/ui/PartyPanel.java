@@ -27,6 +27,9 @@ import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.FontMetrics;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
@@ -64,12 +67,14 @@ import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import net.runelite.api.Skill;
 import net.runelite.api.SpriteID;
+import net.runelite.api.gameval.ItemID;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.SkillIconManager;
 import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
+import net.runelite.client.util.AsyncBufferedImage;
 import net.runelite.client.util.ImageUtil;
 
 /**
@@ -956,24 +961,69 @@ class PartyPanel extends JPanel
 		{
 			return null;
 		}
-		JPanel row = cappedPanel(new GridLayout(1, 4, 2, 0));
+		JPanel grid = new JPanel(new GridLayout(1, 4, 1, 0));
+		grid.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		grid.add(vitalCell(SpriteID.MINIMAP_ORB_HITPOINTS_ICON, Integer.toString(data.getCurrentHp()),
+			"Hitpoints " + data.getCurrentHp() + "/" + data.getMaxHp()));
+		grid.add(vitalCell(SpriteID.MINIMAP_ORB_PRAYER_ICON, Integer.toString(data.getCurrentPrayer()),
+			"Prayer " + data.getCurrentPrayer() + "/" + data.getMaxPrayer()));
+		grid.add(vitalCell(SpriteID.MINIMAP_ORB_SPECIAL_ICON, data.getSpecialPercent() + "%",
+			"Special attack energy"));
+		grid.add(vitalCell(SpriteID.MINIMAP_ORB_RUN_ICON, data.getRunEnergy() + "%",
+			"Run energy"));
+
+		JPanel row = cappedPanel(new BorderLayout(2, 0));
 		row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		row.setAlignmentX(Component.LEFT_ALIGNMENT);
-		row.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 0));
-		row.add(vitalCell(SpriteID.MINIMAP_ORB_HITPOINTS_ICON, Integer.toString(data.getCurrentHp()),
-			"Hitpoints " + data.getCurrentHp() + "/" + data.getMaxHp()));
-		row.add(vitalCell(SpriteID.MINIMAP_ORB_PRAYER_ICON, Integer.toString(data.getCurrentPrayer()),
-			"Prayer " + data.getCurrentPrayer() + "/" + data.getMaxPrayer()));
-		row.add(vitalCell(SpriteID.MINIMAP_ORB_SPECIAL_ICON, data.getSpecialPercent() + "%",
-			"Special attack energy"));
-		row.add(vitalCell(SpriteID.MINIMAP_ORB_RUN_ICON, data.getRunEnergy() + "%",
-			"Run energy"));
+		row.setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 0));
+		row.add(grid, BorderLayout.CENTER);
+		// Spellbook symbol trailing the run-energy orb (icon only, no value).
+		JComponent spellbook = spellbookIcon(data.getSpellbook());
+		if (spellbook != null)
+		{
+			row.add(spellbook, BorderLayout.EAST);
+		}
 		return row;
+	}
+
+	/** @return an icon of the member's active spellbook, or {@code null} when unknown. */
+	private JComponent spellbookIcon(int spellbook)
+	{
+		int spriteId;
+		String name;
+		switch (spellbook)
+		{
+			case 0:
+				spriteId = SpriteID.TAB_MAGIC;
+				name = "Standard spellbook";
+				break;
+			case 1:
+				spriteId = SpriteID.TAB_MAGIC_SPELLBOOK_ANCIENT_MAGICKS;
+				name = "Ancient Magicks";
+				break;
+			case 2:
+				spriteId = SpriteID.TAB_MAGIC_SPELLBOOK_LUNAR;
+				name = "Lunar spellbook";
+				break;
+			case 3:
+				spriteId = SpriteID.TAB_MAGIC_SPELLBOOK_ARCEUUS;
+				name = "Arceuus spellbook";
+				break;
+			default:
+				return null;
+		}
+		JLabel icon = new JLabel();
+		icon.setPreferredSize(ORB_ICON);
+		icon.setToolTipText(name);
+		loadOrbIcon(icon, spriteId);
+		return icon;
 	}
 
 	private JComponent vitalCell(int spriteId, String value, String tip)
 	{
-		JPanel cell = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
+		// BorderLayout (not FlowLayout): the value sits beside the icon and never wraps beneath
+		// it, so a full "100%" stays on the line instead of being hidden by the capped height.
+		JPanel cell = new JPanel(new BorderLayout(1, 0));
 		cell.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		JLabel icon = new JLabel();
 		icon.setPreferredSize(ORB_ICON);
@@ -983,8 +1033,8 @@ class PartyPanel extends JPanel
 		val.setForeground(Color.WHITE);
 		val.setFont(FontManager.getRunescapeSmallFont());
 		val.setToolTipText(tip);
-		cell.add(icon);
-		cell.add(val);
+		cell.add(icon, BorderLayout.WEST);
+		cell.add(val, BorderLayout.CENTER);
 		return cell;
 	}
 
@@ -1262,15 +1312,163 @@ class PartyPanel extends JPanel
 		}
 
 		int[] qty = stats.getInventoryQuantities();
+		int[] pouchRunes = stats.getRunePouch();
+		int[] pouchAmounts = stats.getRunePouchAmounts();
+		boolean hasPouch = pouchRunes != null && pouchRunes.length > 0;
 		JPanel grid = new JPanel(new GridLayout(7, 4, 2, 2));
 		grid.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		for (int i = 0; i < 28; i++)
 		{
 			int id = i < inv.length ? inv[i] : -1;
 			int count = qty != null && i < qty.length ? qty[i] : 1;
-			grid.add(itemSlot(id, count));
+			if (hasPouch && id > 0 && isRunePouch(id))
+			{
+				// Overlay the pouch's runes on the pouch slot, like RuneLite's Rune Pouch plugin.
+				grid.add(runePouchSlot(id, pouchRunes, pouchAmounts, stats.getRunePouchNames()));
+			}
+			else
+			{
+				grid.add(itemSlot(id, count));
+			}
 		}
 		return center(grid);
+	}
+
+	private static boolean isRunePouch(int itemId)
+	{
+		return itemId == ItemID.BH_RUNE_POUCH || itemId == ItemID.BH_RUNE_POUCH_TROUVER
+			|| itemId == ItemID.DIVINE_RUNE_POUCH || itemId == ItemID.DIVINE_RUNE_POUCH_TROUVER;
+	}
+
+	/** Pixel size of a rune icon painted over the pouch, matching RuneLite's overlay. */
+	private static final int RUNE_ICON = 11;
+
+	/**
+	 * An inventory slot for a rune pouch: the pouch icon with its runes overlaid on top,
+	 * mirroring RuneLite's Rune Pouch plugin (a list with amounts for &lt;4 runes, otherwise a
+	 * grid with per-rune fill bars). {@code runes} are resolved rune item ids, {@code amounts}
+	 * their parallel counts.
+	 */
+	private JComponent runePouchSlot(int pouchItemId, int[] runes, int[] amounts, String[] names)
+	{
+		AsyncBufferedImage pouchImg = itemManager.getImage(pouchItemId);
+		AsyncBufferedImage[] runeImgs = new AsyncBufferedImage[runes.length];
+		for (int i = 0; i < runes.length; i++)
+		{
+			runeImgs[i] = itemManager.getImage(runes[i]);
+		}
+
+		JComponent slot = new JComponent()
+		{
+			@Override
+			protected void paintComponent(Graphics g)
+			{
+				super.paintComponent(g);
+				Graphics2D g2 = (Graphics2D) g.create();
+				g2.setColor(ColorScheme.DARK_GRAY_COLOR);
+				g2.fillRect(0, 0, getWidth(), getHeight());
+				if (pouchImg != null)
+				{
+					g2.drawImage(pouchImg, (getWidth() - pouchImg.getWidth()) / 2,
+						(getHeight() - pouchImg.getHeight()) / 2, null);
+				}
+				g2.setFont(FontManager.getRunescapeSmallFont());
+				if (runeImgs.length < 4)
+				{
+					paintRuneList(g2, runeImgs, amounts);
+				}
+				else
+				{
+					paintRuneGrid(g2, runeImgs, amounts);
+				}
+				g2.dispose();
+			}
+		};
+		slot.setPreferredSize(SLOT_SIZE);
+		slot.setMinimumSize(SLOT_SIZE);
+		slot.setOpaque(true);
+		slot.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		slot.setToolTipText(runePouchTooltip(names, amounts));
+
+		Runnable repaint = () -> SwingUtilities.invokeLater(slot::repaint);
+		pouchImg.onLoaded(repaint);
+		for (AsyncBufferedImage img : runeImgs)
+		{
+			img.onLoaded(repaint);
+		}
+		return slot;
+	}
+
+	/** &lt;4 runes: a small icon per rune with its amount text beside it (RuneLite's list mode). */
+	private void paintRuneList(Graphics2D g, AsyncBufferedImage[] imgs, int[] amounts)
+	{
+		FontMetrics fm = g.getFontMetrics();
+		for (int i = 0; i < imgs.length; i++)
+		{
+			int y = fm.getHeight() * i - 1;
+			if (imgs[i] != null)
+			{
+				g.drawImage(imgs[i], -1, y, RUNE_ICON, RUNE_ICON, null);
+			}
+			String text = formatRuneAmount(amounts[i]);
+			int textY = 12 + (fm.getHeight() - 1) * i;
+			g.setColor(Color.BLACK);
+			g.drawString(text, 12, textY + 1);
+			g.setColor(Color.YELLOW);
+			g.drawString(text, 11, textY);
+		}
+	}
+
+	/** &gt;=4 runes: a 2-column grid of icons, each with a coloured fill bar for its amount. */
+	private void paintRuneGrid(Graphics2D g, AsyncBufferedImage[] imgs, int[] amounts)
+	{
+		int num = imgs.length;
+		for (int c = 0; c < num; c++)
+		{
+			int iconX = 2 + (c % 2 == 1 ? RUNE_ICON + 4 : 0);
+			int iconY = num > 4
+				? -1 + (c / 2) * RUNE_ICON
+				: 5 + (c >= 2 ? RUNE_ICON + 2 : 0);
+			if (imgs[c] != null)
+			{
+				g.drawImage(imgs[c], iconX, iconY, RUNE_ICON, RUNE_ICON, null);
+			}
+			int amount = amounts[c];
+			int height;
+			Color color;
+			if (amount < 1000)
+			{
+				height = amount / 100;
+				color = Color.RED;
+			}
+			else
+			{
+				height = Math.min(10, amount / 1000);
+				color = Color.GREEN;
+			}
+			g.setColor(color);
+			g.fillRect(iconX + RUNE_ICON, iconY + 1 + (10 - height), 2, height);
+		}
+	}
+
+	private static String formatRuneAmount(int amount)
+	{
+		return amount < 1000 ? String.valueOf(amount) : amount / 1000 + "K";
+	}
+
+	private static String runePouchTooltip(String[] names, int[] amounts)
+	{
+		if (names == null || names.length == 0)
+		{
+			return null;
+		}
+		StringBuilder sb = new StringBuilder("<html>");
+		for (int i = 0; i < names.length; i++)
+		{
+			int amount = amounts != null && i < amounts.length ? amounts[i] : 0;
+			sb.append(amount).append(' ').append(names[i]).append("<br>");
+		}
+		return sb.append("</html>").toString();
 	}
 
 	private JLabel itemSlot(int itemId)
@@ -1320,6 +1518,9 @@ class PartyPanel extends JPanel
 		applicant.setEquipment(update.getEquipment());
 		applicant.setInventory(update.getInventory());
 		applicant.setInventoryQuantities(update.getInventoryQuantities());
+		applicant.setRunePouch(update.getRunePouch());
+		applicant.setRunePouchAmounts(update.getRunePouchAmounts());
+		applicant.setRunePouchNames(update.getRunePouchNames());
 		applicant.setKillCount(update.getKillCount());
 		applicant.setHardModeKillCount(update.getHardModeKillCount());
 		applicant.setPbSeconds(update.getPbSeconds());

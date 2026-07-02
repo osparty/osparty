@@ -133,6 +133,19 @@ public interface OSPartyConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "learnerRaidToggle",
+		name = "Enable learner raid toggle",
+		description = "Show an \"I'm a learner\" checkbox when applying to a raid (ToA/ToB/CoX), so you can mark "
+			+ "yourself as a learner. Turn off to hide it during role/raid selection.",
+		position = 4,
+		section = GENERAL
+	)
+	default boolean learnerRaidToggle()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 		keyName = "pings",
 		name = "Map pings",
 		description = "Show party members' tile pings on screen, and let you ping tiles for the party to see.",
