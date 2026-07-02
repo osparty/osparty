@@ -122,6 +122,7 @@ class PartyPanel extends JPanel
 	/** Whether the local account is Discord-linked (gates the voice buttons), and the action to start linking. */
 	private final java.util.function.BooleanSupplier discordLinkedSupplier;
 	private final Runnable onAuthorizeDiscord;
+	private final java.util.function.LongSupplier accountHashSupplier;
 
 	/** Skills in the in-game skills-tab layout (row-major, 3 columns), total last. */
 	private static final Skill[] SKILL_LAYOUT = {
@@ -173,11 +174,13 @@ class PartyPanel extends JPanel
 		Supplier<String> friendsChatOwnerSupplier, Supplier<String> coxLayoutSupplier,
 		OSPartyConfig config, ConfigManager configManager, FavoritesService favoritesService,
 		net.osparty.BlockListService blockListService, SpriteManager spriteManager,
-		java.util.function.BooleanSupplier discordLinkedSupplier, Runnable onAuthorizeDiscord)
+		java.util.function.BooleanSupplier discordLinkedSupplier, Runnable onAuthorizeDiscord,
+		java.util.function.LongSupplier accountHashSupplier)
 	{
 		this.partyService = partyService;
 		this.discordLinkedSupplier = discordLinkedSupplier;
 		this.onAuthorizeDiscord = onAuthorizeDiscord;
+		this.accountHashSupplier = accountHashSupplier;
 		this.playerNameSupplier = playerNameSupplier;
 		this.hostApplicationHandler = hostApplicationHandler;
 		this.partyState = partyState;
@@ -1806,7 +1809,7 @@ class PartyPanel extends JPanel
 				return authorizeRow();
 			}
 			JButton join = voiceButton("Join voice", "Open the party's Discord voice channel");
-			join.addActionListener(e -> LinkBrowser.browse(url));
+			join.addActionListener(e -> joinVoice(party, url));
 			return wrapVoiceButton(join);
 		}
 		if (!host)
@@ -1859,6 +1862,23 @@ class PartyPanel extends JPanel
 			button.setIconTextGap(6);
 		}
 		return button;
+	}
+
+	/**
+	 * Ensure we have per-user access to the party's voice channel (covers joining/linking after it was
+	 * created), then open the invite. Falls back to just opening the invite if we can't request access.
+	 */
+	private void joinVoice(Party party, String url)
+	{
+		long accountHash = accountHashSupplier != null ? accountHashSupplier.getAsLong() : 0;
+		if (accountHash == 0 || accountHash == -1 || party == null)
+		{
+			LinkBrowser.browse(url);
+			return;
+		}
+		partyService.requestVoiceAccess(party.getId(), accountHash,
+			() -> SwingUtilities.invokeLater(() -> LinkBrowser.browse(url)),
+			err -> SwingUtilities.invokeLater(() -> LinkBrowser.browse(url)));
 	}
 
 	/** The "authorize first" button shown in place of create/join when the local account isn't linked. */

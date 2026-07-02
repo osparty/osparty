@@ -168,6 +168,12 @@ public class PartyApiClient implements PartyService
 	}
 
 	@Override
+	public void requestVoiceAccess(String partyId, long accountHash, Runnable onGranted, Consumer<Throwable> onError)
+	{
+		partySocket.requestVoiceAccess(partyId, accountHash, onGranted, onError);
+	}
+
+	@Override
 	public int onlineUsers()
 	{
 		return partySocket.onlineUsers();

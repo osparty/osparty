@@ -135,7 +135,7 @@ public class OSPartyPanel extends PluginPanel
 			hostApplicationHandler, partyState, itemManager, liveParty, runeWatchService, killcountService,
 			skillIconManager, worldSupplier, worldHopper, friendsChatOwnerSupplier, coxLayoutSupplier,
 			config, configManager, favoritesService, blockListService, spriteManager,
-			() -> discordLinked, this::startDiscordLink);
+			() -> discordLinked, this::startDiscordLink, accountHashSupplier);
 
 		// Host edit flow: the Party tab's "Edit party" button opens the create form in edit
 		// mode; saving returns to the Party (roster) tab.

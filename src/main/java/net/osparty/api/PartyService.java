@@ -92,6 +92,13 @@ public interface PartyService
 	 */
 	void kickVoiceMember(String partyId, String hostKey, long accountHash);
 
+	/**
+	 * Member action: request per-user access to the party's voice channel (for someone who joined/linked
+	 * after it was created), then open the invite. {@code onGranted} fires on success; {@code onError} if
+	 * refused or offline. Verified server-side by roster membership + Discord link.
+	 */
+	void requestVoiceAccess(String partyId, long accountHash, Runnable onGranted, Consumer<Throwable> onError);
+
 	/** @return the server-reported number of connected plugin users, or {@code -1} if not yet known. */
 	int onlineUsers();
 }

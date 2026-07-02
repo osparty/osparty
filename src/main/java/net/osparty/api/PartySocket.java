@@ -76,6 +76,8 @@ public class PartySocket extends WebSocketListener
 	// status polls keyed by accountHash.
 	private volatile LinkUrlPending pendingLinkUrl;
 	private final Map<Long, Consumer<DiscordLinkStatus>> pendingLinkStatus = new ConcurrentHashMap<>();
+	// Member requestVoiceAccess calls awaiting a voiceAccess ack (or matching error), keyed by party id.
+	private final Map<String, VoicePending> pendingVoiceAccess = new ConcurrentHashMap<>();
 	private volatile boolean started;
 	private volatile boolean closed;
 	private volatile boolean connected;
@@ -387,6 +389,22 @@ public class PartySocket extends WebSocketListener
 		send(gson.toJson(new KickVoiceFrame(id, key, accountHash)));
 	}
 
+	/**
+	 * Member self-service: ask the backend to grant our per-user access to the party's voice channel
+	 * before we open the invite (covers joining/linking after the channel was made). {@code onGranted}
+	 * fires on the ack; {@code onError} if the socket is down or access is refused.
+	 */
+	public void requestVoiceAccess(String id, long accountHash, Runnable onGranted, Consumer<Throwable> onError)
+	{
+		if (id == null || !connected)
+		{
+			onError.accept(new IOException("socket not connected"));
+			return;
+		}
+		pendingVoiceAccess.put(id, new VoicePending(ignored -> onGranted.run(), onError));
+		send(gson.toJson(new VoiceAccessFrame(id, accountHash)));
+	}
+
 	// --- WebSocket callbacks ---
 
 	@Override
@@ -469,6 +487,9 @@ public class PartySocket extends WebSocketListener
 				break;
 			case "discordLink":
 				completeLinkStatus(frame.accountHash, frame.id, frame.username);
+				break;
+			case "voiceAccess":
+				completeVoiceAccess(frame.id);
 				break;
 			case "error":
 				handleError(frame.id, frame.detail);
@@ -611,6 +632,12 @@ public class PartySocket extends WebSocketListener
 				voice.onError.accept(new IOException("voice channel failed: " + detail));
 				return;
 			}
+			VoicePending access = pendingVoiceAccess.remove(id);
+			if (access != null)
+			{
+				access.onError.accept(new IOException("voice access failed: " + detail));
+				return;
+			}
 		}
 		// Link errors (e.g. "linking disabled", "missing accountHash") carry no id; if a link URL
 		// request is in flight, route the failure to it rather than mistaking it for a host rejection.
@@ -660,6 +687,19 @@ public class PartySocket extends WebSocketListener
 			{
 				pending.onError.accept(new IOException("no link url"));
 			}
+		}
+	}
+
+	private void completeVoiceAccess(String id)
+	{
+		if (id == null)
+		{
+			return;
+		}
+		VoicePending pending = pendingVoiceAccess.remove(id);
+		if (pending != null)
+		{
+			pending.onUrl.accept(null);
 		}
 	}
 
@@ -917,6 +957,20 @@ public class PartySocket extends WebSocketListener
 		{
 			this.id = id;
 			this.key = key;
+			this.accountHash = accountHash;
+		}
+	}
+
+	/** Member self-service request for per-user access to the party's voice channel. */
+	private static final class VoiceAccessFrame
+	{
+		final String type = "requestVoiceAccess";
+		final String id;
+		final long accountHash;
+
+		VoiceAccessFrame(String id, long accountHash)
+		{
+			this.id = id;
 			this.accountHash = accountHash;
 		}
 	}
