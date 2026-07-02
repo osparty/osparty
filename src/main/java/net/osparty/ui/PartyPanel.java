@@ -123,6 +123,9 @@ class PartyPanel extends JPanel
 	private final java.util.function.BooleanSupplier discordLinkedSupplier;
 	private final Runnable onAuthorizeDiscord;
 	private final java.util.function.LongSupplier accountHashSupplier;
+	/** Favorite-star sprites (gold = favorited, grey = not), matching the Search panel; null until loaded. */
+	private BufferedImage memberStarImg;
+	private BufferedImage freeStarImg;
 
 	/** Skills in the in-game skills-tab layout (row-major, 3 columns), total last. */
 	private static final Skill[] SKILL_LAYOUT = {
@@ -190,6 +193,14 @@ class PartyPanel extends JPanel
 		this.killcounts = killcounts;
 		this.skillIcons = skillIcons;
 		this.spriteManager = spriteManager;
+		if (spriteManager != null)
+		{
+			// Same favorite-star sprites as the Search panel: 1131 = members (gold), 1130 = free (grey).
+			spriteManager.getSpriteAsync(1131, 0,
+				img -> { if (img != null) { memberStarImg = ImageUtil.resizeImage(img, 14, 14); } });
+			spriteManager.getSpriteAsync(1130, 0,
+				img -> { if (img != null) { freeStarImg = ImageUtil.resizeImage(img, 14, 14); } });
+		}
 		this.currentWorld = currentWorld;
 		this.worldHopper = worldHopper;
 		this.friendsChatOwnerSupplier = friendsChatOwnerSupplier;
@@ -790,15 +801,25 @@ class PartyPanel extends JPanel
 		star.setBorderPainted(false);
 		star.setMargin(new Insets(0, 2, 0, 2));
 		boolean fav = favoritesService.isFavorite(hash, rsn);
-		star.setIcon(fav ? StatusIcons.STAR_FILLED : StatusIcons.STAR_OUTLINE);
+		star.setIcon(favStarIcon(fav));
 		star.setToolTipText(fav ? "Remove " + rsn + " from Favorites" : "Add " + rsn + " to Favorites");
 		star.addActionListener(e -> {
 			favoritesService.toggle(hash, rsn);
 			boolean nowFav = favoritesService.isFavorite(hash, rsn);
-			star.setIcon(nowFav ? StatusIcons.STAR_FILLED : StatusIcons.STAR_OUTLINE);
+			star.setIcon(favStarIcon(nowFav));
 			star.setToolTipText(nowFav ? "Remove " + rsn + " from Favorites" : "Add " + rsn + " to Favorites");
 		});
 		return star;
+	}
+
+	/** The favorite star, using the Search panel's sprite icons when loaded, else the drawn fallback. */
+	private ImageIcon favStarIcon(boolean fav)
+	{
+		if (memberStarImg != null && freeStarImg != null)
+		{
+			return new ImageIcon(fav ? memberStarImg : freeStarImg);
+		}
+		return fav ? StatusIcons.STAR_FILLED : StatusIcons.STAR_OUTLINE;
 	}
 
 	/** A block-toggle button for any roster member (keyed by accountHash when known). */

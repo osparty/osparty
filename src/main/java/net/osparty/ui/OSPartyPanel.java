@@ -65,19 +65,17 @@ public class OSPartyPanel extends PluginPanel
 	private static final String GITHUB_URL = "https://github.com/iodrareg/osparty";
 	private static final String DISCORD_URL = "https://discord.gg/3xrf7wkb5F";
 
-	/** Discord glyph for the link button: full colour when linked, greyed out when not. */
-	private static final ImageIcon DISCORD_LINK_ICON = loadDiscordIcon(false);
-	private static final ImageIcon DISCORD_LINK_ICON_GREY = loadDiscordIcon(true);
+	/** Greyed-out Discord glyph shown next to "Link Discord" (the linked state is username-only, no icon). */
+	private static final ImageIcon DISCORD_LINK_ICON_GREY = loadDiscordIconGrey();
 
-	private static ImageIcon loadDiscordIcon(boolean grey)
+	private static ImageIcon loadDiscordIconGrey()
 	{
 		BufferedImage img = ImageUtil.loadImageResource(OSPartyPanel.class, "/net/osparty/icons/discord.png");
 		if (img == null)
 		{
 			return null;
 		}
-		BufferedImage sized = ImageUtil.resizeImage(img, 14, 14);
-		return new ImageIcon(grey ? ImageUtil.grayscaleImage(sized) : sized);
+		return new ImageIcon(ImageUtil.grayscaleImage(ImageUtil.resizeImage(img, 14, 14)));
 	}
 
 	private final PartyState partyState;
@@ -365,24 +363,35 @@ public class OSPartyPanel extends PluginPanel
 
 	private void applyLinkStatus(DiscordLinkStatus status)
 	{
-		boolean linked = status != null && status.isLinked();
+		// Not logged in: hide the button entirely — no username, no link prompt.
+		long hash = accountHashSupplier.getAsLong();
+		boolean loggedIn = hash != 0 && hash != -1;
+		discordLinkButton.setVisible(loggedIn);
+
+		boolean linked = loggedIn && status != null && status.isLinked();
 		discordLinkButton.setIconTextGap(4);
 		if (linked)
 		{
-			// Verified: full-colour Discord glyph + the linked username.
+			// Verified: just the username, no icon.
 			discordLinkButton.setText(status.getUsername());
-			discordLinkButton.setIcon(DISCORD_LINK_ICON);
+			discordLinkButton.setIcon(null);
 			discordLinkButton.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 			discordLinkButton.setToolTipText("Discord linked as " + status.getUsername()
 				+ " - right-click for more options");
 		}
 		else
 		{
-			// Not verified: greyed-out Discord glyph + "Link Discord".
+			// Logged in but not verified: greyed-out Discord glyph + "Link Discord".
 			discordLinkButton.setText("Link Discord");
 			discordLinkButton.setIcon(DISCORD_LINK_ICON_GREY);
 			discordLinkButton.setForeground(new Color(0x80, 0x80, 0x80));
 			discordLinkButton.setToolTipText("Link your Discord account (for private party voice channels)");
+		}
+		java.awt.Container parent = discordLinkButton.getParent();
+		if (parent != null)
+		{
+			parent.revalidate();
+			parent.repaint();
 		}
 		// Let the Party tab re-evaluate its voice buttons (authorize vs create/join) when link state flips.
 		if (linked != discordLinked)
