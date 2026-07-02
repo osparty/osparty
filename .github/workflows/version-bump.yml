@@ -4,9 +4,10 @@ name: Bump version and tag
 # (runelite-plugin.properties and OSPartyPanel.java), commit the bump, and tag that
 # commit vX.Y.Z — so every state of main has a matching tag.
 #
-# Loop safety: the bump is committed/pushed with the default GITHUB_TOKEN, and pushes
-# made with GITHUB_TOKEN do not trigger further workflow runs. The "[skip ci]" marker and
-# the `if` guard below are belt-and-braces on top of that.
+# Loop safety: the bump is pushed with a PAT (RELEASE_TOKEN), which — unlike the default
+# GITHUB_TOKEN — DOES re-trigger workflows. The "[skip ci]" marker in the bump commit is the
+# real guard: GitHub skips a run when the head commit message contains it. The `if` below is
+# belt-and-braces.
 
 on:
   push:
@@ -17,16 +18,16 @@ permissions:
 
 jobs:
   bump:
-    if: >-
-      github.actor != 'github-actions[bot]'
-      && !contains(github.event.head_commit.message, '[skip ci]')
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Full history + persisted GITHUB_TOKEN credentials so we can push back.
+          # Full history, and check out with the PAT so the push back to main can bypass
+          # the branch ruleset (the PAT acts as a repo admin on the bypass list).
           fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Bump patch version
         id: bump
