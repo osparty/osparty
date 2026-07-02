@@ -85,6 +85,9 @@ public interface PartyService
 	/** Look up whether {@code accountHash} is linked to a Discord account; result may be null if offline. */
 	void getDiscordLink(long accountHash, Consumer<DiscordLinkStatus> onResult);
 
+	/** Remove the Discord binding for {@code accountHash} server-side. Fire-and-forget. */
+	void unlinkDiscord(long accountHash);
+
 	/**
 	 * Host action: disconnect the kicked member from the party's Discord voice channel. Fire-and-forget;
 	 * the backend no-ops unless the member is linked and currently in that channel. {@code hostKey}

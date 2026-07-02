@@ -379,6 +379,16 @@ public class PartySocket extends WebSocketListener
 		send(gson.toJson(new AccountHashFrame("getDiscordLink", accountHash)));
 	}
 
+	/** Remove the Discord binding for {@code accountHash} server-side. Fire-and-forget. */
+	public void unlinkDiscord(long accountHash)
+	{
+		if (!connected)
+		{
+			return;
+		}
+		send(gson.toJson(new AccountHashFrame("unlinkDiscord", accountHash)));
+	}
+
 	/** Host action: ask the backend bot to disconnect a kicked member from the party's voice channel. */
 	public void kickVoiceMember(String id, String key, long accountHash)
 	{

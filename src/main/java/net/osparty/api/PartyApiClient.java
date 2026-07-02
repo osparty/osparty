@@ -162,6 +162,12 @@ public class PartyApiClient implements PartyService
 	}
 
 	@Override
+	public void unlinkDiscord(long accountHash)
+	{
+		partySocket.unlinkDiscord(accountHash);
+	}
+
+	@Override
 	public void kickVoiceMember(String partyId, String hostKey, long accountHash)
 	{
 		partySocket.kickVoiceMember(partyId, hostKey, accountHash);

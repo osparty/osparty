@@ -16,6 +16,8 @@ import java.awt.Color;
 import java.awt.Cursor;
 import java.awt.FlowLayout;
 import java.awt.GridLayout;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.util.Set;
 import java.util.function.IntConsumer;
@@ -31,6 +33,8 @@ import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.Timer;
 import javax.swing.JPanel;
+import javax.swing.JMenuItem;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
@@ -302,6 +306,49 @@ public class OSPartyPanel extends PluginPanel
 		discordLinkButton.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		applyLinkStatus(null);
 		discordLinkButton.addActionListener(e -> startDiscordLink());
+		// Right-click (when linked) offers Relink / Unlink.
+		discordLinkButton.addMouseListener(new MouseAdapter()
+		{
+			@Override
+			public void mousePressed(MouseEvent e)
+			{
+				maybeShowLinkMenu(e);
+			}
+
+			@Override
+			public void mouseReleased(MouseEvent e)
+			{
+				maybeShowLinkMenu(e);
+			}
+		});
+	}
+
+	private void maybeShowLinkMenu(MouseEvent e)
+	{
+		if (!e.isPopupTrigger() || !discordLinked)
+		{
+			return;
+		}
+		JPopupMenu menu = new JPopupMenu();
+		JMenuItem relink = new JMenuItem("Relink");
+		relink.addActionListener(a -> startDiscordLink());
+		JMenuItem unlink = new JMenuItem("Unlink");
+		unlink.addActionListener(a -> unlinkDiscord());
+		menu.add(relink);
+		menu.add(unlink);
+		menu.show(discordLinkButton, e.getX(), e.getY());
+	}
+
+	/** Remove the Discord binding server-side and reset the local UI state. */
+	private void unlinkDiscord()
+	{
+		long hash = accountHashSupplier.getAsLong();
+		if (hash == 0 || hash == -1)
+		{
+			return;
+		}
+		partyService.unlinkDiscord(hash);
+		applyLinkStatus(null); // reset the button (and re-gate the Party tab's voice buttons)
 	}
 
 	/** Ask the server whether the current account is linked and reflect it on the button. */
@@ -326,7 +373,8 @@ public class OSPartyPanel extends PluginPanel
 			discordLinkButton.setText(status.getUsername());
 			discordLinkButton.setIcon(DISCORD_LINK_ICON);
 			discordLinkButton.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-			discordLinkButton.setToolTipText("Discord linked as " + status.getUsername() + " - click to relink");
+			discordLinkButton.setToolTipText("Discord linked as " + status.getUsername()
+				+ " - right-click for more options");
 		}
 		else
 		{
