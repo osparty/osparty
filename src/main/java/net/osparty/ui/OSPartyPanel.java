@@ -69,6 +69,8 @@ public class OSPartyPanel extends PluginPanel
 	private Timer linkPollTimer;
 	/** Last accountHash we queried link status for, so we only re-query when the logged-in account changes. */
 	private long lastLinkQueryHash = Long.MIN_VALUE;
+	/** Whether the local account is currently Discord-linked; gates the Party tab's voice buttons. */
+	private volatile boolean discordLinked;
 	private final SearchPanel searchPanel;
 	private final FriendsPanel favoritesPanel;
 	private final CreatePanel createPanel;
@@ -132,7 +134,8 @@ public class OSPartyPanel extends PluginPanel
 		partyPanel = new PartyPanel(partyService, playerNameSupplier,
 			hostApplicationHandler, partyState, itemManager, liveParty, runeWatchService, killcountService,
 			skillIconManager, worldSupplier, worldHopper, friendsChatOwnerSupplier, coxLayoutSupplier,
-			config, configManager, favoritesService, blockListService, spriteManager);
+			config, configManager, favoritesService, blockListService, spriteManager,
+			() -> discordLinked, this::startDiscordLink);
 
 		// Host edit flow: the Party tab's "Edit party" button opens the create form in edit
 		// mode; saving returns to the Party (roster) tab.
@@ -288,15 +291,25 @@ public class OSPartyPanel extends PluginPanel
 
 	private void applyLinkStatus(DiscordLinkStatus status)
 	{
-		if (status != null && status.isLinked())
+		boolean linked = status != null && status.isLinked();
+		if (linked)
 		{
-			discordLinkButton.setText("✓ " + status.getUsername());
+			discordLinkButton.setText(status.getUsername());
+			discordLinkButton.setIcon(StatusIcons.CHECK);
+			discordLinkButton.setIconTextGap(4);
 			discordLinkButton.setToolTipText("Discord linked as " + status.getUsername() + " - click to relink");
 		}
 		else
 		{
 			discordLinkButton.setText("Link Discord");
+			discordLinkButton.setIcon(null);
 			discordLinkButton.setToolTipText("Link your Discord account (for private party voice channels)");
+		}
+		// Let the Party tab re-evaluate its voice buttons (authorize vs create/join) when link state flips.
+		if (linked != discordLinked)
+		{
+			discordLinked = linked;
+			partyPanel.refresh();
 		}
 	}
 

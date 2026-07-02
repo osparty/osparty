@@ -377,6 +377,16 @@ public class PartySocket extends WebSocketListener
 		send(gson.toJson(new AccountHashFrame("getDiscordLink", accountHash)));
 	}
 
+	/** Host action: ask the backend bot to disconnect a kicked member from the party's voice channel. */
+	public void kickVoiceMember(String id, String key, long accountHash)
+	{
+		if (id == null || !connected)
+		{
+			return;
+		}
+		send(gson.toJson(new KickVoiceFrame(id, key, accountHash)));
+	}
+
 	// --- WebSocket callbacks ---
 
 	@Override
@@ -891,6 +901,22 @@ public class PartySocket extends WebSocketListener
 		AccountHashFrame(String type, long accountHash)
 		{
 			this.type = type;
+			this.accountHash = accountHash;
+		}
+	}
+
+	/** Host-authorised kick of a member from the party's voice channel, by their accountHash. */
+	private static final class KickVoiceFrame
+	{
+		final String type = "kickVoiceMember";
+		final String id;
+		final String key;
+		final long accountHash;
+
+		KickVoiceFrame(String id, String key, long accountHash)
+		{
+			this.id = id;
+			this.key = key;
 			this.accountHash = accountHash;
 		}
 	}

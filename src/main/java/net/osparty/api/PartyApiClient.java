@@ -162,6 +162,12 @@ public class PartyApiClient implements PartyService
 	}
 
 	@Override
+	public void kickVoiceMember(String partyId, String hostKey, long accountHash)
+	{
+		partySocket.kickVoiceMember(partyId, hostKey, accountHash);
+	}
+
+	@Override
 	public int onlineUsers()
 	{
 		return partySocket.onlineUsers();

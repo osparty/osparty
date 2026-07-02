@@ -119,6 +119,9 @@ class PartyPanel extends JPanel
 	private final ConfigManager configManager;
 	private final FavoritesService favoritesService;
 	private final net.osparty.BlockListService blockListService;
+	/** Whether the local account is Discord-linked (gates the voice buttons), and the action to start linking. */
+	private final java.util.function.BooleanSupplier discordLinkedSupplier;
+	private final Runnable onAuthorizeDiscord;
 
 	/** Skills in the in-game skills-tab layout (row-major, 3 columns), total last. */
 	private static final Skill[] SKILL_LAYOUT = {
@@ -169,9 +172,12 @@ class PartyPanel extends JPanel
 		SkillIconManager skillIcons, IntSupplier currentWorld, IntConsumer worldHopper,
 		Supplier<String> friendsChatOwnerSupplier, Supplier<String> coxLayoutSupplier,
 		OSPartyConfig config, ConfigManager configManager, FavoritesService favoritesService,
-		net.osparty.BlockListService blockListService, SpriteManager spriteManager)
+		net.osparty.BlockListService blockListService, SpriteManager spriteManager,
+		java.util.function.BooleanSupplier discordLinkedSupplier, Runnable onAuthorizeDiscord)
 	{
 		this.partyService = partyService;
+		this.discordLinkedSupplier = discordLinkedSupplier;
+		this.onAuthorizeDiscord = onAuthorizeDiscord;
 		this.playerNameSupplier = playerNameSupplier;
 		this.hostApplicationHandler = hostApplicationHandler;
 		this.partyState = partyState;
@@ -1581,6 +1587,17 @@ class PartyPanel extends JPanel
 	private void kick(Activity activity, RosterMember member)
 	{
 		liveParty.kick(member.getMemberId());
+		// If this party has a Discord voice channel, also boot the kicked member out of it. The backend
+		// no-ops unless the member is Discord-linked and currently sitting in that channel.
+		Party party = partyState.getCurrentParty();
+		if (partyState.isHost() && party != null && liveParty.discordInviteUrl() != null)
+		{
+			long accountHash = liveParty.accountHashForMember(member.getMemberId());
+			if (accountHash != 0)
+			{
+				partyService.kickVoiceMember(party.getId(), partyState.getHostKey(), accountHash);
+			}
+		}
 		expanded.remove(member.getMemberId());
 		detailTab.remove(member.getMemberId());
 		setStatus("Kicked " + member.getName() + ".");
@@ -1777,9 +1794,17 @@ class PartyPanel extends JPanel
 	 */
 	private JComponent buildVoiceRow(Party party, boolean host)
 	{
+		boolean linked = discordLinkedSupplier != null && discordLinkedSupplier.getAsBoolean();
 		String url = liveParty.discordInviteUrl();
+
+		// Voice requires a linked Discord account. Rather than hide the control, show an "Authorize with
+		// Discord" button that runs the OAuth flow first; once linked the panel refreshes to create/join.
 		if (url != null)
 		{
+			if (!linked)
+			{
+				return authorizeRow();
+			}
 			JButton join = voiceButton("Join voice", "Open the party's Discord voice channel");
 			join.addActionListener(e -> LinkBrowser.browse(url));
 			return wrapVoiceButton(join);
@@ -1787,6 +1812,10 @@ class PartyPanel extends JPanel
 		if (!host)
 		{
 			return null; // members wait for the host to create the channel
+		}
+		if (!linked)
+		{
+			return authorizeRow();
 		}
 		JButton create = voiceButton("Create voice channel", "Create a Discord voice channel for this party");
 		create.addActionListener(e -> {
@@ -1830,6 +1859,21 @@ class PartyPanel extends JPanel
 			button.setIconTextGap(6);
 		}
 		return button;
+	}
+
+	/** The "authorize first" button shown in place of create/join when the local account isn't linked. */
+	private JComponent authorizeRow()
+	{
+		JButton authorize = voiceButton("Authorize with Discord",
+			"Link your Discord account to create or join party voice channels");
+		authorize.addActionListener(e ->
+		{
+			if (onAuthorizeDiscord != null)
+			{
+				onAuthorizeDiscord.run();
+			}
+		});
+		return wrapVoiceButton(authorize);
 	}
 
 	/** Full-width in a capped row (BorderLayout.CENTER stretches the button), matching "Start ready check". */

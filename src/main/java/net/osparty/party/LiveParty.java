@@ -978,6 +978,12 @@ public class LiveParty
 		return state;
 	}
 
+	/** Public accessor for a member's last self-reported accountHash (0 when unknown). */
+	public long accountHashForMember(long memberId)
+	{
+		return accountHashFor(memberId);
+	}
+
 	/** The accountHash last self-reported by {@code memberId}, or {@code 0} when unknown. */
 	private long accountHashFor(long memberId)
 	{

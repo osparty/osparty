@@ -85,6 +85,13 @@ public interface PartyService
 	/** Look up whether {@code accountHash} is linked to a Discord account; result may be null if offline. */
 	void getDiscordLink(long accountHash, Consumer<DiscordLinkStatus> onResult);
 
+	/**
+	 * Host action: disconnect the kicked member from the party's Discord voice channel. Fire-and-forget;
+	 * the backend no-ops unless the member is linked and currently in that channel. {@code hostKey}
+	 * authorises it.
+	 */
+	void kickVoiceMember(String partyId, String hostKey, long accountHash);
+
 	/** @return the server-reported number of connected plugin users, or {@code -1} if not yet known. */
 	int onlineUsers();
 }
