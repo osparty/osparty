@@ -227,6 +227,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private BlockListService blockListService;
 
 	@Inject
+	private net.runelite.client.Notifier notifier;
+
+	@Inject
 	private net.osparty.store.PartyStore partyStore;
 
 	@Inject
@@ -865,6 +868,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Override
 	public void announceApplicant(Applicant applicant, Activity activity)
 	{
+		if (applicant.isBlocked())
+		{
+			// Persistent in-game notification for a blocked applicant, since the chat line scrolls away.
+			notifier.notify(applicant.getName() + " is on your block list — applied to your "
+				+ activity.getDisplayName() + " party.");
+		}
+
 		gameMessage(applicant.getName() + " applied to your " + activity.getDisplayName()
 			+ " party - " + applicantSummary(applicant, activity) + ". Accept or decline in the side panel.");
 
@@ -878,6 +888,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Override
 	public void announceAutoDeclinedBlocked(Applicant applicant, Activity activity)
 	{
+		notifier.notify("Auto-declined " + applicant.getName() + " — on your block list ("
+			+ activity.getDisplayName() + ").");
 		gameMessage("Auto-declined " + applicant.getName() + " - on your block list.");
 	}
 
@@ -888,6 +900,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	 */
 	private String applicantSummary(Applicant applicant, Activity activity)
 	{
+		// Blocked applicants: surface only the block status, not their stats. The full alert goes
+		// out as an in-game notification (see announceApplicant), which doesn't scroll away.
+		if (applicant.isBlocked())
+		{
+			return "on your block list";
+		}
+
 		java.util.List<String> parts = new java.util.ArrayList<>();
 		parts.add("cb " + applicant.getCombatLevel());
 
@@ -923,11 +942,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		if (runeWatchService.get(applicant.getName()) != null)
 		{
 			parts.add("(!) RuneWatch listed");
-		}
-
-		if (applicant.isBlocked())
-		{
-			parts.add("(!) on your block list");
 		}
 
 		return String.join(", ", parts);

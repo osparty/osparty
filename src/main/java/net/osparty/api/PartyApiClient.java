@@ -150,6 +150,18 @@ public class PartyApiClient implements PartyService
 	}
 
 	@Override
+	public void startDiscordLink(long accountHash, Consumer<String> onUrl, Consumer<Throwable> onError)
+	{
+		partySocket.startDiscordLink(accountHash, onUrl, onError);
+	}
+
+	@Override
+	public void getDiscordLink(long accountHash, Consumer<DiscordLinkStatus> onResult)
+	{
+		partySocket.getDiscordLink(accountHash, onResult);
+	}
+
+	@Override
 	public int onlineUsers()
 	{
 		return partySocket.onlineUsers();

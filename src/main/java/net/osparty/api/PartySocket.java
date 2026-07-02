@@ -72,6 +72,10 @@ public class PartySocket extends WebSocketListener
 	private final Map<String, Consumer<Party>> pendingByHost = new ConcurrentHashMap<>();
 	// Host createVoiceChannel requests awaiting a voiceChannel reply (or a matching error), keyed by party id.
 	private final Map<String, VoicePending> pendingVoiceChannel = new ConcurrentHashMap<>();
+	// Discord account-link: the in-flight startDiscordLink URL request (one at a time), and getDiscordLink
+	// status polls keyed by accountHash.
+	private volatile LinkUrlPending pendingLinkUrl;
+	private final Map<Long, Consumer<DiscordLinkStatus>> pendingLinkStatus = new ConcurrentHashMap<>();
 	private volatile boolean started;
 	private volatile boolean closed;
 	private volatile boolean connected;
@@ -344,6 +348,35 @@ public class PartySocket extends WebSocketListener
 		send(gson.toJson(new VoiceFrame(id, key)));
 	}
 
+	// --- Discord account linking ---
+
+	/**
+	 * Begin an OAuth2 Discord link for {@code accountHash}: {@code onUrl} receives the authorize URL to
+	 * open in a browser, {@code onError} fires if the socket is down or linking is disabled server-side.
+	 */
+	public void startDiscordLink(long accountHash, Consumer<String> onUrl, Consumer<Throwable> onError)
+	{
+		if (!connected)
+		{
+			onError.accept(new IOException("socket not connected"));
+			return;
+		}
+		pendingLinkUrl = new LinkUrlPending(onUrl, onError);
+		send(gson.toJson(new AccountHashFrame("startDiscordLink", accountHash)));
+	}
+
+	/** Look up whether {@code accountHash} is linked; {@code onResult} gets the status, or null if offline. */
+	public void getDiscordLink(long accountHash, Consumer<DiscordLinkStatus> onResult)
+	{
+		if (!connected)
+		{
+			onResult.accept(null);
+			return;
+		}
+		pendingLinkStatus.put(accountHash, onResult);
+		send(gson.toJson(new AccountHashFrame("getDiscordLink", accountHash)));
+	}
+
 	// --- WebSocket callbacks ---
 
 	@Override
@@ -420,6 +453,12 @@ public class PartySocket extends WebSocketListener
 				break;
 			case "voiceChannel":
 				completeVoiceChannel(frame.id, frame.url);
+				break;
+			case "discordLinkUrl":
+				completeLinkUrl(frame.url);
+				break;
+			case "discordLink":
+				completeLinkStatus(frame.accountHash, frame.id, frame.username);
 				break;
 			case "error":
 				handleError(frame.id, frame.detail);
@@ -563,6 +602,15 @@ public class PartySocket extends WebSocketListener
 				return;
 			}
 		}
+		// Link errors (e.g. "linking disabled", "missing accountHash") carry no id; if a link URL
+		// request is in flight, route the failure to it rather than mistaking it for a host rejection.
+		LinkUrlPending link = pendingLinkUrl;
+		if (link != null)
+		{
+			pendingLinkUrl = null;
+			link.onError.accept(new IOException("link failed: " + detail));
+			return;
+		}
 		HostPending pending = pendingHost;
 		if (pending != null)
 		{
@@ -585,6 +633,36 @@ public class PartySocket extends WebSocketListener
 		if (pending != null)
 		{
 			pending.onUrl.accept(url);
+		}
+	}
+
+	private void completeLinkUrl(String url)
+	{
+		LinkUrlPending pending = pendingLinkUrl;
+		pendingLinkUrl = null;
+		if (pending != null)
+		{
+			if (url != null)
+			{
+				pending.onUrl.accept(url);
+			}
+			else
+			{
+				pending.onError.accept(new IOException("no link url"));
+			}
+		}
+	}
+
+	private void completeLinkStatus(Long accountHash, String discordId, String username)
+	{
+		if (accountHash == null)
+		{
+			return;
+		}
+		Consumer<DiscordLinkStatus> callback = pendingLinkStatus.remove(accountHash);
+		if (callback != null)
+		{
+			callback.accept(new DiscordLinkStatus(discordId != null, discordId, username));
 		}
 	}
 
@@ -708,8 +786,11 @@ public class PartySocket extends WebSocketListener
 		Party party;
 		String id;
 		String detail;
-		// "voiceChannel" frame: the Discord invite URL for the hosted party's provisioned channel.
+		// "voiceChannel"/"discordLinkUrl" frame: an invite or OAuth authorize URL.
 		String url;
+		// "discordLink" frame: the linked Discord username + the echoed accountHash the status is for.
+		String username;
+		Long accountHash;
 		// "batch" frame: a tick's worth of changes, applied together.
 		Party[] created;
 		PartyDelta[] updated;
@@ -795,6 +876,31 @@ public class PartySocket extends WebSocketListener
 		final Consumer<Throwable> onError;
 
 		VoicePending(Consumer<String> onUrl, Consumer<Throwable> onError)
+		{
+			this.onUrl = onUrl;
+			this.onError = onError;
+		}
+	}
+
+	/** Outbound frame carrying just an accountHash: startDiscordLink / getDiscordLink. */
+	private static final class AccountHashFrame
+	{
+		final String type;
+		final long accountHash;
+
+		AccountHashFrame(String type, long accountHash)
+		{
+			this.type = type;
+			this.accountHash = accountHash;
+		}
+	}
+
+	private static final class LinkUrlPending
+	{
+		final Consumer<String> onUrl;
+		final Consumer<Throwable> onError;
+
+		LinkUrlPending(Consumer<String> onUrl, Consumer<Throwable> onError)
 		{
 			this.onUrl = onUrl;
 			this.onError = onError;

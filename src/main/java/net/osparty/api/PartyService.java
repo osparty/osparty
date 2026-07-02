@@ -74,6 +74,17 @@ public interface PartyService
 	 */
 	void createVoiceChannel(String partyId, String hostKey, Consumer<String> onUrl, Consumer<Throwable> onError);
 
+	/**
+	 * Begin an OAuth2 Discord account link for {@code accountHash}. {@code onUrl} receives the Discord
+	 * authorize URL to open in a browser; {@code onError} fires if the socket is down or linking is
+	 * disabled server-side. The binding is one-time and stored server-side; poll {@link #getDiscordLink}
+	 * to learn when it completes.
+	 */
+	void startDiscordLink(long accountHash, Consumer<String> onUrl, Consumer<Throwable> onError);
+
+	/** Look up whether {@code accountHash} is linked to a Discord account; result may be null if offline. */
+	void getDiscordLink(long accountHash, Consumer<DiscordLinkStatus> onResult);
+
 	/** @return the server-reported number of connected plugin users, or {@code -1} if not yet known. */
 	int onlineUsers();
 }

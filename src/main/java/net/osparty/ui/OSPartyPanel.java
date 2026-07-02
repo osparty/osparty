@@ -5,6 +5,7 @@ import net.osparty.FavoritesService;
 import net.osparty.HostApplicationHandler;
 import net.osparty.KillcountService;
 import net.osparty.OSPartyConfig;
+import net.osparty.api.DiscordLinkStatus;
 import net.osparty.api.PartyService;
 import net.osparty.model.Party;
 import net.osparty.party.LiveParty;
@@ -30,6 +31,7 @@ import javax.swing.Timer;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
 import net.osparty.WorldPinger;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.game.ItemManager;
@@ -60,8 +62,13 @@ public class OSPartyPanel extends PluginPanel
 	private final PartyState partyState;
 	private final LiveParty liveParty;
 	private final PartyService partyService;
+	private final LongSupplier accountHashSupplier;
 	private final JLabel activeUsersLabel = new JLabel();
+	private final JButton discordLinkButton = new JButton();
 	private Timer presenceTimer;
+	private Timer linkPollTimer;
+	/** Last accountHash we queried link status for, so we only re-query when the logged-in account changes. */
+	private long lastLinkQueryHash = Long.MIN_VALUE;
 	private final SearchPanel searchPanel;
 	private final FriendsPanel favoritesPanel;
 	private final CreatePanel createPanel;
@@ -93,6 +100,7 @@ public class OSPartyPanel extends PluginPanel
 
 		this.liveParty = liveParty;
 		this.partyService = partyService;
+		this.accountHashSupplier = accountHashSupplier;
 		this.partyState = new PartyState(configManager);
 
 		setLayout(new BorderLayout());
@@ -209,10 +217,13 @@ public class OSPartyPanel extends PluginPanel
 		}
 		discord.addActionListener(e -> LinkBrowser.browse(DISCORD_URL));
 
+		configureDiscordLinkButton();
+
 		JPanel links = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
 		links.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		links.add(github);
 		links.add(discord);
+		links.add(discordLinkButton);
 		footer.add(links, BorderLayout.WEST);
 
 		activeUsersLabel.setHorizontalAlignment(SwingConstants.CENTER);
@@ -240,6 +251,111 @@ public class OSPartyPanel extends PluginPanel
 	{
 		int online = partyService.onlineUsers();
 		activeUsersLabel.setText(online < 0 ? "" : online + " online");
+
+		// Refresh the Discord link button only when the logged-in account changes (e.g. after login),
+		// so we're not firing a lookup every timer tick.
+		long hash = accountHashSupplier.getAsLong();
+		if (hash != lastLinkQueryHash)
+		{
+			lastLinkQueryHash = hash;
+			refreshDiscordLinkStatus();
+		}
+	}
+
+	private void configureDiscordLinkButton()
+	{
+		discordLinkButton.setFocusPainted(false);
+		discordLinkButton.setBorder(BorderFactory.createEmptyBorder());
+		discordLinkButton.setContentAreaFilled(false);
+		discordLinkButton.setCursor(new Cursor(Cursor.HAND_CURSOR));
+		discordLinkButton.setFont(FontManager.getRunescapeSmallFont());
+		discordLinkButton.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		applyLinkStatus(null);
+		discordLinkButton.addActionListener(e -> startDiscordLink());
+	}
+
+	/** Ask the server whether the current account is linked and reflect it on the button. */
+	private void refreshDiscordLinkStatus()
+	{
+		long hash = accountHashSupplier.getAsLong();
+		if (hash == 0 || hash == -1)
+		{
+			applyLinkStatus(null);
+			return;
+		}
+		partyService.getDiscordLink(hash, status -> SwingUtilities.invokeLater(() -> applyLinkStatus(status)));
+	}
+
+	private void applyLinkStatus(DiscordLinkStatus status)
+	{
+		if (status != null && status.isLinked())
+		{
+			discordLinkButton.setText("✓ " + status.getUsername());
+			discordLinkButton.setToolTipText("Discord linked as " + status.getUsername() + " - click to relink");
+		}
+		else
+		{
+			discordLinkButton.setText("Link Discord");
+			discordLinkButton.setToolTipText("Link your Discord account (for private party voice channels)");
+		}
+	}
+
+	private void startDiscordLink()
+	{
+		long hash = accountHashSupplier.getAsLong();
+		if (hash == 0 || hash == -1)
+		{
+			discordLinkButton.setToolTipText("Log into your OSRS account first, then link Discord.");
+			return;
+		}
+		discordLinkButton.setEnabled(false);
+		discordLinkButton.setText("Linking…");
+		partyService.startDiscordLink(hash,
+			url -> SwingUtilities.invokeLater(() ->
+			{
+				LinkBrowser.browse(url);
+				discordLinkButton.setEnabled(true);
+				startLinkPolling(hash);
+			}),
+			err -> SwingUtilities.invokeLater(() ->
+			{
+				discordLinkButton.setEnabled(true);
+				applyLinkStatus(null);
+				discordLinkButton.setToolTipText("Couldn't start linking (server unreachable or linking disabled).");
+			}));
+	}
+
+	/** After opening the browser, poll link status until it flips to linked (or we give up after ~2 min). */
+	private void startLinkPolling(long hash)
+	{
+		if (linkPollTimer != null)
+		{
+			linkPollTimer.stop();
+		}
+		discordLinkButton.setText("Waiting for Discord…");
+		final int[] ticks = {0};
+		linkPollTimer = new Timer(2000, e ->
+		{
+			ticks[0]++;
+			partyService.getDiscordLink(hash, status -> SwingUtilities.invokeLater(() ->
+			{
+				if (status != null && status.isLinked())
+				{
+					if (linkPollTimer != null)
+					{
+						linkPollTimer.stop();
+					}
+					applyLinkStatus(status);
+				}
+			}));
+			if (ticks[0] >= 60)
+			{
+				linkPollTimer.stop();
+				refreshDiscordLinkStatus(); // settle back to whatever the current state is
+			}
+		});
+		linkPollTimer.setRepeats(true);
+		linkPollTimer.start();
 	}
 
 	/** Release the live party-list socket (and timers). Call when the plugin unloads. */
@@ -248,6 +364,10 @@ public class OSPartyPanel extends PluginPanel
 		if (presenceTimer != null)
 		{
 			presenceTimer.stop();
+		}
+		if (linkPollTimer != null)
+		{
+			linkPollTimer.stop();
 		}
 		searchPanel.dispose();
 	}
