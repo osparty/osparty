@@ -18,6 +18,12 @@ dependencies {
     compileOnly 'org.projectlombok:lombok:1.18.46'
     annotationProcessor 'org.projectlombok:lombok:1.18.46'
 
+    // Local persistence (favourites / block list, and party history later). H2 is a
+    // pure-Java embedded database — no native code — so it is Plugin Hub-safe. All
+    // access goes through net.osparty.store.PartyStore, so this can be swapped for a
+    // flat-file backend if the Plugin Hub declines the dependency.
+    implementation 'com.h2database:h2:2.2.224'
+
     testImplementation 'junit:junit:4.13.2'
     testImplementation group: 'net.runelite', name: 'client', version: runeLiteVersion
     testImplementation group: 'net.runelite', name: 'jshell', version: runeLiteVersion

@@ -20,6 +20,8 @@ import net.runelite.client.party.messages.PartyMemberMessage;
 public class PlayerUpdate extends PartyMemberMessage
 {
 	private String name;
+	/** The member's stable accountHash; {@code 0} when unknown (older client). Used for block/favourite matching. */
+	private long accountHash;
 	private int combatLevel;
 
 	/** In {@link net.osparty.model.Applicant.EquipmentSlot} order; {@code <= 0} = empty. */

@@ -1,119 +1,75 @@
 package net.osparty;
 
-import net.osparty.model.Party;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
 import javax.inject.Inject;
 import javax.inject.Singleton;
+import net.osparty.model.Party;
+import net.osparty.store.FlagKind;
+import net.osparty.store.PartyStore;
+import net.osparty.store.PlayerFlag;
 import net.runelite.client.config.ConfigManager;
 
 /**
- * Locally-stored list of "favourite" player names. A party is flagged as having
- * a favourite when any member (host or joined) is in this set. Stored under the
- * OSParty config group so it survives restarts alongside the regular filter prefs.
+ * Locally-stored list of "favourite" players. A party is flagged as having a
+ * favourite when its host (or any listed member) is favourited. Entries are keyed by
+ * accountHash when known (so they survive name changes) and persisted in
+ * {@link PartyStore}; see {@link PlayerFlagService} for the shared logic.
+ *
+ * <p>On first run the legacy name-only favourites (stored as a CSV under the OSParty
+ * config group) are imported into the store and the old key is cleared.
  */
 @Singleton
-public class FavoritesService
+public class FavoritesService extends PlayerFlagService
 {
-	private static final String KEY = "localFavorites";
-
-	private final ConfigManager configManager;
-	private Set<String> favorites;
+	/** Legacy config key holding the pre-database, name-only favourites CSV. */
+	private static final String LEGACY_KEY = "localFavorites";
 
 	@Inject
-	FavoritesService(ConfigManager configManager)
+	FavoritesService(PartyStore store, ConfigManager configManager)
 	{
-		this.configManager = configManager;
-		load();
+		super(store, FlagKind.FAVORITE);
+		migrateLegacy(configManager);
 	}
 
-	/** True when the supplied name is in the favourites list (case / nbsp-insensitive). */
-	public boolean isFavorite(String playerName)
+	private void migrateLegacy(ConfigManager configManager)
 	{
-		return playerName != null && favorites.contains(normalize(playerName));
-	}
-
-	/**
-	 * True when the host <em>or</em> any listed member of {@code party} is a favourite.
-	 * Always false when the party has no host.
-	 */
-	public boolean hasAnyFavorite(Party party)
-	{
-		if (party == null)
-		{
-			return false;
-		}
-		if (isFavorite(party.getHost()))
-		{
-			return true;
-		}
-		List<String> members = party.getMembers();
-		if (members != null)
-		{
-			for (String member : members)
-			{
-				if (isFavorite(member))
-				{
-					return true;
-				}
-			}
-		}
-		return false;
-	}
-
-	/** Add {@code playerName} if absent, remove if present. */
-	public void toggle(String playerName)
-	{
-		if (playerName == null)
+		String saved = configManager.getConfiguration(OSPartyConfig.GROUP, LEGACY_KEY);
+		if (saved == null || saved.isEmpty())
 		{
 			return;
 		}
-		String key = normalize(playerName);
-		if (favorites.contains(key))
+		for (String name : saved.split(","))
 		{
-			favorites.remove(key);
-		}
-		else
-		{
-			favorites.add(key);
-		}
-		save();
-	}
-
-	/** Read-only view of all saved favourite names (normalised). */
-	public Set<String> getAll()
-	{
-		return Collections.unmodifiableSet(favorites);
-	}
-
-	private void load()
-	{
-		favorites = new HashSet<>();
-		String saved = configManager.getConfiguration(OSPartyConfig.GROUP, KEY);
-		if (saved != null && !saved.isEmpty())
-		{
-			for (String name : saved.split(","))
+			String trimmed = name.trim();
+			if (!trimmed.isEmpty())
 			{
-				String trimmed = name.trim();
-				if (!trimmed.isEmpty())
-				{
-					favorites.add(trimmed);
-				}
+				// Hash unknown for legacy favourites; backfilled when next seen in a party.
+				importFlag(PlayerFlag.UNKNOWN_HASH, trimmed);
 			}
 		}
+		// Clear the old key so we don't re-import (the store is now the source of truth).
+		configManager.setConfiguration(OSPartyConfig.GROUP, LEGACY_KEY, "");
 	}
 
-	private void save()
+	// --- Favourite-named aliases over the generic flag API (keeps call sites readable) ---
+
+	public boolean isFavorite(long accountHash, String name)
 	{
-		configManager.setConfiguration(OSPartyConfig.GROUP, KEY,
-			favorites.isEmpty() ? "" : String.join(",", favorites));
+		return isFlagged(accountHash, name);
 	}
 
-	/** Normalise a name for storage and comparison (RuneLite uses nbsp in player names). */
+	public boolean isFavorite(String name)
+	{
+		return isFlagged(name);
+	}
+
+	public boolean hasAnyFavorite(Party party)
+	{
+		return hasAnyFlagged(party);
+	}
+
+	/** Static normalisation shim retained for callers that used {@code FavoritesService.normalize}. */
 	public static String normalize(String name)
 	{
-		return name == null ? "" : name.replace('\u00A0', ' ').trim().toLowerCase();
+		return PlayerFlagService.normalize(name);
 	}
 }

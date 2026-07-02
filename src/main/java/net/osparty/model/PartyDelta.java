@@ -15,6 +15,7 @@ public class PartyDelta
 	private String id;
 	private String activity;
 	private Integer size;
+	private List<Member> members;
 	private String world;
 	private String layout;
 	private List<String> neededRoles;
@@ -39,6 +40,10 @@ public class PartyDelta
 		if (size != null)
 		{
 			p.setSize(size);
+		}
+		if (members != null)
+		{
+			p.setMembers(members);
 		}
 		if (world != null)
 		{

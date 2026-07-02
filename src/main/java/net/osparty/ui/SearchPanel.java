@@ -180,11 +180,11 @@ class SearchPanel extends PartyCardPanel
 		IntFunction<WorldRegion> worldRegionResolver, KillcountService killcountService, ConfigManager configManager,
 		WorldPinger worldPinger, IntFunction<String> worldAddressResolver,
 		Supplier<Set<String>> friendNamesSupplier, FavoritesService favoritesService,
-		SpriteManager spriteManager)
+		net.osparty.BlockListService blockListService, SpriteManager spriteManager)
 	{
 		super(partyService, playerNameSupplier, partyState, liveParty, accountTypeSupplier,
 			killcountService, worldPinger, worldRegionResolver, worldAddressResolver,
-			favoritesService, friendNamesSupplier, spriteManager);
+			favoritesService, blockListService, friendNamesSupplier, spriteManager);
 		this.friendsChatOwnerSupplier = friendsChatOwnerSupplier;
 		this.worldSupplier = worldSupplier;
 		this.mapRegionsSupplier = mapRegionsSupplier;
@@ -1205,6 +1205,13 @@ class SearchPanel extends PartyCardPanel
 		}
 	}
 
+	/** Blocking a host from a card hides it (unless "Show blocked parties" is on): re-filter now. */
+	@Override
+	protected void onBlockToggled(Party party)
+	{
+		renderCurrent();
+	}
+
 	/**
 	 * Subscribe to the live party list. The server pushes the full list on (re)connect and
 	 * after every change; we render it on the EDT. This is the only source of list data.
@@ -1338,6 +1345,10 @@ class SearchPanel extends PartyCardPanel
 			}
 		}
 
+		// Blocked parties are hidden entirely unless the player opts to see them greyed out.
+		boolean showBlocked = Boolean.parseBoolean(
+			configManager.getConfiguration(OSPartyConfig.GROUP, "showBlockedParties"));
+
 		// Show only joinable parties matching every active filter (full ones hidden).
 		List<Party> visible = new ArrayList<>();
 		int totalOpen = 0; // all joinable parties, before filters (for the "X of total" count)
@@ -1345,7 +1356,16 @@ class SearchPanel extends PartyCardPanel
 		{
 			for (Party party : parties)
 			{
+				// Record current names for any favourited/blocked accounts we can see (name-change
+				// detection + hash backfill), regardless of whether the party ends up shown.
+				favoritesService.observeParty(party);
+				blockListService.observeParty(party);
+
 				if (party.isFull())
+				{
+					continue;
+				}
+				if (!showBlocked && blockListService.hasAnyBlocked(party))
 				{
 					continue;
 				}

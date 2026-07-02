@@ -114,12 +114,13 @@ public class PartyApiClient implements PartyService
 	}
 
 	@Override
-	public void heartbeat(String partyId, int size, int world, String layout, String roles, String hostKey,
+	public void heartbeat(String partyId, int size, int world, String layout, String roles,
+		java.util.List<net.osparty.model.Member> members, String hostKey,
 		Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
 		// The open socket is the keep-alive; just push the changed fields (deduped inside
 		// PartySocket). There is no acknowledgement — list changes come back as deltas.
-		partySocket.update(partyId, hostKey, patchOf(size, world, layout, roles));
+		partySocket.update(partyId, hostKey, patchOf(size, world, layout, roles, members));
 	}
 
 	@Override
@@ -154,7 +155,8 @@ public class PartyApiClient implements PartyService
 	}
 
 	/** A partial update mirroring the server's PartyUpdate (Gson omits the null fields). */
-	private static PartyPatch patchOf(int size, int world, String layout, String roles)
+	private static PartyPatch patchOf(int size, int world, String layout, String roles,
+		List<net.osparty.model.Member> members)
 	{
 		PartyPatch patch = new PartyPatch();
 		if (size > 0)
@@ -173,12 +175,17 @@ public class PartyApiClient implements PartyService
 		{
 			patch.neededRoles = Arrays.asList(roles.split(","));
 		}
+		if (members != null && !members.isEmpty())
+		{
+			patch.members = members;
+		}
 		return patch;
 	}
 
 	private static final class PartyPatch
 	{
 		Integer size;
+		List<net.osparty.model.Member> members;
 		String world;
 		String layout;
 		List<String> neededRoles;

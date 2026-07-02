@@ -16,4 +16,7 @@ public interface HostApplicationHandler
 	void announceApplicant(Applicant applicant, Activity activity);
 
 	void announceResolved(Applicant applicant, Activity activity, boolean accepted);
+
+	/** A block-listed applicant was auto-declined; post a chat line so the host knows. */
+	void announceAutoDeclinedBlocked(Applicant applicant, Activity activity);
 }

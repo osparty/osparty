@@ -1,5 +1,6 @@
 package net.osparty.ui;
 
+import net.osparty.BlockListService;
 import net.osparty.FavoritesService;
 import net.osparty.HostApplicationHandler;
 import net.osparty.KillcountService;
@@ -17,6 +18,7 @@ import java.util.Set;
 import java.util.function.IntConsumer;
 import java.util.function.IntFunction;
 import java.util.function.IntSupplier;
+import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import net.runelite.api.vars.AccountType;
 import net.runelite.http.api.worlds.WorldRegion;
@@ -80,6 +82,7 @@ public class OSPartyPanel extends PluginPanel
 		Supplier<String> coxLayoutSupplier, ConfigManager configManager, Gson gson,
 		WorldPinger worldPinger, IntFunction<String> worldAddressResolver,
 		Supplier<Set<String>> friendNamesSupplier, FavoritesService favoritesService,
+		BlockListService blockListService, LongSupplier accountHashSupplier,
 		SpriteManager spriteManager)
 	{
 		super(false);
@@ -96,21 +99,24 @@ public class OSPartyPanel extends PluginPanel
 		searchPanel = new SearchPanel(partyService, playerNameSupplier,
 			friendsChatOwnerSupplier, worldSupplier, partyState, liveParty, accountTypeSupplier,
 			mapRegionsSupplier, worldRegionResolver, killcountService, configManager,
-			worldPinger, worldAddressResolver, friendNamesSupplier, favoritesService, spriteManager);
+			worldPinger, worldAddressResolver, friendNamesSupplier, favoritesService, blockListService,
+			spriteManager);
 		favoritesPanel = new FriendsPanel(partyService, playerNameSupplier, partyState,
 			liveParty, accountTypeSupplier, killcountService, worldPinger, worldRegionResolver,
-			worldAddressResolver, favoritesService, friendNamesSupplier, spriteManager);
+			worldAddressResolver, favoritesService, blockListService, friendNamesSupplier, spriteManager);
 
-		// Cross-notify: toggling a favorite in Search refreshes the Favorites tab and vice versa.
+		// Cross-notify: toggling a favorite/block in Search refreshes the Favorites tab and vice versa.
 		searchPanel.setOnFavoriteChanged(favoritesPanel::render);
 		favoritesPanel.setOnFavoriteChanged(searchPanel::renderCurrent);
+		searchPanel.setOnBlockChanged(favoritesPanel::render);
+		favoritesPanel.setOnBlockChanged(searchPanel::renderCurrent);
 		createPanel = new CreatePanel(partyService, config, playerNameSupplier, partyState, liveParty,
-			accountTypeSupplier, mapRegionsSupplier, coxLayoutSupplier, configManager, gson,
+			accountTypeSupplier, accountHashSupplier, mapRegionsSupplier, coxLayoutSupplier, configManager, gson,
 			killcountService, worldSupplier);
 		partyPanel = new PartyPanel(partyService, playerNameSupplier,
 			hostApplicationHandler, partyState, itemManager, liveParty, runeWatchService, killcountService,
 			skillIconManager, worldSupplier, worldHopper, friendsChatOwnerSupplier, coxLayoutSupplier,
-			config, configManager, favoritesService);
+			config, configManager, favoritesService, blockListService);
 
 		// Host edit flow: the Party tab's "Edit party" button opens the create form in edit
 		// mode; saving returns to the Party (roster) tab.

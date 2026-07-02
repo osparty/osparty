@@ -3,6 +3,7 @@ package net.osparty.ui;
 import net.osparty.FavoritesService;
 import net.osparty.HostApplicationHandler;
 import net.osparty.KillcountService;
+import net.osparty.BlockedApplicantAction;
 import net.osparty.OSPartyConfig;
 import net.osparty.PersonalBests;
 import net.osparty.api.PartyService;
@@ -98,6 +99,7 @@ class PartyPanel extends JPanel
 	private final OSPartyConfig config;
 	private final ConfigManager configManager;
 	private final FavoritesService favoritesService;
+	private final net.osparty.BlockListService blockListService;
 
 	/** Skills in the in-game skills-tab layout (row-major, 3 columns), total last. */
 	private static final Skill[] SKILL_LAYOUT = {
@@ -132,6 +134,8 @@ class PartyPanel extends JPanel
 	private final Set<Long> expanded = new HashSet<>();
 	private final Map<Long, Integer> detailTab = new HashMap<>();
 	private final Set<Long> notifiedPending = new HashSet<>();
+	/** Applicants we've already auto-declined for being on the block list, so we reject them once. */
+	private final Set<Long> autoDeclinedBlocked = new HashSet<>();
 	private int lastReportedSize = -1;
 	private String lastReportedLayout;
 	/** Invoked when the host clicks "Edit party"; wired by the owning panel to open the edit form. */
@@ -145,7 +149,8 @@ class PartyPanel extends JPanel
 		LiveParty liveParty, RuneWatchService runeWatch, KillcountService killcounts,
 		SkillIconManager skillIcons, IntSupplier currentWorld, IntConsumer worldHopper,
 		Supplier<String> friendsChatOwnerSupplier, Supplier<String> coxLayoutSupplier,
-		OSPartyConfig config, ConfigManager configManager, FavoritesService favoritesService)
+		OSPartyConfig config, ConfigManager configManager, FavoritesService favoritesService,
+		net.osparty.BlockListService blockListService)
 	{
 		this.partyService = partyService;
 		this.playerNameSupplier = playerNameSupplier;
@@ -163,6 +168,7 @@ class PartyPanel extends JPanel
 		this.config = config;
 		this.configManager = configManager;
 		this.favoritesService = favoritesService;
+		this.blockListService = blockListService;
 
 		setLayout(new BorderLayout(0, 8));
 		setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
@@ -209,8 +215,8 @@ class PartyPanel extends JPanel
 			if (partyState.isHost() && partyState.getCurrentParty() != null)
 			{
 				partyService.heartbeat(partyState.getCurrentParty().getId(), currentPartySize(),
-					currentWorld.getAsInt(), currentLayout(), currentNeededRolesParam(), partyState.getHostKey(),
-					ok -> { }, err -> { });
+					currentWorld.getAsInt(), currentLayout(), currentNeededRolesParam(), liveParty.rosterMembers(),
+					partyState.getHostKey(), ok -> { }, err -> { });
 			}
 		}).start();
 
@@ -226,8 +232,8 @@ class PartyPanel extends JPanel
 			{
 				lastReportedLayout = layout;
 				partyService.heartbeat(partyState.getCurrentParty().getId(), currentPartySize(),
-					currentWorld.getAsInt(), layout, currentNeededRolesParam(), partyState.getHostKey(),
-					ok -> { }, err -> { });
+					currentWorld.getAsInt(), layout, currentNeededRolesParam(), liveParty.rosterMembers(),
+					partyState.getHostKey(), ok -> { }, err -> { });
 			}
 		}).start();
 
@@ -313,6 +319,7 @@ class PartyPanel extends JPanel
 			expanded.clear();
 			detailTab.clear();
 			notifiedPending.clear();
+			autoDeclinedBlocked.clear();
 			lastReportedSize = -1;
 			lastReportedLayout = null;
 			hostApplicationHandler.setPendingApplicants(java.util.Collections.emptyList(), null);
@@ -353,7 +360,7 @@ class PartyPanel extends JPanel
 		{
 			lastReportedSize = admitted;
 			partyService.heartbeat(party.getId(), admitted, currentWorld.getAsInt(), currentLayout(),
-				currentNeededRolesParam(), partyState.getHostKey(), ok -> { }, err -> { });
+				currentNeededRolesParam(), liveParty.rosterMembers(), partyState.getHostKey(), ok -> { }, err -> { });
 		}
 
 		StringBuilder spots = new StringBuilder();
@@ -507,6 +514,28 @@ class PartyPanel extends JPanel
 				continue;
 			}
 			Applicant applicant = toApplicant(member.getData());
+
+			// Block-list handling: warn (flag + still show), or auto-decline (once).
+			boolean blocked = blockListService != null
+				&& blockListService.isBlocked(applicant.getAccountHash(), applicant.getName());
+			if (blocked)
+			{
+				BlockedApplicantAction action = config.blockedApplicantAction();
+				if (action != null && action.rejects())
+				{
+					if (autoDeclinedBlocked.add(member.getMemberId()))
+					{
+						liveParty.reject(member.getMemberId());
+						if (action == BlockedApplicantAction.REJECT_NOTIFY)
+						{
+							hostApplicationHandler.announceAutoDeclinedBlocked(applicant, activity);
+						}
+					}
+					continue; // don't surface an auto-declined applicant
+				}
+				applicant.setBlocked(true); // WARN: show it, flagged
+			}
+
 			fillKillcount(applicant, activity);
 			pending.add(applicant);
 
@@ -577,6 +606,11 @@ class PartyPanel extends JPanel
 		{
 			left.add(star);
 		}
+		JButton block = memberBlock(member);
+		if (block != null)
+		{
+			left.add(block);
+		}
 		if (status == Status.HOST && StatusIcons.CROWN != null)
 		{
 			JLabel crown = new JLabel(StatusIcons.CROWN);
@@ -590,6 +624,15 @@ class PartyPanel extends JPanel
 		if (flagged != null)
 		{
 			left.add(runeWatchBadge(flagged));
+		}
+
+		// Block-list warning on a pending applicant (WARN mode; auto-reject removes them instead).
+		if (status == Status.PENDING && blockListService != null
+			&& blockListService.isBlocked(memberHash(member), member.getName()))
+		{
+			JLabel blockedBadge = new JLabel(StatusIcons.BLOCK_ON);
+			blockedBadge.setToolTipText("On your block list");
+			left.add(blockedBadge);
 		}
 
 		JLabel chevron = new JLabel(isExpanded ? StatusIcons.CHEVRON_UP : StatusIcons.CHEVRON_DOWN);
@@ -697,21 +740,61 @@ class PartyPanel extends JPanel
 			return null;
 		}
 		final String rsn = member.getName();
+		final long hash = memberHash(member);
 		JButton star = new JButton();
 		star.setFocusPainted(false);
 		star.setContentAreaFilled(false);
 		star.setBorderPainted(false);
 		star.setMargin(new Insets(0, 2, 0, 2));
-		boolean fav = favoritesService.isFavorite(rsn);
+		boolean fav = favoritesService.isFavorite(hash, rsn);
 		star.setIcon(fav ? StatusIcons.STAR_FILLED : StatusIcons.STAR_OUTLINE);
 		star.setToolTipText(fav ? "Remove " + rsn + " from Favorites" : "Add " + rsn + " to Favorites");
 		star.addActionListener(e -> {
-			favoritesService.toggle(rsn);
-			boolean nowFav = favoritesService.isFavorite(rsn);
+			favoritesService.toggle(hash, rsn);
+			boolean nowFav = favoritesService.isFavorite(hash, rsn);
 			star.setIcon(nowFav ? StatusIcons.STAR_FILLED : StatusIcons.STAR_OUTLINE);
 			star.setToolTipText(nowFav ? "Remove " + rsn + " from Favorites" : "Add " + rsn + " to Favorites");
 		});
 		return star;
+	}
+
+	/** A block-toggle button for any roster member (keyed by accountHash when known). */
+	private JButton memberBlock(RosterMember member)
+	{
+		// You can't block your own account.
+		if (blockListService == null || member.getName() == null || member.isLocal())
+		{
+			return null;
+		}
+		final String rsn = member.getName();
+		final long hash = memberHash(member);
+		JButton block = new JButton();
+		block.setFocusPainted(false);
+		block.setContentAreaFilled(false);
+		block.setBorderPainted(false);
+		block.setMargin(new Insets(0, 2, 0, 2));
+		boolean blocked = blockListService.isBlocked(hash, rsn);
+		block.setIcon(blocked ? StatusIcons.BLOCK_ON : StatusIcons.BLOCK_OFF);
+		block.setToolTipText(blocked ? "Unblock " + rsn : "Block " + rsn);
+		block.addActionListener(e -> {
+			boolean wasBlocked = blockListService.isBlocked(hash, rsn);
+			blockListService.toggle(hash, rsn);
+			boolean nowBlocked = !wasBlocked;
+			if (nowBlocked && favoritesService != null && favoritesService.isFavorite(hash, rsn))
+			{
+				favoritesService.toggle(hash, rsn);
+			}
+			block.setIcon(nowBlocked ? StatusIcons.BLOCK_ON : StatusIcons.BLOCK_OFF);
+			block.setToolTipText(nowBlocked ? "Unblock " + rsn : "Block " + rsn);
+			refresh();
+		});
+		return block;
+	}
+
+	/** The member's self-reported accountHash, or {@code 0} until they've synced. */
+	private static long memberHash(RosterMember member)
+	{
+		return member.getData() != null ? member.getData().getAccountHash() : 0L;
 	}
 
 	private MouseAdapter expandOnClick(RosterMember member)
@@ -1124,6 +1207,7 @@ class PartyPanel extends JPanel
 		Applicant applicant = new Applicant();
 		applicant.setMemberId(update.getMemberId());
 		applicant.setName(update.getName());
+		applicant.setAccountHash(update.getAccountHash());
 		applicant.setCombatLevel(update.getCombatLevel());
 		applicant.setStats(update.getStats());
 		applicant.setEquipment(update.getEquipment());

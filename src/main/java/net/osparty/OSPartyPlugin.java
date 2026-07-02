@@ -213,6 +213,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private volatile int[] mapRegions;
 	private volatile String coxLayout;
 	private volatile AccountType accountType;
+	/** Local player's stable account id; {@code -1} when logged out. Sent to the API so blocks/favourites survive name changes. */
+	private volatile long accountHash = -1L;
 	/** Whether we've checked for a resumable hosted party since this login. */
 	private boolean rejoinChecked;
 
@@ -220,6 +222,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 	@Inject
 	private FavoritesService favoritesService;
+
+	@Inject
+	private BlockListService blockListService;
+
+	@Inject
+	private net.osparty.store.PartyStore partyStore;
 
 	@Inject
 	private SpriteManager spriteManager;
@@ -321,7 +329,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			this::getFriendsChatOwner, this::getCurrentWorld, itemManager, liveParty, runeWatchService,
 			this::getAccountType, killcountService, skillIconManager, this::hopTo, this::getMapRegions,
 			this::regionForWorld, this::getCoxLayout, configManager, gson,
-			worldPinger, this::worldAddressForNum, this::getFriendNames, favoritesService, spriteManager);
+			worldPinger, this::worldAddressForNum, this::getFriendNames, favoritesService, blockListService,
+			this::getAccountHash, spriteManager);
 
 		navButton = NavigationButton.builder()
 			.tooltip("OSParty")
@@ -374,6 +383,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		panel = null;
 		navButton = null;
 		playerName = null;
+		accountHash = -1L;
+		partyStore.close();
 	}
 
 	@Subscribe
@@ -398,6 +409,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			world = 0;
 			mapRegions = null;
 			accountType = null;
+			accountHash = -1L;
 			quickHopTarget = null;
 			promptQueue.clear();
 		}
@@ -427,6 +439,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		world = client.getWorld();
 		mapRegions = client.getMapRegions();
 		accountType = client.getAccountType();
+		accountHash = client.getAccountHash();
 
 		FriendsChatManager fcm = client.getFriendsChatManager();
 		friendsChatOwner = fcm != null ? fcm.getOwner() : null;
@@ -758,6 +771,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		return accountType;
 	}
 
+	/** @return the local player's account hash, or {@code -1} when not logged in. Safe from the EDT. */
+	public long getAccountHash()
+	{
+		return accountHash;
+	}
+
 	/**
 	 * Hop the client to {@code worldNum} (a party member's world). Safe to call
 	 * from the EDT. At the login screen we can switch directly; while logged in the
@@ -856,6 +875,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 	}
 
+	@Override
+	public void announceAutoDeclinedBlocked(Applicant applicant, Activity activity)
+	{
+		gameMessage("Auto-declined " + applicant.getName() + " - on your block list.");
+	}
+
 	/**
 	 * A compact, information-dense one-liner about an applicant: combat level,
 	 * activity killcount (+ hard-mode), personal best, total level, account type
@@ -898,6 +923,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		if (runeWatchService.get(applicant.getName()) != null)
 		{
 			parts.add("(!) RuneWatch listed");
+		}
+
+		if (applicant.isBlocked())
+		{
+			parts.add("(!) on your block list");
 		}
 
 		return String.join(", ", parts);

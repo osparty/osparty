@@ -30,6 +30,9 @@ final class StatusIcons
 	static final ImageIcon STAR_OUTLINE = new ImageIcon(star(false));
 	static final ImageIcon CROWN = loadCrown();
 	static final ImageIcon PLUS = new ImageIcon(plus());
+	/** "No entry" ban glyph for the block toggle: red when blocked, grey when not. */
+	static final ImageIcon BLOCK_ON = new ImageIcon(ban(new Color(0xD1, 0x3A, 0x3A)));
+	static final ImageIcon BLOCK_OFF = new ImageIcon(ban(new Color(0x90, 0x90, 0x90)));
 
 	private static final int SIZE = 14;
 
@@ -142,6 +145,20 @@ final class StatusIcons
 			p.addPoint((int) Math.round(cx + r * Math.cos(ang)), (int) Math.round(cy + r * Math.sin(ang)));
 		}
 		return p;
+	}
+
+	/** A "no entry" sign: a circle with a diagonal slash. Drawn, so it's OS-font independent. */
+	private static BufferedImage ban(Color color)
+	{
+		BufferedImage img = base();
+		Graphics2D g = img.createGraphics();
+		hints(g);
+		g.setColor(color);
+		g.setStroke(new BasicStroke(1.7f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+		g.drawOval(2, 2, 9, 9);
+		g.drawLine(4, 4, 9, 9);
+		g.dispose();
+		return img;
 	}
 
 	/** A green plus glyph (the "add/save" button). */
