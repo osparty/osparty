@@ -18,11 +18,11 @@ dependencies {
     compileOnly 'org.projectlombok:lombok:1.18.46'
     annotationProcessor 'org.projectlombok:lombok:1.18.46'
 
-    // Local persistence (favourites / block list, and party history later). H2 is a
-    // pure-Java embedded database — no native code — so it is Plugin Hub-safe. All
-    // access goes through net.osparty.store.PartyStore, so this can be swapped for a
-    // flat-file backend if the Plugin Hub declines the dependency.
-    implementation 'com.h2database:h2:2.2.224'
+    // Local persistence (favourites / block list, and party history later). Pinned to 2.1.212 — the
+    // exact version in the Plugin Hub's dependency-verification allowlist (used by the Polywoof hub
+    // plugin). A non-allowlisted version (e.g. 2.2.224) is dropped by the hub build, so org.h2 goes
+    // missing at compile/runtime. Connection is opened via org.h2.jdbcx.JdbcDataSource (see H2PartyStore).
+    implementation 'com.h2database:h2:2.1.212'
 
     testImplementation 'junit:junit:4.13.2'
     testImplementation group: 'net.runelite', name: 'client', version: runeLiteVersion
