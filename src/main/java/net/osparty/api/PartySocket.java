@@ -70,6 +70,14 @@ public class PartySocket extends WebSocketListener
 	// One-shot lookups awaiting a directed byCode/byHost reply, keyed by the echoed code/host.
 	private final Map<String, Consumer<Party>> pendingByCode = new ConcurrentHashMap<>();
 	private final Map<String, Consumer<Party>> pendingByHost = new ConcurrentHashMap<>();
+	// Host createVoiceChannel requests awaiting a voiceChannel reply (or a matching error), keyed by party id.
+	private final Map<String, VoicePending> pendingVoiceChannel = new ConcurrentHashMap<>();
+	// Discord account-link: the in-flight startDiscordLink URL request (one at a time), and getDiscordLink
+	// status polls keyed by accountHash.
+	private volatile LinkUrlPending pendingLinkUrl;
+	private final Map<Long, Consumer<DiscordLinkStatus>> pendingLinkStatus = new ConcurrentHashMap<>();
+	// Member requestVoiceAccess calls awaiting a voiceAccess ack (or matching error), keyed by party id.
+	private final Map<String, VoicePending> pendingVoiceAccess = new ConcurrentHashMap<>();
 	private volatile boolean started;
 	private volatile boolean closed;
 	private volatile boolean connected;
@@ -325,6 +333,88 @@ public class PartySocket extends WebSocketListener
 		send(gson.toJson(new LookupFrame("getByHost", null, host)));
 	}
 
+	/**
+	 * Host action: ask the backend's Discord bot to provision a voice channel for the hosted party.
+	 * {@code onUrl} receives the invite URL to share with members; {@code onError} fires if the socket
+	 * is down or the server reports failure. Idempotent server-side, so a retry just echoes the URL.
+	 * Callbacks run on the socket reader thread — marshal to the EDT in the UI.
+	 */
+	public void createVoiceChannel(String id, String key, Consumer<String> onUrl, Consumer<Throwable> onError)
+	{
+		if (id == null || !connected)
+		{
+			onError.accept(new IOException("socket not connected"));
+			return;
+		}
+		pendingVoiceChannel.put(id, new VoicePending(onUrl, onError));
+		send(gson.toJson(new VoiceFrame(id, key)));
+	}
+
+	// --- Discord account linking ---
+
+	/**
+	 * Begin an OAuth2 Discord link for {@code accountHash}: {@code onUrl} receives the authorize URL to
+	 * open in a browser, {@code onError} fires if the socket is down or linking is disabled server-side.
+	 */
+	public void startDiscordLink(long accountHash, Consumer<String> onUrl, Consumer<Throwable> onError)
+	{
+		if (!connected)
+		{
+			onError.accept(new IOException("socket not connected"));
+			return;
+		}
+		pendingLinkUrl = new LinkUrlPending(onUrl, onError);
+		send(gson.toJson(new AccountHashFrame("startDiscordLink", accountHash)));
+	}
+
+	/** Look up whether {@code accountHash} is linked; {@code onResult} gets the status, or null if offline. */
+	public void getDiscordLink(long accountHash, Consumer<DiscordLinkStatus> onResult)
+	{
+		if (!connected)
+		{
+			onResult.accept(null);
+			return;
+		}
+		pendingLinkStatus.put(accountHash, onResult);
+		send(gson.toJson(new AccountHashFrame("getDiscordLink", accountHash)));
+	}
+
+	/** Remove the Discord binding for {@code accountHash} server-side. Fire-and-forget. */
+	public void unlinkDiscord(long accountHash)
+	{
+		if (!connected)
+		{
+			return;
+		}
+		send(gson.toJson(new AccountHashFrame("unlinkDiscord", accountHash)));
+	}
+
+	/** Host action: ask the backend bot to disconnect a kicked member from the party's voice channel. */
+	public void kickVoiceMember(String id, String key, long accountHash)
+	{
+		if (id == null || !connected)
+		{
+			return;
+		}
+		send(gson.toJson(new KickVoiceFrame(id, key, accountHash)));
+	}
+
+	/**
+	 * Member self-service: ask the backend to grant our per-user access to the party's voice channel
+	 * before we open the invite (covers joining/linking after the channel was made). {@code onGranted}
+	 * fires on the ack; {@code onError} if the socket is down or access is refused.
+	 */
+	public void requestVoiceAccess(String id, long accountHash, Runnable onGranted, Consumer<Throwable> onError)
+	{
+		if (id == null || !connected)
+		{
+			onError.accept(new IOException("socket not connected"));
+			return;
+		}
+		pendingVoiceAccess.put(id, new VoicePending(ignored -> onGranted.run(), onError));
+		send(gson.toJson(new VoiceAccessFrame(id, accountHash)));
+	}
+
 	// --- WebSocket callbacks ---
 
 	@Override
@@ -399,8 +489,20 @@ public class PartySocket extends WebSocketListener
 			case "gone":
 				handleGone(frame.id);
 				break;
+			case "voiceChannel":
+				completeVoiceChannel(frame.id, frame.url);
+				break;
+			case "discordLinkUrl":
+				completeLinkUrl(frame.url);
+				break;
+			case "discordLink":
+				completeLinkStatus(frame.accountHash, frame.id, frame.username);
+				break;
+			case "voiceAccess":
+				completeVoiceAccess(frame.id);
+				break;
 			case "error":
-				handleError(frame.detail);
+				handleError(frame.id, frame.detail);
 				break;
 			case "byCode":
 				completeLookup(pendingByCode, frame.id, frame.party);
@@ -528,8 +630,34 @@ public class PartySocket extends WebSocketListener
 		}
 	}
 
-	private void handleError(String detail)
+	private void handleError(String id, String detail)
 	{
+		// An error carrying an id may be the rejection of a pending voice-channel request; route it there
+		// first so its onError fires (rather than being mistaken for a host rejection or just logged).
+		if (id != null)
+		{
+			VoicePending voice = pendingVoiceChannel.remove(id);
+			if (voice != null)
+			{
+				voice.onError.accept(new IOException("voice channel failed: " + detail));
+				return;
+			}
+			VoicePending access = pendingVoiceAccess.remove(id);
+			if (access != null)
+			{
+				access.onError.accept(new IOException("voice access failed: " + detail));
+				return;
+			}
+		}
+		// Link errors (e.g. "linking disabled", "missing accountHash") carry no id; if a link URL
+		// request is in flight, route the failure to it rather than mistaking it for a host rejection.
+		LinkUrlPending link = pendingLinkUrl;
+		if (link != null)
+		{
+			pendingLinkUrl = null;
+			link.onError.accept(new IOException("link failed: " + detail));
+			return;
+		}
 		HostPending pending = pendingHost;
 		if (pending != null)
 		{
@@ -539,6 +667,62 @@ public class PartySocket extends WebSocketListener
 		else
 		{
 			log.debug("Party socket error frame: {}", detail);
+		}
+	}
+
+	private void completeVoiceChannel(String id, String url)
+	{
+		if (id == null)
+		{
+			return;
+		}
+		VoicePending pending = pendingVoiceChannel.remove(id);
+		if (pending != null)
+		{
+			pending.onUrl.accept(url);
+		}
+	}
+
+	private void completeLinkUrl(String url)
+	{
+		LinkUrlPending pending = pendingLinkUrl;
+		pendingLinkUrl = null;
+		if (pending != null)
+		{
+			if (url != null)
+			{
+				pending.onUrl.accept(url);
+			}
+			else
+			{
+				pending.onError.accept(new IOException("no link url"));
+			}
+		}
+	}
+
+	private void completeVoiceAccess(String id)
+	{
+		if (id == null)
+		{
+			return;
+		}
+		VoicePending pending = pendingVoiceAccess.remove(id);
+		if (pending != null)
+		{
+			pending.onUrl.accept(null);
+		}
+	}
+
+	private void completeLinkStatus(Long accountHash, String discordId, String username)
+	{
+		if (accountHash == null)
+		{
+			return;
+		}
+		Consumer<DiscordLinkStatus> callback = pendingLinkStatus.remove(accountHash);
+		if (callback != null)
+		{
+			callback.accept(new DiscordLinkStatus(discordId != null, discordId, username));
 		}
 	}
 
@@ -662,6 +846,11 @@ public class PartySocket extends WebSocketListener
 		Party party;
 		String id;
 		String detail;
+		// "voiceChannel"/"discordLinkUrl" frame: an invite or OAuth authorize URL.
+		String url;
+		// "discordLink" frame: the linked Discord username + the echoed accountHash the status is for.
+		String username;
+		Long accountHash;
 		// "batch" frame: a tick's worth of changes, applied together.
 		Party[] created;
 		PartyDelta[] updated;
@@ -725,6 +914,86 @@ public class PartySocket extends WebSocketListener
 			this.type = type;
 			this.code = code;
 			this.host = host;
+		}
+	}
+
+	private static final class VoiceFrame
+	{
+		final String type = "createVoiceChannel";
+		final String id;
+		final String key;
+
+		VoiceFrame(String id, String key)
+		{
+			this.id = id;
+			this.key = key;
+		}
+	}
+
+	private static final class VoicePending
+	{
+		final Consumer<String> onUrl;
+		final Consumer<Throwable> onError;
+
+		VoicePending(Consumer<String> onUrl, Consumer<Throwable> onError)
+		{
+			this.onUrl = onUrl;
+			this.onError = onError;
+		}
+	}
+
+	/** Outbound frame carrying just an accountHash: startDiscordLink / getDiscordLink. */
+	private static final class AccountHashFrame
+	{
+		final String type;
+		final long accountHash;
+
+		AccountHashFrame(String type, long accountHash)
+		{
+			this.type = type;
+			this.accountHash = accountHash;
+		}
+	}
+
+	/** Host-authorised kick of a member from the party's voice channel, by their accountHash. */
+	private static final class KickVoiceFrame
+	{
+		final String type = "kickVoiceMember";
+		final String id;
+		final String key;
+		final long accountHash;
+
+		KickVoiceFrame(String id, String key, long accountHash)
+		{
+			this.id = id;
+			this.key = key;
+			this.accountHash = accountHash;
+		}
+	}
+
+	/** Member self-service request for per-user access to the party's voice channel. */
+	private static final class VoiceAccessFrame
+	{
+		final String type = "requestVoiceAccess";
+		final String id;
+		final long accountHash;
+
+		VoiceAccessFrame(String id, long accountHash)
+		{
+			this.id = id;
+			this.accountHash = accountHash;
+		}
+	}
+
+	private static final class LinkUrlPending
+	{
+		final Consumer<String> onUrl;
+		final Consumer<Throwable> onError;
+
+		LinkUrlPending(Consumer<String> onUrl, Consumer<Throwable> onError)
+		{
+			this.onUrl = onUrl;
+			this.onError = onError;
 		}
 	}
 }

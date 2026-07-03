@@ -76,6 +76,7 @@ import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.util.AsyncBufferedImage;
 import net.runelite.client.util.ImageUtil;
+import net.runelite.client.util.LinkBrowser;
 
 /**
  * "Party" tab: the live party the player is in. The roster, statuses and each
@@ -89,6 +90,16 @@ class PartyPanel extends JPanel
 	private static final int TAB_INVENTORY = 2;
 
 	private static final Dimension SLOT_SIZE = new Dimension(36, 32);
+
+	/** Discord "blurple", matching the plugin's discord.png accent, for the voice buttons. */
+	private static final Color DISCORD_BLURPLE = new Color(0x58, 0x65, 0xF2);
+	private static final ImageIcon DISCORD_ICON = loadDiscordIcon();
+
+	private static ImageIcon loadDiscordIcon()
+	{
+		BufferedImage img = ImageUtil.loadImageResource(PartyPanel.class, "/net/osparty/icons/discord.png");
+		return img == null ? null : new ImageIcon(ImageUtil.resizeImage(img, 14, 14));
+	}
 
 	private final PartyService partyService;
 	private final Supplier<String> playerNameSupplier;
@@ -108,6 +119,13 @@ class PartyPanel extends JPanel
 	private final ConfigManager configManager;
 	private final FavoritesService favoritesService;
 	private final net.osparty.BlockListService blockListService;
+	/** Whether the local account is Discord-linked (gates the voice buttons), and the action to start linking. */
+	private final java.util.function.BooleanSupplier discordLinkedSupplier;
+	private final Runnable onAuthorizeDiscord;
+	private final java.util.function.LongSupplier accountHashSupplier;
+	/** Favorite-star sprites (gold = favorited, grey = not), matching the Search panel; null until loaded. */
+	private BufferedImage memberStarImg;
+	private BufferedImage freeStarImg;
 
 	/** Skills in the in-game skills-tab layout (row-major, 3 columns), total last. */
 	private static final Skill[] SKILL_LAYOUT = {
@@ -158,9 +176,14 @@ class PartyPanel extends JPanel
 		SkillIconManager skillIcons, IntSupplier currentWorld, IntConsumer worldHopper,
 		Supplier<String> friendsChatOwnerSupplier, Supplier<String> coxLayoutSupplier,
 		OSPartyConfig config, ConfigManager configManager, FavoritesService favoritesService,
-		net.osparty.BlockListService blockListService, SpriteManager spriteManager)
+		net.osparty.BlockListService blockListService, SpriteManager spriteManager,
+		java.util.function.BooleanSupplier discordLinkedSupplier, Runnable onAuthorizeDiscord,
+		java.util.function.LongSupplier accountHashSupplier)
 	{
 		this.partyService = partyService;
+		this.discordLinkedSupplier = discordLinkedSupplier;
+		this.onAuthorizeDiscord = onAuthorizeDiscord;
+		this.accountHashSupplier = accountHashSupplier;
 		this.playerNameSupplier = playerNameSupplier;
 		this.hostApplicationHandler = hostApplicationHandler;
 		this.partyState = partyState;
@@ -170,6 +193,14 @@ class PartyPanel extends JPanel
 		this.killcounts = killcounts;
 		this.skillIcons = skillIcons;
 		this.spriteManager = spriteManager;
+		if (spriteManager != null)
+		{
+			// Same favorite-star sprites as the Search panel: 1131 = members (gold), 1130 = free (grey).
+			spriteManager.getSpriteAsync(1131, 0,
+				img -> { if (img != null) { memberStarImg = ImageUtil.resizeImage(img, 14, 14); } });
+			spriteManager.getSpriteAsync(1130, 0,
+				img -> { if (img != null) { freeStarImg = ImageUtil.resizeImage(img, 14, 14); } });
+		}
 		this.currentWorld = currentWorld;
 		this.worldHopper = worldHopper;
 		this.friendsChatOwnerSupplier = friendsChatOwnerSupplier;
@@ -361,6 +392,18 @@ class PartyPanel extends JPanel
 		content.add(header);
 		content.add(Box.createVerticalStrut(4));
 
+		// A player who has applied but hasn't been admitted must not see the party's internals (roster,
+		// requirements, ready check, voice channel). Show only a waiting notice and a way to withdraw.
+		if (!host && !liveParty.isLocalAdmitted())
+		{
+			content.add(subLabel("Waiting for the host to accept you…"));
+			content.add(Box.createVerticalStrut(8));
+			content.add(buildActions(party, false));
+			content.revalidate();
+			content.repaint();
+			return;
+		}
+
 		List<RosterMember> roster = liveParty.isConnected() ? liveParty.roster() : null;
 
 		int admitted = roster == null ? 0
@@ -433,6 +476,13 @@ class PartyPanel extends JPanel
 				"Copy passphrase", "Passphrase copied to clipboard.", ColorScheme.LIGHT_GRAY_COLOR));
 		}
 
+		JComponent voiceRow = buildVoiceRow(party, host);
+		if (voiceRow != null)
+		{
+			content.add(Box.createVerticalStrut(6));
+			content.add(voiceRow);
+		}
+
 		// Ready check at the top (anyone can start; everyone readies up).
 		if (liveParty.isConnected())
 		{
@@ -468,11 +518,6 @@ class PartyPanel extends JPanel
 				content.add(Box.createVerticalStrut(4));
 			}
 
-			if (!host && isLocalPending(roster))
-			{
-				content.add(subLabel("Awaiting host approval…"));
-			}
-
 			if (anyPending && host)
 			{
 				content.add(Box.createVerticalStrut(4));
@@ -502,18 +547,6 @@ class PartyPanel extends JPanel
 
 		content.revalidate();
 		content.repaint();
-	}
-
-	private boolean isLocalPending(List<RosterMember> roster)
-	{
-		for (RosterMember member : roster)
-		{
-			if (member.isLocal())
-			{
-				return member.getStatus() == Status.PENDING;
-			}
-		}
-		return false;
 	}
 
 	private void updatePendingApplicants(List<RosterMember> roster, Activity activity)
@@ -768,15 +801,25 @@ class PartyPanel extends JPanel
 		star.setBorderPainted(false);
 		star.setMargin(new Insets(0, 2, 0, 2));
 		boolean fav = favoritesService.isFavorite(hash, rsn);
-		star.setIcon(fav ? StatusIcons.STAR_FILLED : StatusIcons.STAR_OUTLINE);
+		star.setIcon(favStarIcon(fav));
 		star.setToolTipText(fav ? "Remove " + rsn + " from Favorites" : "Add " + rsn + " to Favorites");
 		star.addActionListener(e -> {
 			favoritesService.toggle(hash, rsn);
 			boolean nowFav = favoritesService.isFavorite(hash, rsn);
-			star.setIcon(nowFav ? StatusIcons.STAR_FILLED : StatusIcons.STAR_OUTLINE);
+			star.setIcon(favStarIcon(nowFav));
 			star.setToolTipText(nowFav ? "Remove " + rsn + " from Favorites" : "Add " + rsn + " to Favorites");
 		});
 		return star;
+	}
+
+	/** The favorite star, using the Search panel's sprite icons when loaded, else the drawn fallback. */
+	private ImageIcon favStarIcon(boolean fav)
+	{
+		if (memberStarImg != null && freeStarImg != null)
+		{
+			return new ImageIcon(fav ? memberStarImg : freeStarImg);
+		}
+		return fav ? StatusIcons.STAR_FILLED : StatusIcons.STAR_OUTLINE;
 	}
 
 	/** A block-toggle button for any roster member (keyed by accountHash when known). */
@@ -849,7 +892,7 @@ class PartyPanel extends JPanel
 		// Host membership controls.
 		if (host && member.getStatus() == Status.PENDING)
 		{
-			JButton admit = smallButton("Admit");
+			JButton admit = smallButton("Accept");
 			admit.addActionListener(e -> admit(activity, member));
 			JButton decline = smallButton("Decline");
 			decline.addActionListener(e -> decline(activity, member));
@@ -1536,7 +1579,7 @@ class PartyPanel extends JPanel
 	{
 		if (!liveParty.admit(member.getMemberId(), member.getName()))
 		{
-			setStatus("Party is full - can't admit " + member.getName() + ".");
+			setStatus("Party is full - can't accept " + member.getName() + ".");
 			return;
 		}
 		notifiedPending.remove(member.getMemberId());
@@ -1544,7 +1587,7 @@ class PartyPanel extends JPanel
 		{
 			hostApplicationHandler.announceResolved(toApplicant(member.getData()), activity, true);
 		}
-		setStatus("Admitted " + member.getName() + ".");
+		setStatus("Accepted " + member.getName() + ".");
 		refresh();
 	}
 
@@ -1563,6 +1606,17 @@ class PartyPanel extends JPanel
 	private void kick(Activity activity, RosterMember member)
 	{
 		liveParty.kick(member.getMemberId());
+		// If this party has a Discord voice channel, also boot the kicked member out of it. The backend
+		// no-ops unless the member is Discord-linked and currently sitting in that channel.
+		Party party = partyState.getCurrentParty();
+		if (partyState.isHost() && party != null && liveParty.discordInviteUrl() != null)
+		{
+			long accountHash = liveParty.accountHashForMember(member.getMemberId());
+			if (accountHash != 0)
+			{
+				partyService.kickVoiceMember(party.getId(), partyState.getHostKey(), accountHash);
+			}
+		}
 		expanded.remove(member.getMemberId());
 		detailTab.remove(member.getMemberId());
 		setStatus("Kicked " + member.getName() + ".");
@@ -1750,6 +1804,124 @@ class PartyPanel extends JPanel
 	}
 
 	/** A label followed by an OS-safe copy-to-clipboard button (point 27). */
+	/**
+	 * Discord voice-channel controls for the party info section. Once a channel exists (its invite URL
+	 * arrived on the host's {@link PartyStateMessage}, or the host set it locally) everyone sees a
+	 * "Join voice" button. Before that, only the host sees "Create voice channel", which asks the
+	 * backend bot to provision one. Returns null when there is nothing to show (a member with no
+	 * channel yet). The provisioned URL then rides the peer-to-peer party state to every member.
+	 */
+	private JComponent buildVoiceRow(Party party, boolean host)
+	{
+		boolean linked = discordLinkedSupplier != null && discordLinkedSupplier.getAsBoolean();
+		String url = liveParty.discordInviteUrl();
+
+		// Voice requires a linked Discord account. Rather than hide the control, show an "Authorize with
+		// Discord" button that runs the OAuth flow first; once linked the panel refreshes to create/join.
+		if (url != null)
+		{
+			if (!linked)
+			{
+				return authorizeRow();
+			}
+			JButton join = voiceButton("Join voice", "Open the party's Discord voice channel");
+			join.addActionListener(e -> joinVoice(party, url));
+			return wrapVoiceButton(join);
+		}
+		if (!host)
+		{
+			return null; // members wait for the host to create the channel
+		}
+		if (!linked)
+		{
+			return authorizeRow();
+		}
+		JButton create = voiceButton("Create voice channel", "Create a Discord voice channel for this party");
+		create.addActionListener(e -> {
+			String partyId = party.getId();
+			if (partyId == null)
+			{
+				return;
+			}
+			create.setEnabled(false);
+			create.setText("Creating channel…");
+			setStatus("Creating Discord voice channel…");
+			partyService.createVoiceChannel(partyId, partyState.getHostKey(),
+				channelUrl -> SwingUtilities.invokeLater(() -> {
+					// Records it on our host state and re-broadcasts so members get a "Join voice" button;
+					// the listener then rebuilds this row to show ours too.
+					liveParty.setDiscordInviteUrl(channelUrl);
+					setStatus("Voice channel created — members can now join.");
+				}),
+				err -> SwingUtilities.invokeLater(() -> {
+					create.setEnabled(true);
+					create.setText("Create voice channel");
+					setStatus("Couldn't create a voice channel. Please try again.");
+				}));
+		});
+		return wrapVoiceButton(create);
+	}
+
+	private JButton voiceButton(String text, String tooltip)
+	{
+		JButton button = new JButton(text);
+		button.setFocusPainted(false);
+		button.setForeground(Color.WHITE);
+		button.setBackground(DISCORD_BLURPLE);
+		button.setFont(FontManager.getRunescapeSmallFont());
+		button.setCursor(new Cursor(Cursor.HAND_CURSOR));
+		button.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
+		button.setToolTipText(tooltip);
+		if (DISCORD_ICON != null)
+		{
+			button.setIcon(DISCORD_ICON);
+			button.setIconTextGap(6);
+		}
+		return button;
+	}
+
+	/**
+	 * Ensure we have per-user access to the party's voice channel (covers joining/linking after it was
+	 * created), then open the invite. Falls back to just opening the invite if we can't request access.
+	 */
+	private void joinVoice(Party party, String url)
+	{
+		long accountHash = accountHashSupplier != null ? accountHashSupplier.getAsLong() : 0;
+		if (accountHash == 0 || accountHash == -1 || party == null)
+		{
+			LinkBrowser.browse(url);
+			return;
+		}
+		partyService.requestVoiceAccess(party.getId(), accountHash,
+			() -> SwingUtilities.invokeLater(() -> LinkBrowser.browse(url)),
+			err -> SwingUtilities.invokeLater(() -> LinkBrowser.browse(url)));
+	}
+
+	/** The "authorize first" button shown in place of create/join when the local account isn't linked. */
+	private JComponent authorizeRow()
+	{
+		JButton authorize = voiceButton("Authorize with Discord",
+			"Link your Discord account to create or join party voice channels");
+		authorize.addActionListener(e ->
+		{
+			if (onAuthorizeDiscord != null)
+			{
+				onAuthorizeDiscord.run();
+			}
+		});
+		return wrapVoiceButton(authorize);
+	}
+
+	/** Full-width in a capped row (BorderLayout.CENTER stretches the button), matching "Start ready check". */
+	private JPanel wrapVoiceButton(JButton button)
+	{
+		JPanel row = cappedPanel(new BorderLayout());
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row.setAlignmentX(Component.LEFT_ALIGNMENT);
+		row.add(button, BorderLayout.CENTER);
+		return row;
+	}
+
 	private JPanel copyRow(String labelText, String copyValue, String tooltip, String statusMsg, Color fg)
 	{
 		// BorderLayout so the copy button stays pinned at the right and a long passphrase

@@ -142,6 +142,44 @@ public class PartyApiClient implements PartyService
 	}
 
 	@Override
+	public void createVoiceChannel(String partyId, String hostKey, Consumer<String> onUrl, Consumer<Throwable> onError)
+	{
+		// One-shot request/reply over the socket, mirroring the getByCode/getByHost lookups. The reply
+		// (or a matching error) resolves exactly one of the callbacks.
+		partySocket.createVoiceChannel(partyId, hostKey, onUrl, onError);
+	}
+
+	@Override
+	public void startDiscordLink(long accountHash, Consumer<String> onUrl, Consumer<Throwable> onError)
+	{
+		partySocket.startDiscordLink(accountHash, onUrl, onError);
+	}
+
+	@Override
+	public void getDiscordLink(long accountHash, Consumer<DiscordLinkStatus> onResult)
+	{
+		partySocket.getDiscordLink(accountHash, onResult);
+	}
+
+	@Override
+	public void unlinkDiscord(long accountHash)
+	{
+		partySocket.unlinkDiscord(accountHash);
+	}
+
+	@Override
+	public void kickVoiceMember(String partyId, String hostKey, long accountHash)
+	{
+		partySocket.kickVoiceMember(partyId, hostKey, accountHash);
+	}
+
+	@Override
+	public void requestVoiceAccess(String partyId, long accountHash, Runnable onGranted, Consumer<Throwable> onError)
+	{
+		partySocket.requestVoiceAccess(partyId, accountHash, onGranted, onError);
+	}
+
+	@Override
 	public int onlineUsers()
 	{
 		return partySocket.onlineUsers();

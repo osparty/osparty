@@ -34,6 +34,9 @@ public class PartyStateMessage extends PartyMemberMessage
 	/** Set in the host's final broadcast; the party is closing. */
 	private boolean closed;
 
+	/** Discord voice-channel invite URL the host provisioned, or null. Members render a "Join voice" button. */
+	private String discordInviteUrl;
+
 	/** Admitted only, host first; no pending applicants. */
 	private List<RosterEntry> roster = new ArrayList<>();
 }

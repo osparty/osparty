@@ -100,6 +100,8 @@ public class LiveParty
 	private volatile String hostName;
 	private volatile int capacity;
 	private volatile boolean locked;
+	/** Discord voice-channel invite URL for this party once the host provisions one; null otherwise. */
+	private volatile String discordInviteUrl;
 	/** Excludes the host. memberId -> display name. */
 	private final Map<Long, String> admitted = new ConcurrentHashMap<>();
 
@@ -316,6 +318,35 @@ public class LiveParty
 		fire();
 	}
 
+	/**
+	 * Host: record the provisioned Discord voice-channel invite URL and re-broadcast the party state so
+	 * every member learns it (and renders a "Join voice" button). No-op when not hosting or unchanged.
+	 */
+	public void setDiscordInviteUrl(String url)
+	{
+		if (!hosting || java.util.Objects.equals(url, discordInviteUrl))
+		{
+			return;
+		}
+		discordInviteUrl = url;
+		stateDirty = true;
+		fire();
+	}
+
+	/**
+	 * The party's Discord voice-channel invite URL, or null if none. For the host this is the value we
+	 * set locally; for a member it's the value carried on the host's last {@link PartyStateMessage}.
+	 */
+	public String discordInviteUrl()
+	{
+		if (hosting)
+		{
+			return discordInviteUrl;
+		}
+		PartyStateMessage state = lastState;
+		return state != null ? state.getDiscordInviteUrl() : null;
+	}
+
 	/** Overhead marker for an in-game player: teacher, learner, or none. */
 	public enum Marker
 	{
@@ -405,6 +436,7 @@ public class LiveParty
 		hostName = null;
 		capacity = 0;
 		locked = false;
+		discordInviteUrl = null;
 		admitted.clear();
 		playerData.clear();
 		lastSeen.clear();
@@ -934,6 +966,7 @@ public class LiveParty
 		state.setHostName(hostName);
 		state.setCapacity(capacity);
 		state.setLocked(locked);
+		state.setDiscordInviteUrl(discordInviteUrl);
 
 		List<RosterEntry> roster = new ArrayList<>();
 		roster.add(new RosterEntry(localId, hostName, accountHashFor(localId)));
@@ -943,6 +976,12 @@ public class LiveParty
 		}
 		state.setRoster(roster);
 		return state;
+	}
+
+	/** Public accessor for a member's last self-reported accountHash (0 when unknown). */
+	public long accountHashForMember(long memberId)
+	{
+		return accountHashFor(memberId);
 	}
 
 	/** The accountHash last self-reported by {@code memberId}, or {@code 0} when unknown. */
@@ -1006,6 +1045,37 @@ public class LiveParty
 	{
 		long id = localId();
 		return id != 0 && memberId == id;
+	}
+
+	/**
+	 * Whether the local player is admitted (the host, or in the host's authoritative roster). A player
+	 * who has applied but not yet been admitted returns {@code false}, so the UI can hide party internals
+	 * from them until the host lets them in. Also {@code false} until we've received the host's state.
+	 */
+	public boolean isLocalAdmitted()
+	{
+		if (hosting)
+		{
+			return true;
+		}
+		PartyStateMessage state = lastState;
+		long localId = localId();
+		if (state == null || localId == 0)
+		{
+			return false;
+		}
+		if (state.getHostMemberId() == localId)
+		{
+			return true;
+		}
+		for (RosterEntry entry : state.getRoster())
+		{
+			if (entry.getMemberId() == localId)
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	public boolean isPendingApplicant(long memberId)
