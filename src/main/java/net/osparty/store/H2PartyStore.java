@@ -2,7 +2,6 @@ package net.osparty.store;
 
 import java.io.File;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -64,7 +63,18 @@ public class H2PartyStore implements PartyStore
 		String url = "jdbc:h2:file:" + path + ";DB_CLOSE_ON_EXIT=FALSE";
 		try
 		{
-			Connection c = DriverManager.getConnection(url, "osparty", "");
+			// Connect through the H2 driver directly instead of DriverManager: under RuneLite's isolated
+			// plugin classloader the JDBC ServiceLoader auto-registration never runs, so DriverManager
+			// reports "No suitable driver found". Referencing org.h2.Driver here also stops it being
+			// stripped as "unused" when the plugin is packaged for the hub.
+			java.util.Properties props = new java.util.Properties();
+			props.setProperty("user", "osparty");
+			props.setProperty("password", "");
+			Connection c = new org.h2.Driver().connect(url, props);
+			if (c == null)
+			{
+				throw new IllegalStateException("H2 driver rejected URL " + url);
+			}
 			c.setAutoCommit(true);
 			return c;
 		}
