@@ -15,8 +15,8 @@ def runeLiteVersion = 'latest.release'
 dependencies {
     compileOnly group: 'net.runelite', name: 'client', version: runeLiteVersion
 
-    compileOnly 'org.projectlombok:lombok:1.18.46'
-    annotationProcessor 'org.projectlombok:lombok:1.18.46'
+    compileOnly 'org.projectlombok:lombok:1.18.30'
+    annotationProcessor 'org.projectlombok:lombok:1.18.30'
 
     // Local persistence (favourites / block list, and party history later). Pinned to 2.1.212 — the
     // exact version in the Plugin Hub's dependency-verification allowlist (used by the Polywoof hub
