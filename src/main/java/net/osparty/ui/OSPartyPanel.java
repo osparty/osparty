@@ -66,7 +66,7 @@ public class OSPartyPanel extends PluginPanel
 	// Hard-coded: PluginHub's build doesn't bundle runelite-plugin.properties, so
 	// reading the version from the classpath there yields "?". Keep this in step
 	// with runelite-plugin.properties on each release.
-	private static final String VERSION = "1.0.14";
+	private static final String VERSION = "1.0.15";
 	private static final String GITHUB_URL = "https://github.com/iodrareg/osparty";
 	private static final String DISCORD_URL = "https://discord.gg/3xrf7wkb5F";
 
