@@ -18,11 +18,9 @@ dependencies {
     compileOnly 'org.projectlombok:lombok:1.18.30'
     annotationProcessor 'org.projectlombok:lombok:1.18.30'
 
-    // Local persistence (favourites / block list, and party history later). Pinned to 2.1.212 — the
-    // exact version in the Plugin Hub's dependency-verification allowlist (used by the Polywoof hub
-    // plugin). A non-allowlisted version (e.g. 2.2.224) is dropped by the hub build, so org.h2 goes
-    // missing at compile/runtime. Connection is opened via org.h2.jdbcx.JdbcDataSource (see H2PartyStore).
-    implementation 'com.h2database:h2:2.1.212'
+    // Local persistence (favourites / block list, party history) is plain JSON via RuneLite's
+    // bundled Gson (see net.osparty.store.JsonPartyStore) — no extra runtime dependency, which
+    // keeps the Plugin Hub's dependency verification happy.
 
     testImplementation 'junit:junit:4.13.2'
     testImplementation group: 'net.runelite', name: 'client', version: runeLiteVersion

@@ -233,6 +233,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private net.osparty.store.PartyStore partyStore;
 
 	@Inject
+	private net.osparty.history.PartyHistoryService partyHistoryService;
+
+	@Inject
 	private SpriteManager spriteManager;
 	/** Snapshot of the local player's friends list, updated each game tick. */
 	private volatile Set<String> friendNames = java.util.Collections.emptySet();
@@ -333,7 +336,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			this::getAccountType, killcountService, skillIconManager, this::hopTo, this::getMapRegions,
 			this::regionForWorld, this::getCoxLayout, configManager, gson,
 			worldPinger, this::worldAddressForNum, this::getFriendNames, favoritesService, blockListService,
-			this::getAccountHash, spriteManager);
+			this::getAccountHash, spriteManager, partyHistoryService);
 
 		navButton = NavigationButton.builder()
 			.tooltip("OSParty")

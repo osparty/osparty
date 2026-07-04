@@ -1006,6 +1006,41 @@ public class LiveParty
 		return out;
 	}
 
+	/** RuneLite's placeholder display name for a party member that hasn't synced its identity yet. */
+	private static final String UNKNOWN_MEMBER_NAME = "<unknown>";
+
+	/**
+	 * The current confirmed roster — the host plus admitted members, excluding pending applicants —
+	 * as {@link net.osparty.model.Member} name+accountHash pairs, host first. Unlike
+	 * {@link #rosterMembers()} this works whether we host or joined, so party history can track live
+	 * joins and leaves either way. Empty until the room is connected and populated (the caller treats
+	 * an empty result as "nothing to record yet" rather than an empty party).
+	 *
+	 * <p>Members whose client hasn't synced yet are skipped: right after the room opens (and briefly
+	 * when {@code getLocalMember()} is still null during host bootstrap) a member can surface as
+	 * RuneLite's {@code "<unknown>"} placeholder with no accountHash. Recording it would log a phantom
+	 * join+leave in history; it gets recorded properly a tick later once its name resolves.
+	 */
+	public List<net.osparty.model.Member> currentMembers()
+	{
+		List<net.osparty.model.Member> out = new ArrayList<>();
+		for (RosterMember m : roster())
+		{
+			if (m.getStatus() == Status.PENDING || m.getData() == null || isUnresolvedName(m.getName()))
+			{
+				continue;
+			}
+			out.add(new net.osparty.model.Member(m.getName(), m.getData().getAccountHash()));
+		}
+		return out;
+	}
+
+	/** True for a member we can't yet identify: no name, blank, or the {@code "<unknown>"} placeholder. */
+	private static boolean isUnresolvedName(String name)
+	{
+		return name == null || name.trim().isEmpty() || UNKNOWN_MEMBER_NAME.equalsIgnoreCase(name.trim());
+	}
+
 	// ---- inbound message handlers (called from the plugin's @Subscribe) ------
 
 	public void onPlayerUpdate(PlayerUpdate update)

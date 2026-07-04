@@ -7,12 +7,12 @@ import java.util.List;
  * Local persistence for OSParty. Today it backs the favourite / block lists; the
  * same store (and its versioned schema) will hold party history later.
  *
- * <p>Deliberately narrow and backend-agnostic so the concrete implementation
- * ({@link H2PartyStore}) can be swapped for a flat-file one without touching
- * callers — important because the RuneLite Plugin Hub may not approve the H2
- * dependency. Implementations must be safe to call from the Swing EDT.
+ * <p>Deliberately narrow and backend-agnostic. The concrete implementation is
+ * {@link JsonPartyStore} (a plain-JSON flat file); an earlier H2-backed one was
+ * dropped because the RuneLite Plugin Hub's dependency verification made bundling
+ * H2 fragile. Implementations must be safe to call from the Swing EDT.
  */
-@ImplementedBy(H2PartyStore.class)
+@ImplementedBy(JsonPartyStore.class)
 public interface PartyStore
 {
 	/** All persisted flags of the given kind. */

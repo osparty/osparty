@@ -21,7 +21,6 @@ import java.awt.image.BufferedImage;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
-import javax.swing.JButton;
 import javax.swing.ImageIcon;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -59,12 +58,8 @@ class FriendsPanel extends PartyCardPanel
 	private final JLabel friendsCount;
 	private final JLabel favoritesCaret;
 	private final JLabel friendsCaret;
-	private final JPanel blockedContent;
-	private final JLabel blockedCount;
-	private final JLabel blockedCaret;
 	private boolean favExpanded = true;
 	private boolean friendsExpanded = true;
-	private boolean blockedExpanded = false;
 
 	/** RuneLite's config-section caret (grey): points right when collapsed, down when expanded. */
 	private static final ImageIcon CARET_COLLAPSED = caret(0);
@@ -135,32 +130,11 @@ class FriendsPanel extends PartyCardPanel
 		favoritesContent.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		favoritesContent.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-		// Blocked section: a management list of blocked players (name + unblock), independent
-		// of the live party list. Collapsed by default.
-		JPanel blockedHeader = buildSectionHeader("Blocked",
-			() -> { blockedExpanded = !blockedExpanded; render(); });
-		blockedCount = (JLabel) blockedHeader.getClientProperty("count");
-		blockedCaret = (JLabel) blockedHeader.getClientProperty("caret");
-		JLabel blockedTitleLabel = (JLabel) blockedHeader.getClientProperty("title");
-		if (blockedTitleLabel != null)
-		{
-			// Drawn icon (no sprite fetch needed), sized to match the Friends/Favorites glyphs.
-			blockedTitleLabel.setIcon(StatusIcons.BLOCK_ON);
-			blockedTitleLabel.setText("  Blocked");
-		}
-		blockedContent = new JPanel();
-		blockedContent.setLayout(new BoxLayout(blockedContent, BoxLayout.Y_AXIS));
-		blockedContent.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		blockedContent.setAlignmentX(Component.LEFT_ALIGNMENT);
-
 		sections.add(friendsHeader);
 		sections.add(friendsContent);
 		sections.add(Box.createVerticalStrut(6));
 		sections.add(favHeader);
 		sections.add(favoritesContent);
-		sections.add(Box.createVerticalStrut(6));
-		sections.add(blockedHeader);
-		sections.add(blockedContent);
 		sections.add(Box.createVerticalStrut(6));
 		sections.add(Box.createVerticalGlue());
 
@@ -327,14 +301,11 @@ class FriendsPanel extends PartyCardPanel
 		populateSection(friendsContent, friendParties, friendsExpanded,
 			friendParties.isEmpty() ? "No open parties from OSRS friends." : null);
 
-		renderBlocked();
-
 		updateCountBadge(favoritesCount, faves.size());
 		updateCountBadge(friendsCount, friendParties.size());
 
 		updateCaret(favoritesCaret, favExpanded);
 		updateCaret(friendsCaret, friendsExpanded);
-		updateCaret(blockedCaret, blockedExpanded);
 
 		// Counts live in the per-section badges; the status line only carries the empty state.
 		int total = faves.size() + friendParties.size();
@@ -371,61 +342,6 @@ class FriendsPanel extends PartyCardPanel
 		}
 		content.revalidate();
 		content.repaint();
-	}
-
-	/** Populate the Blocked section: one row per blocked player, each with an Unblock button. */
-	private void renderBlocked()
-	{
-		blockedContent.removeAll();
-		List<net.osparty.store.PlayerFlag> blocked = blockListService == null
-			? new ArrayList<>() : blockListService.entries();
-		blocked.sort((a, b) -> a.getUsername().compareToIgnoreCase(b.getUsername()));
-		updateCountBadge(blockedCount, blocked.size());
-
-		if (!blockedExpanded)
-		{
-			blockedContent.revalidate();
-			blockedContent.repaint();
-			return;
-		}
-		if (blocked.isEmpty())
-		{
-			JLabel empty = new JLabel("No blocked players.");
-			empty.setFont(FontManager.getRunescapeSmallFont());
-			empty.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
-			empty.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
-			empty.setAlignmentX(Component.LEFT_ALIGNMENT);
-			blockedContent.add(empty);
-		}
-		for (net.osparty.store.PlayerFlag flag : blocked)
-		{
-			JPanel row = new JPanel(new BorderLayout(4, 0));
-			row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-			row.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 6));
-			row.setAlignmentX(Component.LEFT_ALIGNMENT);
-
-			JLabel name = new JLabel(flag.getUsername());
-			name.setFont(FontManager.getRunescapeSmallFont());
-			name.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-
-			JButton unblock = new JButton("Unblock");
-			unblock.setFocusPainted(false);
-			unblock.setFont(FontManager.getRunescapeSmallFont());
-			unblock.setMargin(new java.awt.Insets(1, 6, 1, 6));
-			unblock.addActionListener(e -> {
-				blockListService.toggle(flag.getAccountHash(), flag.getUsername());
-				SwingUtilities.invokeLater(this::render);
-			});
-
-			row.add(name, BorderLayout.CENTER);
-			row.add(unblock, BorderLayout.EAST);
-			// Cap the height so the Y-axis BoxLayout doesn't stretch each row to fill the panel.
-			row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
-			blockedContent.add(row);
-			blockedContent.add(Box.createVerticalStrut(4));
-		}
-		blockedContent.revalidate();
-		blockedContent.repaint();
 	}
 
 	// ---- section header builder -------------------------------------------

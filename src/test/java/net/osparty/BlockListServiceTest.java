@@ -6,7 +6,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import net.osparty.model.Member;
 import net.osparty.model.Party;
-import net.osparty.store.H2PartyStore;
+import net.osparty.store.JsonPartyStore;
 import net.osparty.store.PartyStore;
 import net.osparty.store.PlayerFlag;
 import org.junit.After;
@@ -18,7 +18,7 @@ import static org.junit.Assert.assertTrue;
 
 /**
  * Exercises {@link PlayerFlagService} logic (via {@link BlockListService}) over a real
- * {@link H2PartyStore}: name/hash matching, persistence across a reopen, name-change
+ * {@link JsonPartyStore}: name/hash matching, persistence across a reopen, name-change
  * rename and hash backfill, and party-level matching.
  */
 public class BlockListServiceTest
@@ -31,7 +31,7 @@ public class BlockListServiceTest
 	public void setUp() throws Exception
 	{
 		dir = Files.createTempDirectory("osparty-store-test").toFile();
-		store = new H2PartyStore(dir);
+		store = new JsonPartyStore(dir);
 		blocks = new BlockListService(store);
 	}
 
@@ -62,7 +62,7 @@ public class BlockListServiceTest
 		blocks.toggle(123L, "Durial321");
 		store.close();
 
-		PartyStore reopened = new H2PartyStore(dir);
+		PartyStore reopened = new JsonPartyStore(dir);
 		try
 		{
 			BlockListService reloaded = new BlockListService(reopened);
