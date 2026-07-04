@@ -2,7 +2,9 @@ package net.osparty.history;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.util.Arrays;
 import java.util.List;
+import net.osparty.model.Member;
 import net.osparty.model.Party;
 import org.junit.Before;
 import org.junit.Test;
@@ -98,6 +100,142 @@ public class PartyHistoryServiceTest
 		List<PartyHistoryEntry> list = reopened.list();
 		assertEquals(2, list.size());
 		assertEquals("p4", list.get(0).getPartyId());
+	}
+
+	@Test
+	public void updateRosterAddsJoinersAndFlagsLeavers()
+	{
+		PartyHistoryService history = open();
+		Party p = party("1", "cox", "Alice");
+		p.setMembers(Arrays.asList(new Member("Alice", 1L)));
+		history.record(p, true);
+
+		// Bob joins.
+		assertTrue(history.updateRoster("1", Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L))));
+		PartyHistoryEntry entry = history.list().get(0);
+		assertEquals("both present", 2, entry.getSize());
+		assertEquals(2, entry.getMembers().size());
+		assertTrue(byName(entry, "Bob").isPresent());
+
+		// Bob leaves: kept in the list, flagged, and no longer counted in size.
+		assertTrue(history.updateRoster("1", Arrays.asList(new Member("Alice", 1L))));
+		entry = history.list().get(0);
+		assertEquals("only Alice present", 1, entry.getSize());
+		assertEquals("Bob is retained, not removed", 2, entry.getMembers().size());
+		HistoryMember bob = byName(entry, "Bob");
+		assertFalse("Bob flagged as left", bob.isPresent());
+		assertTrue("leftAt stamped", bob.getLeftAt() > 0);
+		assertTrue("Alice still present", byName(entry, "Alice").isPresent());
+	}
+
+	@Test
+	public void updateRosterClearsLeftAtOnRejoin()
+	{
+		PartyHistoryService history = open();
+		Party p = party("1", "cox", "Alice");
+		p.setMembers(Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L)));
+		history.record(p, true);
+
+		history.updateRoster("1", Arrays.asList(new Member("Alice", 1L)));      // Bob leaves
+		assertFalse(byName(history.list().get(0), "Bob").isPresent());
+
+		history.updateRoster("1", Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L))); // Bob rejoins
+		HistoryMember bob = byName(history.list().get(0), "Bob");
+		assertTrue("rejoin clears the left flag", bob.isPresent());
+		assertEquals("leftAt reset", 0, bob.getLeftAt());
+	}
+
+	@Test
+	public void updateRosterUpgradesUnknownHashByName()
+	{
+		PartyHistoryService history = open();
+		Party p = party("1", "cox", "Alice");
+		p.setMembers(Arrays.asList(new Member("Alice", 1L), new Member("Bob", 0L))); // Bob's hash not yet synced
+		history.record(p, true);
+
+		// Same Bob, now with a resolved hash — matched by name, not recorded as a second member.
+		history.updateRoster("1", Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L)));
+		PartyHistoryEntry entry = history.list().get(0);
+		assertEquals("no duplicate Bob", 2, entry.getMembers().size());
+		assertEquals("hash upgraded", 2L, byName(entry, "Bob").getAccountHash());
+	}
+
+	@Test
+	public void updateRosterIsNoOpWhenUnchangedOrEmptyOrUnknown()
+	{
+		PartyHistoryService history = open();
+		Party p = party("1", "cox", "Alice");
+		List<Member> roster = Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L));
+		p.setMembers(roster);
+		history.record(p, true);
+
+		assertFalse("same roster is not rewritten", history.updateRoster("1", roster));
+		assertFalse("empty roster must not flag everyone left", history.updateRoster("1", List.of()));
+		assertFalse("unknown party id is ignored", history.updateRoster("nope", roster));
+
+		// The recorded roster survived the no-ops intact and everyone is still present.
+		PartyHistoryEntry entry = history.list().get(0);
+		assertEquals(2, entry.getMembers().size());
+		assertTrue(byName(entry, "Alice").isPresent());
+		assertTrue(byName(entry, "Bob").isPresent());
+	}
+
+	@Test
+	public void updateRosterPersistsAcrossReopen()
+	{
+		PartyHistoryService history = open();
+		Party p = party("1", "cox", "Alice");
+		p.setMembers(Arrays.asList(new Member("Alice", 1L)));
+		history.record(p, true);
+		history.updateRoster("1", Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L)));
+		history.updateRoster("1", Arrays.asList(new Member("Alice", 1L))); // Bob leaves
+
+		PartyHistoryEntry reloaded = open().list().get(0);
+		assertEquals("left member persisted", 2, reloaded.getMembers().size());
+		assertFalse("left flag persisted", byName(reloaded, "Bob").isPresent());
+		assertTrue(byName(reloaded, "Bob").getLeftAt() > 0);
+	}
+
+	@Test
+	public void closePartyStampsPresentMembersAsLeft()
+	{
+		PartyHistoryService history = open();
+		Party p = party("1", "cox", "Alice");
+		p.setMembers(Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L)));
+		history.record(p, true);
+		history.updateRoster("1", Arrays.asList(new Member("Alice", 1L))); // Bob leaves early
+
+		long bobLeftAt = byName(history.list().get(0), "Bob").getLeftAt();
+
+		assertTrue(history.closeParty("1", 9_999L));
+		PartyHistoryEntry entry = history.list().get(0);
+		assertFalse("host no longer shown present", byName(entry, "Alice").isPresent());
+		assertEquals("host stamped at close time", 9_999L, byName(entry, "Alice").getLeftAt());
+		assertEquals("Bob's earlier leftAt is untouched", bobLeftAt, byName(entry, "Bob").getLeftAt());
+	}
+
+	@Test
+	public void closePartyIsNoOpWhenAlreadyEndedOrUnknown()
+	{
+		PartyHistoryService history = open();
+		Party p = party("1", "cox", "Alice");
+		p.setMembers(Arrays.asList(new Member("Alice", 1L)));
+		history.record(p, true);
+
+		assertTrue(history.closeParty("1", 9_999L));
+		assertFalse("already ended — nothing present to stamp", history.closeParty("1", 12_345L));
+		assertFalse("unknown party id ignored", history.closeParty("nope", 9_999L));
+
+		// A closed row persists as ended across a reopen.
+		assertFalse(byName(open().list().get(0), "Alice").isPresent());
+	}
+
+	private static HistoryMember byName(PartyHistoryEntry entry, String name)
+	{
+		return entry.getMembers().stream()
+			.filter(m -> name.equals(m.getName()))
+			.findFirst()
+			.orElseThrow(() -> new AssertionError("no member named " + name));
 	}
 
 	@Test

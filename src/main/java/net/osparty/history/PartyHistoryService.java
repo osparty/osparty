@@ -32,7 +32,7 @@ import net.runelite.client.RuneLite;
 public class PartyHistoryService
 {
 	private static final String FILE_NAME = "history.json";
-	private static final int SCHEMA_VERSION = 1;
+	private static final int SCHEMA_VERSION = 2;
 	/** Absolute ceiling regardless of config, so a bad value can't grow the file unboundedly. */
 	private static final int MAX_LIMIT = 500;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -89,34 +89,223 @@ public class PartyHistoryService
 				}
 			}
 		}
+		long now = System.currentTimeMillis();
+		List<HistoryMember> snapshot = snapshotMembers(party, now);
+		// size tracks the present-member count; fall back to the ad's own size only for a member-less
+		// (legacy/seed) ad so it stays consistent with what updateRoster maintains from here on.
+		int size = snapshot.isEmpty() ? party.getSize() : snapshot.size();
 		entries.add(0, new PartyHistoryEntry(id, party.getActivity(), party.getHost(), hosted,
-			party.getSize(), party.getCapacity(), party.isHardMode(), party.getInvocation(),
-			System.currentTimeMillis(), snapshotMembers(party)));
+			size, party.getCapacity(), party.isHardMode(), party.getInvocation(),
+			now, snapshot));
 		trim();
 		save();
 	}
 
 	/**
-	 * Deep-copy the party's roster (name + accountHash, host first) so the stored entry keeps a
-	 * stable snapshot even if the live ad's member objects are later reused or mutated. Returns an
-	 * empty list when the ad carried no members (e.g. a legacy/seed ad).
+	 * Merge the live roster of an already-recorded party (matched by {@code partyId}) into its history
+	 * row so joins and leaves after the player entered are reflected. Members who left are flagged (a
+	 * {@link HistoryMember#getLeftAt() leftAt} timestamp) rather than dropped, new members are appended
+	 * with a {@code joinedAt} of now, and a member who reappears has their {@code leftAt} cleared. The
+	 * entry's {@link PartyHistoryEntry#getSize() size} tracks the currently-present count.
+	 *
+	 * <p>No-op — and, crucially, no disk write — when there is no matching entry, when {@code live} is
+	 * null/empty (a transient disconnected roster must not flag everyone as left), or when nothing
+	 * actually changed. That last guard matters because this is called on every live-party tick
+	 * (presence pings included), so we only touch {@code history.json} when membership truly changed.
+	 *
+	 * @return {@code true} when an entry was updated and persisted; {@code false} otherwise.
 	 */
-	private static List<Member> snapshotMembers(Party party)
+	public synchronized boolean updateRoster(String partyId, List<Member> live)
 	{
-		List<Member> live = party.getMembers();
-		if (live == null || live.isEmpty())
+		if (partyId == null || live == null || live.isEmpty())
 		{
-			return new ArrayList<>();
+			return false;
 		}
-		List<Member> copy = new ArrayList<>(live.size());
+		for (PartyHistoryEntry e : entries)
+		{
+			if (!partyId.equals(e.getPartyId()))
+			{
+				continue;
+			}
+			if (mergeRoster(e, live, System.currentTimeMillis()))
+			{
+				save();
+				return true;
+			}
+			return false; // roster already up to date — skip the write
+		}
+		return false;
+	}
+
+	/**
+	 * Mark the party {@code partyId} as ended: stamp {@link HistoryMember#getLeftAt() leftAt} on every
+	 * member still flagged present so the concluded row shows nobody as "still here" (the local player /
+	 * host included). Called when the player leaves, disbands, or the party otherwise ends — the point
+	 * past which we can no longer observe the roster, so "present at the end" is recorded as left then.
+	 *
+	 * <p>The frozen {@link PartyHistoryEntry#getSize() size} is left as the last active count (a handy
+	 * "how big it got" summary); nothing mutates the row after this. No-op — no write — when there's no
+	 * matching entry or everyone had already left. Returns whether anything changed.
+	 */
+	public synchronized boolean closeParty(String partyId, long when)
+	{
+		if (partyId == null)
+		{
+			return false;
+		}
+		for (PartyHistoryEntry e : entries)
+		{
+			if (!partyId.equals(e.getPartyId()) || e.getMembers() == null)
+			{
+				continue;
+			}
+			boolean changed = false;
+			for (HistoryMember m : e.getMembers())
+			{
+				if (m != null && m.isPresent())
+				{
+					m.setLeftAt(when);
+					changed = true;
+				}
+			}
+			if (changed)
+			{
+				save();
+			}
+			return changed;
+		}
+		return false;
+	}
+
+	/**
+	 * Reconcile {@code entry}'s stored roster against the {@code live} members observed at {@code now}.
+	 * Returns whether anything changed. Members are identified by accountHash when known, falling back
+	 * to name; a stored member whose hash was unknown is upgraded once the live roster carries one.
+	 */
+	private static boolean mergeRoster(PartyHistoryEntry entry, List<Member> live, long now)
+	{
+		List<HistoryMember> stored = entry.getMembers();
+		if (stored == null)
+		{
+			stored = new ArrayList<>();
+			entry.setMembers(stored);
+		}
+		boolean changed = false;
+		boolean[] matched = new boolean[stored.size()];
+
+		for (Member lm : live)
+		{
+			if (lm == null || lm.getName() == null)
+			{
+				continue;
+			}
+			int idx = indexOfMember(stored, matched, lm);
+			if (idx < 0)
+			{
+				stored.add(new HistoryMember(lm.getName(), lm.getAccountHash(), now, 0));
+				changed = true;
+				continue;
+			}
+			matched[idx] = true;
+			HistoryMember hm = stored.get(idx);
+			if (hm.getLeftAt() != 0) // rejoined
+			{
+				hm.setLeftAt(0);
+				changed = true;
+			}
+			if (hm.getAccountHash() == 0 && lm.getAccountHash() != 0) // hash finally synced
+			{
+				hm.setAccountHash(lm.getAccountHash());
+				changed = true;
+			}
+			if (!lm.getName().equals(hm.getName())) // e.g. a display-name change
+			{
+				hm.setName(lm.getName());
+				changed = true;
+			}
+		}
+
+		// Anyone stored, still marked present, but absent from the live roster has just left.
+		for (int i = 0; i < matched.length; i++)
+		{
+			HistoryMember hm = stored.get(i);
+			if (!matched[i] && hm.getLeftAt() == 0)
+			{
+				hm.setLeftAt(now);
+				changed = true;
+			}
+		}
+
+		int present = 0;
+		for (HistoryMember hm : stored)
+		{
+			if (hm.isPresent())
+			{
+				present++;
+			}
+		}
+		if (entry.getSize() != present)
+		{
+			entry.setSize(present);
+			changed = true;
+		}
+		return changed;
+	}
+
+	/**
+	 * Index of the stored (not yet matched) member corresponding to {@code lm}: by accountHash when
+	 * both carry one, else by case-insensitive name. {@code -1} when this is a newly-seen member.
+	 */
+	private static int indexOfMember(List<HistoryMember> stored, boolean[] matched, Member lm)
+	{
+		if (lm.getAccountHash() != 0)
+		{
+			for (int i = 0; i < stored.size(); i++)
+			{
+				if (!matched[i] && stored.get(i).getAccountHash() == lm.getAccountHash())
+				{
+					return i;
+				}
+			}
+		}
+		for (int i = 0; i < stored.size(); i++)
+		{
+			HistoryMember hm = stored.get(i);
+			// Only match by name where the hash can't contradict it (one side unknown).
+			if (!matched[i] && (hm.getAccountHash() == 0 || lm.getAccountHash() == 0)
+				&& sameName(hm.getName(), lm.getName()))
+			{
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	private static boolean sameName(String a, String b)
+	{
+		return a != null && b != null && a.trim().equalsIgnoreCase(b.trim());
+	}
+
+	/**
+	 * The party's initial roster (name + accountHash, host first) as present members joined at
+	 * {@code now}. Returns an empty list when the ad carried no members (e.g. a legacy/seed ad).
+	 */
+	private static List<HistoryMember> snapshotMembers(Party party, long now)
+	{
+		List<HistoryMember> out = new ArrayList<>();
+		List<Member> live = party.getMembers();
+		if (live == null)
+		{
+			return out;
+		}
 		for (Member m : live)
 		{
 			if (m != null)
 			{
-				copy.add(new Member(m.getName(), m.getAccountHash()));
+				out.add(new HistoryMember(m.getName(), m.getAccountHash(), now, 0));
 			}
 		}
-		return copy;
+		return out;
 	}
 
 	/** A snapshot of the history, newest first. */
@@ -162,6 +351,7 @@ public class PartyHistoryService
 				{
 					if (e != null)
 					{
+						migrate(e);
 						entries.add(e);
 					}
 				}
@@ -174,6 +364,28 @@ public class PartyHistoryService
 		}
 		// Honour a limit that may have been lowered since the file was written.
 		trim();
+	}
+
+	/**
+	 * Bring a loaded entry up to the current shape. Rows written by the pre-timestamp format (v1)
+	 * deserialise into {@link HistoryMember}s with {@code joinedAt}/{@code leftAt} defaulting to 0;
+	 * treat everyone as still-present (they were, when recorded) and stamp {@code joinedAt} with the
+	 * party's own start time so the UI has a sensible value rather than the epoch.
+	 */
+	private static void migrate(PartyHistoryEntry entry)
+	{
+		List<HistoryMember> members = entry.getMembers();
+		if (members == null)
+		{
+			return;
+		}
+		for (HistoryMember m : members)
+		{
+			if (m != null && m.getJoinedAt() == 0)
+			{
+				m.setJoinedAt(entry.getJoinedAt());
+			}
+		}
 	}
 
 	private void save()

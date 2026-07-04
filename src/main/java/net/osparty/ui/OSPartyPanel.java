@@ -121,6 +121,8 @@ public class OSPartyPanel extends PluginPanel
 	/** Resolved icon for the Party/Create tab (the OSRS sprite once loaded, else the drawn fallback). */
 	private ImageIcon partyTabIcon = TabIcons.PARTY;
 	private boolean wasInParty;
+	/** Id of the party currently logged in history, so we can stamp it ended once we leave it. */
+	private String currentHistoryPartyId;
 	/** Whether the tab bar is in the in-party layout (Party shown, Create hidden). */
 	private boolean inPartyTabLayout;
 	/** Whether the host is editing their party (the create form is shown alongside the roster). */
@@ -258,6 +260,9 @@ public class OSPartyPanel extends PluginPanel
 		add(buildFooter(), BorderLayout.SOUTH);
 
 		partyState.addListener(this::onPartyStateChanged);
+		// Live joins/leaves arrive off the EDT via LiveParty; marshal back before touching the
+		// history snapshot and Swing (mirrors PartyPanel's own liveParty listener).
+		liveParty.addListener(() -> SwingUtilities.invokeLater(this::syncHistoryRoster));
 	}
 
 
@@ -588,14 +593,49 @@ public class OSPartyPanel extends PluginPanel
 		if (inParty && !wasInParty)
 		{
 			// Entered a party (hosted or joined): log it to history, then re-render the tab.
-			historyService.record(partyState.getCurrentParty(), partyState.isHost());
+			Party party = partyState.getCurrentParty();
+			historyService.record(party, partyState.isHost());
+			currentHistoryPartyId = party == null ? null : party.getId();
 			historyPanel.refresh();
 			tabGroup.select(partyTab);
+		}
+		else if (!inParty && wasInParty)
+		{
+			// Left / disbanded / party ended: stamp the still-present members (host included) as gone,
+			// so the concluded row no longer shows anyone as in the party. currentParty is already null.
+			if (historyService.closeParty(currentHistoryPartyId, System.currentTimeMillis()))
+			{
+				historyPanel.refresh();
+			}
+			currentHistoryPartyId = null;
 		}
 
 		wasInParty = inParty;
 		revalidate();
 		repaint();
+	}
+
+	/**
+	 * Keep the current party's history row in step with the live roster so members who join or leave
+	 * after we entered are reflected (the row is otherwise a frozen entry-time snapshot). Fires on
+	 * every live-party change; {@link PartyHistoryService#updateRoster} only rewrites the file — and
+	 * we only refresh the panel — when the membership actually changed, so presence pings are cheap.
+	 */
+	private void syncHistoryRoster()
+	{
+		if (!partyState.isInParty())
+		{
+			return;
+		}
+		Party party = partyState.getCurrentParty();
+		if (party == null)
+		{
+			return;
+		}
+		if (historyService.updateRoster(party.getId(), liveParty.currentMembers()))
+		{
+			historyPanel.refresh();
+		}
 	}
 
 	/** Restore the Create/Party tab to its default party icon + tooltip (leaving edit mode). */

@@ -4,7 +4,6 @@ import java.util.List;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import net.osparty.model.Member;
 
 /**
  * One row of the local party history: a party the player was part of, recorded the
@@ -29,7 +28,7 @@ public class PartyHistoryEntry
 	/** True when the player hosted this party; false when they joined as a member. */
 	private boolean hosted;
 
-	/** Party size / capacity at the time of recording. */
+	/** Currently-present member count (updated as members join/leave) and the party's capacity. */
 	private int size;
 	private int capacity;
 
@@ -41,9 +40,10 @@ public class PartyHistoryEntry
 	private long joinedAt;
 
 	/**
-	 * The party's roster at the moment it was recorded: each member's display name and stable
-	 * accountHash (host first, matching {@link net.osparty.model.Party#getMembers()}). May be
+	 * Everyone who was in the party while the local player was (host first, then in the order they
+	 * were first seen). Members who leave are flagged via {@link HistoryMember#getLeftAt()} rather
+	 * than removed, so this is a running record rather than a point-in-time snapshot. May be
 	 * {@code null} or empty for older history rows written before members were captured.
 	 */
-	private List<Member> members;
+	private List<HistoryMember> members;
 }
