@@ -13,6 +13,7 @@ import java.awt.Font;
 import java.awt.event.HierarchyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.image.BufferedImage;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -23,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
@@ -36,6 +38,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
+import net.runelite.client.util.ImageUtil;
 
 /**
  * The "History" tab: a capped, newest-first list of the parties the player has been in
@@ -236,9 +239,24 @@ class HistoryPanel extends JPanel
 	/** Soft green marking a member still in the party, mirrored from the live roster's "online" dot. */
 	private static final Color PRESENT_COLOR = new Color(0x4C, 0xAF, 0x50);
 
-	/** Disclosure-triangle glyphs for the collapsible roster (rendered in a logical font). */
-	private static final String COLLAPSED = "▸"; // ▸
-	private static final String EXPANDED = "▾";  // ▾
+	/** RuneLite's config-section caret (grey): points right when collapsed, down when expanded. */
+	private static final ImageIcon CARET_COLLAPSED = caret(0);
+	private static final ImageIcon CARET_EXPANDED = caret(Math.PI / 2);
+
+	private static ImageIcon caret(double rotation)
+	{
+		BufferedImage arrow = ImageUtil.loadImageResource(HistoryPanel.class, "/util/arrow_right.png");
+		if (arrow == null)
+		{
+			return null;
+		}
+		BufferedImage grey = ImageUtil.luminanceOffset(arrow, -121);
+		if (rotation != 0)
+		{
+			grey = ImageUtil.rotateImage(grey, rotation);
+		}
+		return new ImageIcon(grey);
+	}
 
 	/**
 	 * One history row: a clickable header (activity, role, roster summary, when) that toggles a
@@ -305,11 +323,9 @@ class HistoryPanel extends JPanel
 		String key = keyOf(entry);
 		boolean open = expanded.contains(key);
 
-		// A chevron on the left signals (and toggles) the collapsible roster detail below. Use a
-		// logical font (not the RuneScape bitmap font, which lacks the triangle glyphs) so it renders.
-		JLabel chevron = new JLabel(open ? EXPANDED : COLLAPSED);
-		chevron.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 9));
-		chevron.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
+		// A caret on the left signals (and toggles) the collapsible roster detail below, matching
+		// the disclosure carets on the Friends and Search tabs.
+		JLabel chevron = new JLabel(open ? CARET_EXPANDED : CARET_COLLAPSED);
 		chevron.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 4));
 		header.add(chevron, BorderLayout.WEST);
 
@@ -326,7 +342,7 @@ class HistoryPanel extends JPanel
 			{
 				boolean show = !detail.isVisible();
 				detail.setVisible(show);
-				chevron.setText(show ? EXPANDED : COLLAPSED);
+				chevron.setIcon(show ? CARET_EXPANDED : CARET_COLLAPSED);
 				if (show)
 				{
 					expanded.add(key);
