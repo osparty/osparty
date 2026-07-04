@@ -127,6 +127,7 @@ class CreatePanel extends JPanel implements Scrollable
 	private final JSpinner minKcSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 100_000, 10));
 	private final JLabel hardKcLabel = new JLabel("Minimum CM KC");
 	private final JSpinner hardKcSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 100_000, 10));
+	private JPanel minKcField;
 	private JPanel hardKcField;
 
 	private final JComboBox<Role> myRoleDropdown = new JComboBox<>();
@@ -239,7 +240,8 @@ class CreatePanel extends JPanel implements Scrollable
 
 		// ---- Requirements ----
 		add(sectionHeader("Requirements"));
-		add(field("Minimum KC", minKcSpinner));
+		minKcField = field("Minimum KC", minKcSpinner);
+		add(minKcField);
 		hardKcField = field(hardKcLabel, hardKcSpinner);
 		add(hardKcField);
 		add(checkBoxRow(privateCheck));
@@ -428,10 +430,13 @@ class CreatePanel extends JPanel implements Scrollable
 			// composition for CoX — don't use assignedRoleTotal(), which is 0 for ToB.
 			int capacity = (Integer) capacitySpinner.getValue();
 			List<String> req = captureRequiredRoles(activity, capacity);
-			int assigned = req == null ? 0 : req.size();
-			if (assigned != capacity)
+			if (!activity.hasFlexibleRoles())
 			{
-				return false;
+				int assigned = req == null ? 0 : req.size();
+				if (assigned != capacity)
+				{
+					return false;
+				}
 			}
 			Role mine = (Role) myRoleDropdown.getSelectedItem();
 			String hostRole = mine != null ? mine.getId() : null;
@@ -611,6 +616,15 @@ class CreatePanel extends JPanel implements Scrollable
 			model.setValue(activity.getMaxPartySize());
 		}
 
+		// A minimum-KC bar only makes sense where there's a hiscore killcount to check
+		// (Barbarian Assault, a minigame, has none).
+		boolean hasKillcount = activity.hasKillcount();
+		minKcField.setVisible(hasKillcount);
+		if (!hasKillcount)
+		{
+			minKcSpinner.setValue(0);
+		}
+
 		// The hard-mode KC requirement only applies to activities that have one
 		// (e.g. Chambers of Xeric CM, Theatre of Blood HM, Tombs of Amascut Expert).
 		boolean hardMode = activity.hasHardMode();
@@ -738,7 +752,18 @@ class CreatePanel extends JPanel implements Scrollable
 		}
 		rebuildingRoles = false;
 
-		if (activity.hasFixedComposition(hardMode))
+		if (activity.hasFlexibleRoles())
+		{
+			// Barbarian Assault: no spinners - one of each role plus a flexible "extra" slot that
+			// whoever applies doubles up (capped at two of any one role), for a team of the size.
+			rebuildingRoles = true;
+			roleCountSpinners.clear();
+			roleCountsPanel.removeAll();
+			rebuildingRoles = false;
+			roleTotalLabel.setText("Team of " + capacity + ": one of each role, plus 1 extra (max 2 of a role).");
+			roleTotalLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		}
+		else if (activity.hasFixedComposition(hardMode))
 		{
 			// Normal ToB: no spinners - the team make-up is determined by party size.
 			rebuildingRoles = true;
@@ -875,6 +900,18 @@ class CreatePanel extends JPanel implements Scrollable
 		if (activity == null || !activity.hasRoles())
 		{
 			return null;
+		}
+		if (activity.hasFlexibleRoles())
+		{
+			// Barbarian Assault: the composition isn't laid out slot by slot. We advertise the
+			// base roles (one of each is mandatory); the flexible "extra" is resolved as members
+			// pick, so it isn't part of the stored multiset.
+			List<String> roles = new ArrayList<>();
+			for (Role role : activity.roles(false))
+			{
+				roles.add(role.getId());
+			}
+			return roles;
 		}
 		if (activity.hasFixedComposition(hardModeCheck.isSelected()))
 		{
@@ -1134,11 +1171,16 @@ class CreatePanel extends JPanel implements Scrollable
 			return new RoleSelection(null, null);
 		}
 		List<String> requiredRoles = captureRequiredRoles(activity, capacity);
-		int assigned = requiredRoles == null ? 0 : requiredRoles.size();
-		if (assigned != capacity)
+		// Flexible activities (BA) advertise the base roles rather than a size-exact multiset —
+		// the "extra" slot is filled by whoever doubles up, so don't demand assigned == capacity.
+		if (!activity.hasFlexibleRoles())
 		{
-			setStatus("Assign exactly " + capacity + " role slots (currently " + assigned + ").");
-			return null;
+			int assigned = requiredRoles == null ? 0 : requiredRoles.size();
+			if (assigned != capacity)
+			{
+				setStatus("Assign exactly " + capacity + " role slots (currently " + assigned + ").");
+				return null;
+			}
 		}
 		Role mine = (Role) myRoleDropdown.getSelectedItem();
 		String hostRole = mine != null ? mine.getId() : null;

@@ -496,6 +496,7 @@ class SearchPanel extends PartyCardPanel
 		roleTabs.addTab("HMT", buildRoleTab(Activity.THEATRE_OF_BLOOD, true));
 		roleTabs.addTab("CoX", buildRoleTab(Activity.CHAMBERS_OF_XERIC, false));
 		roleTabs.addTab("CM", buildRoleTab(Activity.CHAMBERS_OF_XERIC, true));
+		roleTabs.addTab("BA", buildRoleTab(Activity.BARBARIAN_ASSAULT, false));
 		roleTabs.setAlignmentX(Component.LEFT_ALIGNMENT);
 
 		// (The "I'm a learner" mark now lives in the apply picker, chosen per application.)

@@ -21,7 +21,7 @@ public enum Activity
 	NEX("nex", "Nex", 1, 40, null, 11601),
 	NIGHTMARE("nightmare", "The Nightmare", 1, 80, null, 15515, 15155),
 	CORPOREAL_BEAST("corp", "Corporeal Beast", 1, 30, null, 12857),
-	BARBARIAN_ASSAULT("ba", "Barbarian Assault", 4, 5, null, 10039),
+	BARBARIAN_ASSAULT("ba", "Barbarian Assault", 5, 5, null, 10039),
 	ZALCANO("zalcano", "Zalcano", 1, 30, null, 13150),
 	HUEYCOATL("hueycoatl", "The Hueycoatl", 1, 10, null, 5939),
 	YAMA("yama", "Yama", 1, 2, null, 6045),
@@ -52,6 +52,15 @@ public enum Activity
 	public boolean hasHardMode()
 	{
 		return hardModeLabel != null;
+	}
+
+	/**
+	 * True when this activity has a hiscore killcount a host can set a minimum for.
+	 * Barbarian Assault is a minigame with no boss killcount, so its ads carry no KC bar.
+	 */
+	public boolean hasKillcount()
+	{
+		return this != BARBARIAN_ASSAULT;
 	}
 
 	public boolean isRaid()
@@ -95,6 +104,8 @@ public enum Activity
 				return hardMode
 					? Arrays.asList(Role.COX_CM_VENG, Role.COX_CM_ANCIENT, Role.COX_CM_NORMAL, Role.COX_CM_FILL)
 					: Arrays.asList(Role.COX_MELEE, Role.COX_MAGE, Role.COX_RUNNER, Role.COX_FILL);
+			case BARBARIAN_ASSAULT:
+				return Arrays.asList(Role.BA_ATTACKER, Role.BA_DEFENDER, Role.BA_COLLECTOR, Role.BA_HEALER);
 			default:
 				return Collections.emptyList();
 		}
@@ -116,6 +127,10 @@ public enum Activity
 					: Arrays.asList(Role.TOB_MELEE, Role.TOB_RANGED, Role.TOB_NFRZ, Role.TOB_SFRZ, Role.TOB_FILL);
 			case CHAMBERS_OF_XERIC:
 				return roles(hardMode); // the mode's Fill already doubles as the "any" option
+			case BARBARIAN_ASSAULT:
+				// BA has no Fill slot in a composition, but you can still search as "any role".
+				return Arrays.asList(Role.BA_ATTACKER, Role.BA_DEFENDER, Role.BA_COLLECTOR,
+					Role.BA_HEALER, Role.BA_FILL);
 			default:
 				return Collections.emptyList();
 		}
@@ -145,6 +160,8 @@ public enum Activity
 				return hardMode ? Role.TOB_HM_FILL : Role.TOB_FILL;
 			case CHAMBERS_OF_XERIC:
 				return hardMode ? Role.COX_CM_FILL : Role.COX_FILL;
+			case BARBARIAN_ASSAULT:
+				return Role.BA_FILL;
 			default:
 				return null;
 		}
@@ -211,7 +228,83 @@ public enum Activity
 
 	public boolean hasRoles()
 	{
-		return this == THEATRE_OF_BLOOD || this == CHAMBERS_OF_XERIC;
+		return this == THEATRE_OF_BLOOD || this == CHAMBERS_OF_XERIC || this == BARBARIAN_ASSAULT;
+	}
+
+	/**
+	 * True when the team composition isn't a fixed multiset the host lays out slot by
+	 * slot, but a set of roles applicants pick freely: every base role is wanted at
+	 * least once, then any spare slot may double a role up to {@link #roleCap()}, with
+	 * the whole team capped at the party size (Barbarian Assault). "For now" the host
+	 * doesn't choose which role gets doubled — whoever applies decides.
+	 */
+	public boolean hasFlexibleRoles()
+	{
+		return this == BARBARIAN_ASSAULT;
+	}
+
+	/** How many times a single role may appear in a team: two for Barbarian Assault, else one. */
+	public int roleCap()
+	{
+		return this == BARBARIAN_ASSAULT ? 2 : 1;
+	}
+
+	/**
+	 * The roles still open for a {@link #hasFlexibleRoles() flexible} activity given the
+	 * roles already taken and the team {@code capacity}. Every base role is mandatory
+	 * once; while a spare slot remains, a role that's under its {@link #roleCap()} may
+	 * still be picked (the "extra"), so once a role hits its cap it drops out. Returns an
+	 * empty list when the team is full or this activity isn't flexible.
+	 */
+	public List<String> flexibleNeededRoles(List<String> takenRoles, int capacity)
+	{
+		if (!hasFlexibleRoles())
+		{
+			return Collections.emptyList();
+		}
+		java.util.Map<String, Integer> counts = new java.util.LinkedHashMap<>();
+		for (Role role : roles(false))
+		{
+			counts.put(role.getId(), 0);
+		}
+		int taken = 0;
+		if (takenRoles != null)
+		{
+			for (String id : takenRoles)
+			{
+				taken++;
+				if (counts.containsKey(id))
+				{
+					counts.merge(id, 1, Integer::sum);
+				}
+			}
+		}
+		int openSlots = Math.max(0, capacity - taken);
+		if (openSlots == 0)
+		{
+			return new ArrayList<>();
+		}
+		int emptyRoles = 0;
+		for (int count : counts.values())
+		{
+			if (count == 0)
+			{
+				emptyRoles++;
+			}
+		}
+		// A spare slot beyond covering every still-empty base role is what lets a role double up.
+		boolean allowExtra = openSlots > emptyRoles;
+		int cap = roleCap();
+		List<String> needed = new ArrayList<>();
+		for (java.util.Map.Entry<String, Integer> entry : counts.entrySet())
+		{
+			int count = entry.getValue();
+			if (count == 0 || (allowExtra && count < cap))
+			{
+				needed.add(entry.getKey());
+			}
+		}
+		return needed;
 	}
 
 	/**

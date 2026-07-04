@@ -1233,11 +1233,15 @@ public class LiveParty
 	 */
 	public List<String> neededRoles(List<String> requiredRoles)
 	{
-		if (requiredRoles == null || requiredRoles.isEmpty())
+		net.osparty.model.Activity activity = net.osparty.model.Activity.fromId(currentActivityId);
+		boolean flexible = activity != null && activity.hasFlexibleRoles();
+		if (!flexible && (requiredRoles == null || requiredRoles.isEmpty()))
 		{
 			return requiredRoles;
 		}
-		List<String> remaining = new ArrayList<>(requiredRoles);
+
+		// The roles the admitted members (host + members) have already taken.
+		List<String> taken = new ArrayList<>();
 		for (RosterMember member : roster())
 		{
 			if (member.getStatus() == Status.PENDING)
@@ -1248,8 +1252,21 @@ public class LiveParty
 				: (member.getData() != null ? member.getData().getRole() : null);
 			if (role != null)
 			{
-				remaining.remove(role);
+				taken.add(role);
 			}
+		}
+
+		// Flexible activities (Barbarian Assault) don't subtract from a fixed multiset —
+		// a role stays open until it hits its per-role cap, and any spare slot may double up.
+		if (flexible)
+		{
+			return activity.flexibleNeededRoles(taken, capacity > 0 ? capacity : currentTeamSize);
+		}
+
+		List<String> remaining = new ArrayList<>(requiredRoles);
+		for (String role : taken)
+		{
+			remaining.remove(role);
 		}
 		return remaining;
 	}
