@@ -1,7 +1,6 @@
 package net.osparty.store;
 
 import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import java.io.File;
 import java.io.IOException;
 import java.io.Reader;
@@ -34,25 +33,27 @@ public class JsonPartyStore implements PartyStore
 {
 	private static final String FILE_NAME = "flags.json";
 	private static final int SCHEMA_VERSION = 1;
-	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
+	/** Derived from the client's shared Gson (never a fresh instance — the Plugin Hub forbids that). */
+	private final Gson gson;
 	private final File file;
 	/** kind -&gt; its persisted flags. Guarded by the instance monitor. */
 	private final Map<FlagKind, List<PlayerFlag>> flags = new EnumMap<>(FlagKind.class);
 
 	@Inject
-	public JsonPartyStore()
+	public JsonPartyStore(Gson gson)
 	{
-		this(new File(RuneLite.RUNELITE_DIR, "osparty"));
+		this(new File(RuneLite.RUNELITE_DIR, "osparty"), gson);
 	}
 
 	/** Test/embeddable entry point: read (or create) the store in {@code dir}. */
-	public JsonPartyStore(File dir)
+	public JsonPartyStore(File dir, Gson gson)
 	{
 		if (!dir.exists() && !dir.mkdirs())
 		{
 			throw new IllegalStateException("Could not create OSParty data dir: " + dir);
 		}
+		this.gson = gson.newBuilder().setPrettyPrinting().create();
 		this.file = new File(dir, FILE_NAME);
 		load();
 	}
@@ -73,7 +74,7 @@ public class JsonPartyStore implements PartyStore
 		}
 		try (Reader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8))
 		{
-			Data data = GSON.fromJson(reader, Data.class);
+			Data data = gson.fromJson(reader, Data.class);
 			if (data != null && data.flags != null)
 			{
 				for (Map.Entry<FlagKind, List<PlayerFlag>> e : data.flags.entrySet())
@@ -100,7 +101,7 @@ public class JsonPartyStore implements PartyStore
 		data.flags.putAll(flags);
 		try (Writer writer = Files.newBufferedWriter(file.toPath(), StandardCharsets.UTF_8))
 		{
-			GSON.toJson(data, writer);
+			gson.toJson(data, writer);
 		}
 		catch (IOException e)
 		{

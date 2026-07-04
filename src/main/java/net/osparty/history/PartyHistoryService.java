@@ -1,7 +1,6 @@
 package net.osparty.history;
 
 import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import java.io.File;
 import java.io.IOException;
 import java.io.Reader;
@@ -35,26 +34,28 @@ public class PartyHistoryService
 	private static final int SCHEMA_VERSION = 2;
 	/** Absolute ceiling regardless of config, so a bad value can't grow the file unboundedly. */
 	private static final int MAX_LIMIT = 500;
-	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
+	/** Derived from the client's shared Gson (never a fresh instance — the Plugin Hub forbids that). */
+	private final Gson gson;
 	private final File file;
 	private final IntSupplier limitSupplier;
 	/** Newest first. Guarded by the instance monitor. */
 	private final List<PartyHistoryEntry> entries = new ArrayList<>();
 
 	@Inject
-	PartyHistoryService(OSPartyConfig config)
+	PartyHistoryService(OSPartyConfig config, Gson gson)
 	{
-		this(new File(RuneLite.RUNELITE_DIR, "osparty"), config::partyHistoryLimit);
+		this(new File(RuneLite.RUNELITE_DIR, "osparty"), config::partyHistoryLimit, gson);
 	}
 
 	/** Test/embeddable entry point: store in {@code dir}, taking the cap from {@code limitSupplier}. */
-	public PartyHistoryService(File dir, IntSupplier limitSupplier)
+	public PartyHistoryService(File dir, IntSupplier limitSupplier, Gson gson)
 	{
 		if (!dir.exists() && !dir.mkdirs())
 		{
 			throw new IllegalStateException("Could not create OSParty data dir: " + dir);
 		}
+		this.gson = gson.newBuilder().setPrettyPrinting().create();
 		this.file = new File(dir, FILE_NAME);
 		this.limitSupplier = limitSupplier;
 		load();
@@ -344,7 +345,7 @@ public class PartyHistoryService
 		}
 		try (Reader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8))
 		{
-			Data data = GSON.fromJson(reader, Data.class);
+			Data data = gson.fromJson(reader, Data.class);
 			if (data != null && data.entries != null)
 			{
 				for (PartyHistoryEntry e : data.entries)
@@ -394,7 +395,7 @@ public class PartyHistoryService
 		data.entries.addAll(entries);
 		try (Writer writer = Files.newBufferedWriter(file.toPath(), StandardCharsets.UTF_8))
 		{
-			GSON.toJson(data, writer);
+			gson.toJson(data, writer);
 		}
 		catch (IOException e)
 		{

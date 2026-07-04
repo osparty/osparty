@@ -15,8 +15,8 @@ def runeLiteVersion = 'latest.release'
 dependencies {
     compileOnly group: 'net.runelite', name: 'client', version: runeLiteVersion
 
-    compileOnly 'org.projectlombok:lombok:1.18.30'
-    annotationProcessor 'org.projectlombok:lombok:1.18.30'
+    compileOnly 'org.projectlombok:lombok:1.18.46'
+    annotationProcessor 'org.projectlombok:lombok:1.18.46'
 
     // Local persistence (favourites / block list, party history) is plain JSON via RuneLite's
     // bundled Gson (see net.osparty.store.JsonPartyStore) — no extra runtime dependency, which

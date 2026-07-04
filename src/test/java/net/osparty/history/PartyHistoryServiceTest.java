@@ -1,5 +1,6 @@
 package net.osparty.history;
 
+import com.google.gson.Gson;
 import java.io.File;
 import java.nio.file.Files;
 import java.util.Arrays;
@@ -30,7 +31,7 @@ public class PartyHistoryServiceTest
 
 	private PartyHistoryService open()
 	{
-		return new PartyHistoryService(dir, () -> limit);
+		return new PartyHistoryService(dir, () -> limit, new Gson());
 	}
 
 	private static Party party(String id, String activity, String host)

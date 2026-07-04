@@ -1,5 +1,6 @@
 package net.osparty;
 
+import com.google.gson.Gson;
 import java.io.File;
 import java.nio.file.Files;
 import java.util.Arrays;
@@ -31,7 +32,7 @@ public class BlockListServiceTest
 	public void setUp() throws Exception
 	{
 		dir = Files.createTempDirectory("osparty-store-test").toFile();
-		store = new JsonPartyStore(dir);
+		store = new JsonPartyStore(dir, new Gson());
 		blocks = new BlockListService(store);
 	}
 
@@ -62,7 +63,7 @@ public class BlockListServiceTest
 		blocks.toggle(123L, "Durial321");
 		store.close();
 
-		PartyStore reopened = new JsonPartyStore(dir);
+		PartyStore reopened = new JsonPartyStore(dir, new Gson());
 		try
 		{
 			BlockListService reloaded = new BlockListService(reopened);
