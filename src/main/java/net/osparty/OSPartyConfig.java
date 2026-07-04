@@ -95,6 +95,19 @@ public interface OSPartyConfig extends Config
 		return BlockedApplicantAction.WARN;
 	}
 
+	@Range(min = 1, max = 500)
+	@ConfigItem(
+		keyName = "partyHistoryLimit",
+		name = "Party history size",
+		description = "How many past parties to keep in the History tab. Older entries are dropped once the limit is reached.",
+		position = 16,
+		section = GENERAL
+	)
+	default int partyHistoryLimit()
+	{
+		return 50;
+	}
+
 	@ConfigItem(
 		keyName = "inGamePrompts",
 		name = "In-game join prompts",

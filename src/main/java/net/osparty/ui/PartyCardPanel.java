@@ -725,6 +725,11 @@ abstract class PartyCardPanel extends JPanel
 			if (blockListService != null && party.getHost() != null)
 			{
 				boolean wasBlocked = blockListService.isBlocked(hostHash, party.getHost());
+				// Confirm the consequences before blocking (but let unblocking happen instantly).
+				if (!wasBlocked && !BlockConfirm.confirm(blockBtn, party.getHost()))
+				{
+					return;
+				}
 				blockListService.toggle(hostHash, party.getHost());
 				boolean nowBlocked = !wasBlocked;
 				// Favouriting and blocking the same host are mutually exclusive.

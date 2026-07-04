@@ -842,6 +842,11 @@ class PartyPanel extends JPanel
 		block.setToolTipText(blocked ? "Unblock " + rsn : "Block " + rsn);
 		block.addActionListener(e -> {
 			boolean wasBlocked = blockListService.isBlocked(hash, rsn);
+			// Confirm the consequences before blocking (but let unblocking happen instantly).
+			if (!wasBlocked && !BlockConfirm.confirm(block, rsn))
+			{
+				return;
+			}
 			blockListService.toggle(hash, rsn);
 			boolean nowBlocked = !wasBlocked;
 			if (nowBlocked && favoritesService != null && favoritesService.isFavorite(hash, rsn))

@@ -3,6 +3,7 @@
 .cursor/
 gradle.properties
 build/
+bin/
 out/
 .idea/
 *.iml
