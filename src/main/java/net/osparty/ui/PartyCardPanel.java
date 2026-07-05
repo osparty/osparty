@@ -752,7 +752,11 @@ abstract class PartyCardPanel extends JPanel
 		hostRow.setAlignmentX(Component.LEFT_ALIGNMENT);
 		hostRow.add(starBtn, BorderLayout.WEST);
 		hostRow.add(hostLabel, BorderLayout.CENTER);
-		hostRow.add(blockBtn, BorderLayout.EAST);
+		// You can't block yourself, so don't offer the toggle on your own ad.
+		if (blockListService == null || !blockListService.isSelf(hostHash, party.getHost()))
+		{
+			hostRow.add(blockBtn, BorderLayout.EAST);
+		}
 
 		String capacity = party.getCapacity() > 0
 			? party.getSize() + "/" + party.getCapacity()

@@ -224,19 +224,20 @@ class SearchPanel extends PartyCardPanel
 		north.add(buildControlsBar());
 		north.add(buildSearchBar());
 		north.add(buildSortRow());
-		add(north, BorderLayout.NORTH);
 
 		resultsPanel.setLayout(new BoxLayout(resultsPanel, BoxLayout.Y_AXIS));
 		resultsPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
-		// Wrap results so a long party list scrolls within the tab rather than
-		// growing the whole side-panel. Tracks the viewport width so cards never
-		// exceed it (otherwise a wide card pushes its Apply button off the edge).
-		JPanel resultsWrap = new ScrollableColumn(new BorderLayout());
-		resultsWrap.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		resultsWrap.add(resultsPanel, BorderLayout.NORTH);
+		// The whole tab scrolls as one: the filters/controls (north) plus the party list
+		// below them, in a single fixed-size viewport. Tracks the viewport width so cards
+		// never exceed it (otherwise a wide card pushes its Apply button off the edge), and
+		// doesn't track height so the column can grow past the viewport and scroll.
+		JPanel content = new ScrollableColumn(new BorderLayout(0, 8));
+		content.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		content.add(north, BorderLayout.NORTH);
+		content.add(resultsPanel, BorderLayout.CENTER);
 
-		scroll = new JScrollPane(resultsWrap,
+		scroll = new JScrollPane(content,
 			JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
 			JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
 		scroll.setBorder(BorderFactory.createEmptyBorder());
