@@ -1,5 +1,7 @@
 package net.osparty.ui;
 
+import net.osparty.BlockListService;
+import net.osparty.FavoritesService;
 import net.osparty.history.HistoryMember;
 import net.osparty.history.PartyHistoryEntry;
 import net.osparty.history.PartyHistoryService;
@@ -10,6 +12,8 @@ import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.Insets;
+import javax.swing.JComponent;
 import java.awt.event.HierarchyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -60,6 +64,10 @@ class HistoryPanel extends JPanel
 	private static final String ROLE_JOINED = "Joined";
 
 	private final PartyHistoryService historyService;
+	private final FavoritesService favoritesService;
+	private final BlockListService blockListService;
+	/** Notifies the owning panel that a favourite/block changed, so sibling tabs re-render. */
+	private Runnable onFlagChanged;
 	private final JPanel listContent;
 	private final JScrollPane scroll;
 	private final JLabel statusLabel;
@@ -73,9 +81,12 @@ class HistoryPanel extends JPanel
 	/** Party keys whose roster detail is expanded, so a re-render preserves what the user opened. */
 	private final Set<String> expanded = new HashSet<>();
 
-	HistoryPanel(PartyHistoryService historyService)
+	HistoryPanel(PartyHistoryService historyService, FavoritesService favoritesService,
+		BlockListService blockListService)
 	{
 		this.historyService = historyService;
+		this.favoritesService = favoritesService;
+		this.blockListService = blockListService;
 
 		setLayout(new BorderLayout(0, 0));
 		setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -198,6 +209,22 @@ class HistoryPanel extends JPanel
 				refreshTimer.stop();
 			}
 		});
+	}
+
+	/** Register a callback fired when a favourite/block is toggled here, so sibling tabs refresh. */
+	void setOnFlagChanged(Runnable onFlagChanged)
+	{
+		this.onFlagChanged = onFlagChanged;
+	}
+
+	/** Re-render (so the just-actioned player's buttons drop away) and refresh the sibling tabs. */
+	private void flagsChanged()
+	{
+		refresh();
+		if (onFlagChanged != null)
+		{
+			onFlagChanged.run();
+		}
 	}
 
 	/** Rebuild the list from the current history, preserving scroll position. Safe to call on the EDT. */
@@ -363,7 +390,7 @@ class HistoryPanel extends JPanel
 	}
 
 	/** The collapsible roster: present members first (host first), then those who have left, greyed. */
-	private static JPanel buildDetail(PartyHistoryEntry entry)
+	private JPanel buildDetail(PartyHistoryEntry entry)
 	{
 		JPanel detail = new JPanel();
 		detail.setLayout(new BoxLayout(detail, BoxLayout.Y_AXIS));
@@ -392,8 +419,8 @@ class HistoryPanel extends JPanel
 		return detail;
 	}
 
-	/** One member line: name (host tagged) on the left, "joined–left" times on the right. */
-	private static JPanel memberLine(PartyHistoryEntry entry, HistoryMember m)
+	/** One member line: name (host tagged) on the left, "joined–left" times (and quick actions) on the right. */
+	private JPanel memberLine(PartyHistoryEntry entry, HistoryMember m)
 	{
 		JPanel line = new JPanel(new BorderLayout(6, 0));
 		line.setBackground(ColorScheme.DARKER_GRAY_COLOR);
@@ -411,9 +438,92 @@ class HistoryPanel extends JPanel
 		timeLabel.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
 
 		line.add(nameLabel, BorderLayout.WEST);
-		line.add(timeLabel, BorderLayout.EAST);
+
+		// Right side: the join/leave span, plus quick favourite/block actions for other players.
+		JPanel right = new JPanel();
+		right.setLayout(new BoxLayout(right, BoxLayout.X_AXIS));
+		right.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		right.add(timeLabel);
+		JComponent actions = memberActions(m);
+		if (actions != null)
+		{
+			right.add(Box.createHorizontalStrut(6));
+			right.add(actions);
+		}
+
+		line.add(right, BorderLayout.EAST);
 		line.setMaximumSize(new Dimension(Integer.MAX_VALUE, line.getPreferredSize().height));
 		return line;
+	}
+
+	/**
+	 * A favourite + block button pair for {@code m}, or {@code null} when there's nothing to offer:
+	 * an unnamed row, yourself (you can't favourite/block yourself), or a player already on either
+	 * list (manage those from the Favorites / Blocked tabs). Favouriting and blocking are mutually
+	 * exclusive, so each action clears the other.
+	 */
+	private JComponent memberActions(HistoryMember m)
+	{
+		if (favoritesService == null || blockListService == null || !isNamed(m))
+		{
+			return null;
+		}
+		final long hash = m.getAccountHash();
+		final String name = m.getName();
+		if (blockListService.isSelf(hash, name)
+			|| favoritesService.isFavorite(hash, name)
+			|| blockListService.isBlocked(hash, name))
+		{
+			return null;
+		}
+
+		JPanel actions = new JPanel();
+		actions.setLayout(new BoxLayout(actions, BoxLayout.X_AXIS));
+		actions.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+
+		JButton fav = iconButton(StatusIcons.STAR_OUTLINE, "Add " + name + " to Favorites");
+		fav.addActionListener(e ->
+		{
+			favoritesService.toggle(hash, name);
+			if (blockListService.isBlocked(hash, name))
+			{
+				blockListService.toggle(hash, name);
+			}
+			flagsChanged();
+		});
+
+		JButton block = iconButton(StatusIcons.BLOCK_OFF, "Block " + name);
+		block.addActionListener(e ->
+		{
+			if (!BlockConfirm.confirm(block, name))
+			{
+				return;
+			}
+			blockListService.toggle(hash, name);
+			if (favoritesService.isFavorite(hash, name))
+			{
+				favoritesService.toggle(hash, name);
+			}
+			flagsChanged();
+		});
+
+		actions.add(fav);
+		actions.add(Box.createHorizontalStrut(2));
+		actions.add(block);
+		return actions;
+	}
+
+	/** A borderless, transparent icon button sized for an inline roster action. */
+	private static JButton iconButton(ImageIcon icon, String tooltip)
+	{
+		JButton button = new JButton(icon);
+		button.setFocusPainted(false);
+		button.setContentAreaFilled(false);
+		button.setBorderPainted(false);
+		button.setMargin(new Insets(0, 2, 0, 2));
+		button.setToolTipText(tooltip);
+		button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+		return button;
 	}
 
 	/**

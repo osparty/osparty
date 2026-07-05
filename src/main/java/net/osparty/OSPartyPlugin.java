@@ -331,6 +331,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		worldPinger = new WorldPinger();
 
+		// Guard against a player blocking themselves (self-block is meaningless and hides
+		// your own ads); the service matches by hash when known, else by current name.
+		blockListService.setSelf(this::getAccountHash, this::getPlayerName);
+
 		panel = new OSPartyPanel(partyService, config, this::getPlayerName, this,
 			this::getFriendsChatOwner, this::getCurrentWorld, itemManager, liveParty, runeWatchService,
 			this::getAccountType, killcountService, skillIconManager, this::hopTo, this::getMapRegions,

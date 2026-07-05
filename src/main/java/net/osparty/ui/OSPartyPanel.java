@@ -182,7 +182,14 @@ public class OSPartyPanel extends PluginPanel
 			skillIconManager, worldSupplier, worldHopper, friendsChatOwnerSupplier, coxLayoutSupplier,
 			config, configManager, favoritesService, blockListService, spriteManager,
 			() -> discordLinked, this::startDiscordLink, accountHashSupplier);
-		historyPanel = new HistoryPanel(historyService);
+		historyPanel = new HistoryPanel(historyService, favoritesService, blockListService);
+		// Favouriting/blocking a player from a history roster refreshes the affected tabs.
+		historyPanel.setOnFlagChanged(() ->
+		{
+			searchPanel.renderCurrent();
+			favoritesPanel.render();
+			blockedPanel.render();
+		});
 
 		// Host edit flow: the Party tab's "Edit party" button opens the create form in edit
 		// mode; saving returns to the Party (roster) tab.

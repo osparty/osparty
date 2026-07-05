@@ -42,6 +42,13 @@ public enum Role
 	COX_CM_ANCIENT("coxcmancient", "Ancient"),
 	COX_CM_NORMAL("coxcmnormal", "Normal spells"),
 	COX_CM_FILL("coxcmfill", "Fill / Any"),
+
+	// Barbarian Assault.
+	BA_ATTACKER("baattacker", "Attacker"),
+	BA_DEFENDER("badefender", "Defender"),
+	BA_COLLECTOR("bacollector", "Collector"),
+	BA_HEALER("bahealer", "Healer"),
+	BA_FILL("bafill", "Fill / Any"),
 	;
 
 	private final String id;
