@@ -1,14 +1,5 @@
 name: Bump version and tag
 
-# On every push to main, bump the patch version in the two places that carry it
-# (runelite-plugin.properties and OSPartyPanel.java), commit the bump, and tag that
-# commit vX.Y.Z — so every state of main has a matching tag.
-#
-# Loop safety: the bump is pushed with a PAT (RELEASE_TOKEN), which — unlike the default
-# GITHUB_TOKEN — DOES re-trigger workflows. The "[skip ci]" marker in the bump commit is the
-# real guard: GitHub skips a run when the head commit message contains it. The `if` below is
-# belt-and-braces.
-
 on:
   push:
     branches: [main]
