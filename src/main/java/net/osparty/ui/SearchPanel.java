@@ -25,12 +25,15 @@ import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Insets;
 import java.awt.LayoutManager;
+import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -51,6 +54,7 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTextField;
+import javax.swing.JViewport;
 import javax.swing.Scrollable;
 import javax.swing.SwingConstants;
 import javax.swing.event.DocumentEvent;
@@ -189,6 +193,11 @@ class SearchPanel extends PartyCardPanel
 
 	private List<Party> lastResults;
 	private String renderedSignature;
+	/** Rendered card (wrapped with its list gap) per party id, reused across refreshes so
+	 *  a push only touches the cards that actually changed instead of flickering them all. */
+	private final Map<String, JComponent> cardsById = new HashMap<>();
+	/** The content signature each card was rendered from; a mismatch rebuilds just that card. */
+	private final Map<String, String> cardSignatures = new HashMap<>();
 	private Timer autoRefreshTimer;
 	/** Live party-list socket; non-null only while the Search tab is visible. */
 	private PartySubscription subscription;
@@ -1558,6 +1567,7 @@ class SearchPanel extends PartyCardPanel
 			+ "|h" + hideIneligibleFilter.isSelected()
 			+ "|f" + friendSignatureOf(visible)
 			+ "|v" + favSignatureOf(visible)
+			+ "|k" + blockSignatureOf(visible)
 			+ "|t" + totalOpen;
 		if (signature.equals(renderedSignature))
 		{
@@ -1565,11 +1575,33 @@ class SearchPanel extends PartyCardPanel
 		}
 		renderedSignature = signature;
 
-		resultsPanel.removeAll();
-		applyButtons.clear();
-		partiesById.clear();
-		reasonLabels.clear();
-		rolePickers.clear();
+		// Anchor the viewport to the top-most visible card so list changes above it (new
+		// parties, removals, resorting) don't shift what the user is currently reading.
+		// At the very top we stay pinned instead, so new arrivals are immediately visible.
+		JViewport viewport = scroll.getViewport();
+		Point viewPos = viewport.getViewPosition();
+		String anchorId = null;
+		int anchorOffset = 0;
+		if (viewPos.y > 0)
+		{
+			for (Component child : resultsPanel.getComponents())
+			{
+				int top = SwingUtilities.convertPoint(resultsPanel, 0, child.getY(), viewport.getView()).y;
+				if (top + child.getHeight() > viewPos.y)
+				{
+					for (Map.Entry<String, JComponent> entry : cardsById.entrySet())
+					{
+						if (entry.getValue() == child)
+						{
+							anchorId = entry.getKey();
+							anchorOffset = top - viewPos.y;
+							break;
+						}
+					}
+					break;
+				}
+			}
+		}
 
 		boolean filtersActive = countActiveFilters() > 0;
 		if (visible.isEmpty())
@@ -1578,27 +1610,104 @@ class SearchPanel extends PartyCardPanel
 				? "0 of " + totalOpen + " parties match your filters."
 				: "No parties to show.");
 		}
+		else if (filtersActive && totalOpen != visible.size())
+		{
+			setStatus(visible.size() + " of " + totalOpen + " open "
+				+ (totalOpen == 1 ? "party" : "parties") + ".");
+		}
 		else
 		{
-			if (filtersActive && totalOpen != visible.size())
+			setStatus(visible.size() + " open " + (visible.size() == 1 ? "party" : "parties") + ".");
+		}
+
+		// Reconcile the card list in place instead of rebuilding it: drop cards whose party
+		// left, rebuild only cards whose own content changed, and move the rest into the new
+		// order. Untouched parties keep their live components, so a socket push neither
+		// flickers the panel nor disturbs the scroll position or an open role picker.
+		Set<String> visibleIds = new HashSet<>();
+		for (Party party : visible)
+		{
+			visibleIds.add(party.getId());
+		}
+		for (Iterator<Map.Entry<String, JComponent>> it = cardsById.entrySet().iterator(); it.hasNext(); )
+		{
+			Map.Entry<String, JComponent> entry = it.next();
+			if (!visibleIds.contains(entry.getKey()))
 			{
-				setStatus(visible.size() + " of " + totalOpen + " open "
-					+ (totalOpen == 1 ? "party" : "parties") + ".");
+				resultsPanel.remove(entry.getValue());
+				it.remove();
+				cardSignatures.remove(entry.getKey());
+				applyButtons.remove(entry.getKey());
+				partiesById.remove(entry.getKey());
+				reasonLabels.remove(entry.getKey());
+				rolePickers.remove(entry.getKey());
 			}
-			else
+		}
+		int index = 0;
+		for (Party party : visible)
+		{
+			String id = party.getId();
+			String cardSig = cardSignature(party);
+			JComponent card = cardsById.get(id);
+			if (card != null && !cardSig.equals(cardSignatures.get(id)))
 			{
-				setStatus(visible.size() + " open " + (visible.size() == 1 ? "party" : "parties") + ".");
+				resultsPanel.remove(card);
+				card = null;
 			}
-			for (Party party : visible)
+			if (card == null)
 			{
-				resultsPanel.add(buildPartyCard(Activity.fromId(party.getActivity()), party));
-				resultsPanel.add(Box.createVerticalStrut(6));
+				card = wrapCard(buildPartyCard(Activity.fromId(party.getActivity()), party));
+				cardsById.put(id, card);
+				cardSignatures.put(id, cardSig);
 			}
+			// Keep actions on fresh data even when the card is reused (e.g. a rotated
+			// passphrase changes nothing rendered but matters when applying).
+			partiesById.put(id, party);
+			if (index >= resultsPanel.getComponentCount() || resultsPanel.getComponent(index) != card)
+			{
+				resultsPanel.add(card, index); // moves the card if it is already a child
+			}
+			index++;
+		}
+		if (!visible.isEmpty())
+		{
 			updateAllButtons();
 		}
 
 		resultsPanel.revalidate();
 		resultsPanel.repaint();
+
+		if (anchorId != null)
+		{
+			JComponent anchorCard = cardsById.get(anchorId);
+			if (anchorCard != null && anchorCard.getParent() == resultsPanel)
+			{
+				// Lay the new list out synchronously so the anchor's final position is known,
+				// then put it back at the same on-screen offset — all before the next paint.
+				scroll.validate();
+				int top = SwingUtilities.convertPoint(resultsPanel, 0, anchorCard.getY(), viewport.getView()).y;
+				int maxY = Math.max(0, viewport.getView().getHeight() - viewport.getExtentSize().height);
+				viewport.setViewPosition(new Point(0, Math.max(0, Math.min(maxY, top - anchorOffset))));
+			}
+		}
+	}
+
+	/** Wrap a card with its 6px list gap so each visible party is exactly one child of resultsPanel. */
+	private static JComponent wrapCard(JComponent card)
+	{
+		JPanel wrap = new JPanel(new BorderLayout())
+		{
+			@Override
+			public Dimension getMaximumSize()
+			{
+				return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+			}
+		};
+		wrap.setOpaque(false);
+		wrap.setBorder(BorderFactory.createEmptyBorder(0, 0, 6, 0));
+		wrap.setAlignmentX(Component.LEFT_ALIGNMENT);
+		wrap.add(card, BorderLayout.CENTER);
+		return wrap;
 	}
 
 	private static boolean matchesText(Party party, Activity activity, String lowerQuery)
@@ -1653,19 +1762,75 @@ class SearchPanel extends PartyCardPanel
 		StringBuilder sb = new StringBuilder();
 		for (Party party : parties)
 		{
-			sb.append(party.getId()).append(':').append(party.getSize())
-				.append('/').append(party.getCapacity())
-				.append('w').append(party.getWorld() == null ? "" : party.getWorld())
-				.append('L').append(party.getLayout() == null ? "" : party.getLayout())
-				.append('R').append(neededRolesOf(party) == null ? "" : neededRolesOf(party))
-				.append('d').append(party.isHardMode() ? "h" : "").append(party.getInvocation())
-				// Host-editable card content, so an edit invalidates the cached render.
-				.append('K').append(party.getMinKillCount()).append('/').append(party.getMinHardModeKillCount())
-				.append('o').append(party.getLootRule() == null ? "" : party.getLootRule())
-				.append('i').append(party.isIronmanOnly() ? '1' : '0')
-				.append('l').append(party.isLearnerRaid() ? '1' : '0')
-				.append('D').append(party.getDescription() == null ? "" : party.getDescription())
-				.append('@').append(ageMinutes(now, party.getCreatedAt())).append(';');
+			sb.append(party.getId()).append(':').append(partyContentSignature(party, now)).append(';');
+		}
+		return sb.toString();
+	}
+
+	/** The party-payload fields a card renders; shared by the list and per-card signatures. */
+	private static String partyContentSignature(Party party, long now)
+	{
+		return new StringBuilder().append(party.getSize())
+			.append('/').append(party.getCapacity())
+			.append('w').append(party.getWorld() == null ? "" : party.getWorld())
+			.append('L').append(party.getLayout() == null ? "" : party.getLayout())
+			.append('R').append(neededRolesOf(party) == null ? "" : neededRolesOf(party))
+			.append('d').append(party.isHardMode() ? "h" : "").append(party.getInvocation())
+			// Host-editable card content, so an edit invalidates the cached render.
+			.append('K').append(party.getMinKillCount()).append('/').append(party.getMinHardModeKillCount())
+			.append('o').append(party.getLootRule() == null ? "" : party.getLootRule())
+			.append('i').append(party.isIronmanOnly() ? '1' : '0')
+			.append('l').append(party.isLearnerRaid() ? '1' : '0')
+			.append('D').append(party.getDescription() == null ? "" : party.getDescription())
+			.append('@').append(ageMinutes(now, party.getCreatedAt()))
+			.toString();
+	}
+
+	/**
+	 * Everything {@link #buildPartyCard} renders for one party — the payload fields plus the
+	 * live decorations (ping, friend badge, favourite star, block state, host identity) — so
+	 * a refresh rebuilds a card only when that card's own content changed.
+	 */
+	private String cardSignature(Party party)
+	{
+		StringBuilder sb = new StringBuilder(partyContentSignature(party, System.currentTimeMillis()));
+		sb.append('h').append(party.getHost() == null ? "" : party.getHost())
+			.append('t').append(party.getHostAccountType() == null ? "" : party.getHostAccountType());
+		Integer worldNum = parseWorldNum(party);
+		if (worldNum != null && worldPinger != null)
+		{
+			Integer ping = worldPinger.getCachedPing(worldNum);
+			sb.append('p').append(ping != null ? ping : "?");
+		}
+		Set<String> friends = friendNamesSupplier != null ? friendNamesSupplier.get() : null;
+		sb.append('F').append(friends != null && party.getHost() != null
+			&& friends.contains(normalize(party.getHost()).toLowerCase()) ? '1' : '0');
+		if (favoritesService != null)
+		{
+			sb.append('v').append(favoritesService.hasAnyFavorite(party) ? '1' : '0')
+				.append(favoritesService.isFavorite(party.getHostAccountHash(), party.getHost()) ? 'H' : '_');
+		}
+		if (blockListService != null)
+		{
+			sb.append('b').append(blockListService.isBlocked(party.getHostAccountHash(), party.getHost()) ? '1' : '0');
+		}
+		return sb.toString();
+	}
+
+	/** Signature of which visible-party hosts are blocked (rendered greyed when shown at all). */
+	private String blockSignatureOf(List<Party> parties)
+	{
+		if (blockListService == null)
+		{
+			return "";
+		}
+		StringBuilder sb = new StringBuilder();
+		for (Party p : parties)
+		{
+			if (blockListService.isBlocked(p.getHostAccountHash(), p.getHost()))
+			{
+				sb.append(p.getId()).append(',');
+			}
 		}
 		return sb.toString();
 	}

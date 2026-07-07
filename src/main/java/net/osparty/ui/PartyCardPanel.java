@@ -33,6 +33,7 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JTextArea;
 import javax.swing.Timer;
+import javax.swing.text.DefaultCaret;
 import net.runelite.api.vars.AccountType;
 import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.ColorScheme;
@@ -841,13 +842,15 @@ abstract class PartyCardPanel extends JPanel
 		JButton applyButton = new JButton("Apply");
 		applyButton.setFocusPainted(false);
 		applyButton.addActionListener(e -> {
-			if (isActive(party))
+			// Cards can be reused across refreshes; act on the freshest party data.
+			Party current = partiesById.getOrDefault(party.getId(), party);
+			if (isActive(current))
 			{
-				cancel(party);
+				cancel(current);
 			}
 			else
 			{
-				apply(party);
+				apply(current);
 			}
 		});
 		applyButtons.put(party.getId(), applyButton);
@@ -877,7 +880,16 @@ abstract class PartyCardPanel extends JPanel
 	/** A read-only, layout-wrapping text component (replaces manual char-count wrapping). */
 	private static JComponent wrappedLabel(String text, Color fg)
 	{
-		JTextArea area = new JTextArea(text);
+		JTextArea area = new JTextArea();
+		// Never let the caret drive scrolling: inserting text moves the caret, and DefaultCaret
+		// schedules a deferred scrollRectToVisible that yanks the results viewport to whichever
+		// card was (re)built last. Must be disabled before the text goes in — the scroll is
+		// queued from the insert itself.
+		if (area.getCaret() instanceof DefaultCaret)
+		{
+			((DefaultCaret) area.getCaret()).setUpdatePolicy(DefaultCaret.NEVER_UPDATE);
+		}
+		area.setText(text);
 		area.setLineWrap(true);
 		area.setWrapStyleWord(true);
 		area.setEditable(false);
