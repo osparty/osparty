@@ -8,7 +8,9 @@ import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.IntSupplier;
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -320,6 +322,42 @@ public class PartyHistoryService
 	{
 		entries.clear();
 		save();
+	}
+
+	/**
+	 * Remove a single recorded party, matched by identity: the party id when both sides carry one,
+	 * else host + joinedAt (the same identity {@code keyOf} uses for UI state). Returns whether an
+	 * entry was removed (and the file rewritten).
+	 */
+	public synchronized boolean delete(PartyHistoryEntry entry)
+	{
+		if (entry == null)
+		{
+			return false;
+		}
+		for (Iterator<PartyHistoryEntry> it = entries.iterator(); it.hasNext(); )
+		{
+			if (sameEntry(it.next(), entry))
+			{
+				it.remove();
+				save();
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean sameEntry(PartyHistoryEntry a, PartyHistoryEntry b)
+	{
+		if (a == b)
+		{
+			return true;
+		}
+		if (a.getPartyId() != null && b.getPartyId() != null)
+		{
+			return a.getPartyId().equals(b.getPartyId());
+		}
+		return a.getJoinedAt() == b.getJoinedAt() && Objects.equals(a.getHost(), b.getHost());
 	}
 
 	private void trim()

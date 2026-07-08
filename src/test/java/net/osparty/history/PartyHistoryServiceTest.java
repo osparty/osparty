@@ -69,6 +69,41 @@ public class PartyHistoryServiceTest
 	}
 
 	@Test
+	public void deletesSingleEntryAndPersists()
+	{
+		PartyHistoryService history = open();
+		history.record(party("1", "cox", "Alice"), false);
+		history.record(party("2", "toa", "Bob"), true);
+
+		assertTrue(history.delete(history.list().get(1))); // the "cox" entry
+		List<PartyHistoryEntry> list = history.list();
+		assertEquals(1, list.size());
+		assertEquals("2", list.get(0).getPartyId());
+
+		// The removal survives a reopen (the file was rewritten).
+		assertEquals(1, open().list().size());
+
+		// Deleting an already-removed entry is a no-op.
+		PartyHistoryEntry last = list.get(0);
+		assertTrue(history.delete(last));
+		assertFalse(history.delete(last));
+		assertTrue(history.list().isEmpty());
+	}
+
+	@Test
+	public void deleteMatchesByHostAndTimeWhenIdAbsent()
+	{
+		PartyHistoryService history = open();
+		history.record(party(null, "cox", "Alice"), false);
+		history.record(party(null, "cox", "Bob"), false);
+
+		assertTrue(history.delete(history.list().get(1))); // Alice's id-less entry
+		List<PartyHistoryEntry> list = history.list();
+		assertEquals(1, list.size());
+		assertEquals("Bob", list.get(0).getHost());
+	}
+
+	@Test
 	public void enforcesCap()
 	{
 		limit = 3;

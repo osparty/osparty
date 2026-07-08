@@ -68,7 +68,7 @@ public class OSPartyPanel extends PluginPanel
 	// reading the version from the classpath there yields "?". Keep this in step
 	// with runelite-plugin.properties on each release.
 	private static final String VERSION = "1.0.21";
-	private static final String GITHUB_URL = "https://github.com/iodrareg/osparty";
+	private static final String GITHUB_URL = "https://github.com/osparty/osparty";
 	private static final String DISCORD_URL = "https://discord.gg/3xrf7wkb5F";
 
 	/** Distinct green used for the Party tab's "a party is running" underline, so it reads apart
@@ -126,6 +126,8 @@ public class OSPartyPanel extends PluginPanel
 	private boolean wasInParty;
 	/** Id of the party currently logged in history, so we can stamp it ended once we leave it. */
 	private String currentHistoryPartyId;
+	/** Whether the current party has a history row yet — false while our application is still pending. */
+	private boolean historyRecorded;
 	/** Whether the tab bar is in the in-party layout (Party shown, Create hidden). */
 	private boolean inPartyTabLayout;
 	/** Whether the host is editing their party (the create form is shown alongside the roster). */
@@ -634,22 +636,31 @@ public class OSPartyPanel extends PluginPanel
 
 		if (inParty && !wasInParty)
 		{
-			// Entered a party (hosted or joined): log it to history, then re-render the tab.
+			// Entered a party. Only an ADMITTED player gets a history row: hosts (and resumed hosts)
+			// are admitted immediately; a joiner is still a pending applicant here, so their record is
+			// deferred to syncHistoryRoster() and only happens if the host actually lets them in — a
+			// rejected application never appears in history.
 			Party party = partyState.getCurrentParty();
-			historyService.record(party, partyState.isHost());
 			currentHistoryPartyId = party == null ? null : party.getId();
-			historyPanel.refresh();
+			historyRecorded = false;
+			if (liveParty.isLocalAdmitted())
+			{
+				historyService.record(party, partyState.isHost());
+				historyRecorded = true;
+				historyPanel.refresh();
+			}
 			tabGroup.select(partyTab);
 		}
 		else if (!inParty && wasInParty)
 		{
 			// Left / disbanded / party ended: stamp the still-present members (host included) as gone,
 			// so the concluded row no longer shows anyone as in the party. currentParty is already null.
-			if (historyService.closeParty(currentHistoryPartyId, System.currentTimeMillis()))
+			if (historyRecorded && historyService.closeParty(currentHistoryPartyId, System.currentTimeMillis()))
 			{
 				historyPanel.refresh();
 			}
 			currentHistoryPartyId = null;
+			historyRecorded = false;
 		}
 
 		wasInParty = inParty;
@@ -673,6 +684,15 @@ public class OSPartyPanel extends PluginPanel
 		if (party == null)
 		{
 			return;
+		}
+		// Deferred record for joiners (see onPartyStateChanged): the host just admitted us, so the
+		// party becomes history-worthy now. Fires on the liveParty listener, right when the host's
+		// state message lands.
+		if (!historyRecorded && liveParty.isLocalAdmitted())
+		{
+			historyService.record(party, partyState.isHost());
+			historyRecorded = true;
+			historyPanel.refresh();
 		}
 		if (historyService.updateRoster(party.getId(), liveParty.currentMembers()))
 		{

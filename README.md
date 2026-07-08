@@ -2,61 +2,85 @@
 
 A RuneLite side-panel plugin for finding a group. Search open parties, advertise
 your own, and join for raids, bosses and minigames, with raid role matchmaking,
-learner/teacher raids, in-game map pings and a special-attack defence tracker.
+learner/teacher raids, in-game map pings, a special-attack defence tracker,
+favourite and block lists, a local party history, and optional Discord role
+badges and voice channels.
 
 The plugin is split into two layers:
 
-- A **listing service** — a small bulletin board that keeps a live list of open
+- A **listing service**: a small bulletin board that keeps a live list of open
   parties. It tracks no membership; an ad just carries the activity,
   requirements, world, description, role composition and the host's party
   passphrase. The reference server lives in its own repo,
-  [github.com/iodrareg/ospartyapi](https://github.com/iodrareg/ospartyapi)
+  [github.com/osparty/ospartyapi](https://github.com/osparty/ospartyapi)
   (Spring Boot + Redis).
-- The **live party** — RuneLite's built-in peer-to-peer party network
+- The **live party**: RuneLite's built-in peer-to-peer party network
   (`PartyService`/`WSClient`). Joining an ad means joining the host's passphrase
   room. The roster, each member's live gear/inventory/combat stats and their
   chosen role are all exchanged P2P. On top of that the plugin adds a
-  host-authoritative management layer (admit, decline, kick, capacity) — see
+  host-authoritative management layer (admit, decline, kick, capacity); see
   [Live party](#live-party-peer-to-peer).
 
-Discovery and hosting run entirely over a single WebSocket to the listing
-service; there is no REST API.
+Discovery, hosting and the optional Discord features all run over a single
+WebSocket to the listing service; there is no REST API.
 
 ## Side panel
 
-The panel has up to three tabs.
+The panel is a row of icon tabs. Search, Favorites, Blocked and History are
+always present; the second slot shows Create while you're idle and switches to
+Party once you're in a party.
 
-**Search** — pick the activities you're interested in, hit Refresh, and apply to
+**Search**: pick the activities you're interested in, hit Refresh, and apply to
 an open party. Collapsible Roles and Search sections keep it compact: tick the
 raid roles you'll fill under Roles, and use the Search section for free text, a
 loot rule and an ironman-only filter. Mark yourself "I'm a learner" to be flagged
-as one to hosts. You can also join a private party by code. Full parties and your
-own ad are hidden.
+as one to hosts. You can also join a private party by code. Full parties, blocked
+hosts and your own ad are hidden. Each card carries a favourite star and a block
+toggle so you can curate your lists straight from the results.
 
-**Create** — host a new party: activity, party size, loot rule (FFA or Split),
+**Create**: host a new party: activity, party size, loot rule (FFA or Split),
 min KC (with a separate CM/HM/Expert KC), optional description, Private and
 Ironmen-only toggles, raid role composition, and Learner/Teacher tagging. Hit
 Create party to enter it as host. The form stays usable while logged out so you
 can build and save favourites; only Create party needs you logged in.
 
-**Current** — shown only while you're in a party. It lists the party type tags,
-the still-needed roles, and the roster. Click a member to expand a Skills / Gear
-/ Inventory view showing their role and learner mark. As host you also get the
-management controls (admit/decline, kick, disband, edit); as a member you get
-Leave.
+**Favorites**: two collapsible sections of live party cards, rendered like the
+Search results (Apply, Cancel and cooldown all behave the same). Favorites lists
+open parties whose host or any member you've starred; Friends lists open parties
+hosted by someone on your in-game friends list.
+
+**Blocked**: a management list of the players on your local block list, each with
+an Unblock button. Blocked hosts are hidden from Search by default (turn on Show
+blocked parties to see them greyed out instead), so this tab is where you review
+and lift those blocks.
+
+**Party** (shown only while you're in a party): the party type tags, the
+still-needed roles, and the roster. Click a member to expand a Skills / Gear /
+Inventory view showing their role and learner mark. As host you also get the
+management controls (admit/decline, kick, disband, edit) and, if enabled, the
+Discord voice-channel controls; as a member you get Leave.
+
+**History**: a capped, newest-first list of the parties you've been in (hosted
+or joined). Each row shows the activity, whether you hosted or joined, the host,
+and how long ago it was, and expands to reveal the full roster with each member's
+join/leave times (members who left are kept, greyed). A search box (activity,
+host or member names) and a hosted/joined filter narrow the list, and Clear
+empties it. History is stored locally at `<runelite>/osparty/history.json` and
+never leaves your client; the cap is the Party history size setting (default 50,
+maximum 500).
 
 You can be in only one party at a time, whether hosting or joined. Applying to a
 party leaves your current one first, and you must leave or disband before
 creating a new one.
 
-Your Search-tab filters — activities, roles, loot, ironman, the learner mark and
-the collapse state — are remembered across sessions.
+Your Search-tab filters (activities, roles, loot, ironman, the learner mark and
+the collapse state) are remembered across sessions.
 
-## Roles (raids)
+## Roles (raids and minigames)
 
-Theatre of Blood and Chambers of Xeric advertise a role composition. Each of the
-four difficulty modes has its own role set, so a pick in one mode can't be
-matched against a party in another:
+Theatre of Blood, Chambers of Xeric and Barbarian Assault advertise a role
+composition. Each raid difficulty mode has its own role set, so a pick in one
+mode can't be matched against a party in another:
 
 | Mode | Roles |
 |------|-------|
@@ -64,9 +88,10 @@ matched against a party in another:
 | **HMT** (ToB hard mode) | Melee · Ranged · North freeze · South freeze |
 | **CoX** | Melee · Mage · Runner · Fill |
 | **CM** (CoX challenge mode) | Veng · Ancient · Normal spells · Fill |
+| **BA** (Barbarian Assault) | Attacker · Defender · Collector · Healer |
 
 - Hosting: pick your own role and the team composition. ToB's composition is
-  fixed by party size; CoX and HMT use a count per role, with CoX's Fill
+  fixed by party size; CoX, HMT and BA use a count per role, with CoX's Fill
   absorbing the remainder. The composition has to fill the party and include the
   host's role.
 - Searching: the Roles filter has a tab per mode. Tick the roles you're willing
@@ -78,7 +103,7 @@ matched against a party in another:
 ## Learner / teacher raids
 
 When creating a raid you can tag it Learner or Teacher. The two are mutually
-exclusive — either one marks it a learner raid, and picking neither makes it a
+exclusive: either one marks it a learner raid, and picking neither makes it a
 normal raid. Searchers can also flag "I'm a learner", which travels with their
 application so the host sees it on applicants and in the roster.
 
@@ -90,41 +115,73 @@ settings.
 
 ## Party types
 
-- **Private** — hidden from public search. The host shares a short invite code
-  (shown on the Current tab) and others join via Join private party by code on
-  the Search tab.
-- **Loot rule** — FFA, Split or Unspecified, set by the host and shown on search
+- **Private**: hidden from public search. The host shares a short invite code
+  (shown on the Party tab) and others join via Join private party by code on the
+  Search tab.
+- **Loot rule**: FFA, Split or Unspecified, set by the host and shown on search
   cards, with a matching Search-tab filter.
-- **Ironman-only** — restricts the party to ironman accounts. The plugin reads
+- **Ironman-only**: restricts the party to ironman accounts. The plugin reads
   your account type, blocks mains from applying (the button reads Iron only),
   broadcasts each member's account type so the roster shows an iron tag (`[IM]`,
   `[HCIM]`, `[UIM]`, `[GIM]`, `[HCGIM]`), and warns the host about a non-ironman
   applicant. This is self-reported, on the same cooperative-trust basis as KC and
   gear; RuneWatch remains the backstop for bad actors.
 
+## Favourites and block lists
+
+Both lists are stored locally and keyed by accountHash where known, so an entry
+survives the player changing their name.
+
+- **Favourites**: star a player from a search card. A party is flagged as having
+  a favourite when its host or any listed member is starred, which is what the
+  Favorites tab and the search-card star surface. Legacy name-only favourites are
+  imported on first run.
+- **Block list**: the inverse. Blocking a host hides their parties from Search by
+  default (Show blocked parties reveals them greyed), and a blocked applicant to
+  your own party is handled per the Blocked applicant setting: warn you, auto-reject
+  and notify, or auto-reject silently. You can't block yourself.
+
 ## RuneWatch warnings
 
 The plugin checks every roster member and applicant against the public RuneWatch
-/ We Do Raids scammer watchlist — the same combined `mixedlist.json` feed the
+/ We Do Raids scammer watchlist, the same combined `mixedlist.json` feed the
 official RuneWatch plugin uses. A flagged player gets a red ⚠ RuneWatch: &lt;reason&gt;
-badge under their name on the Current tab, so a host sees the warning before
+badge under their name on the Party tab, so a host sees the warning before
 admitting an applicant. The watchlist is downloaded on start-up and refreshed
 every 15 minutes, and names are matched locally, so no name ever leaves the
 client. Toggle it with RuneWatch warnings in settings.
 
+## Discord integration
+
+All Discord features are optional and off unless you opt in.
+
+- **Role badges**: link your Discord account (an OAuth flow the plugin opens in
+  your browser) and any recognised roles (developer, content creator, beta
+  tester, backer) show as a small badge next to you: beside hosts on the Search
+  tab and beside members in your party. Badge lookup is done server-side. A
+  badge-visibility toggle lets you hide your own badges from other players, and
+  you can unlink at any time. Toggle whether you see others' badges with Discord
+  role badges in settings.
+- **Voice channels**: a host can provision a Discord voice channel for the party
+  through the backend bot and share the invite with the roster. Provisioning is
+  idempotent (repeat requests return the same channel). The host can disconnect a
+  kicked member from voice, and a member who joined or linked later can request
+  per-user access, which the server grants after verifying roster membership and
+  a Discord link.
+
 ## In-game extras
 
-- **Map pings** — hold the Ping hotkey (default `` ` ``) and left-click a tile to
+- **Map pings**: hold the Ping hotkey (default `` ` ``) and left-click a tile to
   ping it for the whole party. Incoming pings animate on the scene in the
   sender's colour. Toggle and recolour in settings.
-- **Defence tracker** — while the party drains a boss's defence with special
+- **Defence tracker**: while the party drains a boss's defence with special
   attacks, this shows its live defence next to the overhead HP bar and/or as an
   info box. It reads RuneLite's Special Attack Counter plugin events (enabled
   automatically) and uses a configurable colour ramp. See the Defence tracker
   settings section.
-- **Ready checks** — anyone in the party can start one from the Current tab, with
+- **Ready checks**: anyone in the party can start one from the Party tab, with
   optional sounds via the Meme mode section.
-- **Friends-chat requests** — a host can ask you (via an on-screen popup) to join
+- **Friends-chat requests**: a host can ask you (via an on-screen popup) to join
   their friends chat. The plugin only surfaces the request; it never joins or
   hops for you. Toggle with Friends-chat join requests.
 
@@ -132,40 +189,48 @@ client. Toggle it with RuneWatch warnings in settings.
 
 The plugin talks to the listing service at `https://api.osparty.net` by default.
 There's no in-settings URL field. For local development, point it at your own
-[ospartyapi](https://github.com/iodrareg/ospartyapi) instance with a JVM system
+[ospartyapi](https://github.com/osparty/ospartyapi) instance with a JVM system
 property:
 
 ```
 -Dosparty.apiUrl=http://localhost:8080
 ```
 
-The list starts empty — Search shows parties once people advertise them.
+The list starts empty; Search shows parties once people advertise them.
 
 ## Listing protocol
 
 The listing service is a bulletin board: it advertises open parties and tracks no
 membership (that lives in the P2P room). The reference implementation is
-[github.com/iodrareg/ospartyapi](https://github.com/iodrareg/ospartyapi).
+[github.com/osparty/ospartyapi](https://github.com/osparty/ospartyapi).
 
 The plugin keeps one WebSocket open to `/api/v1/ws/parties` for the whole session
-(`PartySocket`) and uses it for both reading and hosting. The open connection is
-itself the ad's keep-alive: the server refreshes the ad's TTL while the client is
-connected, so there is no periodic heartbeat. On a brief drop the ad survives a
-grace window, and the plugin resumes it by id on reconnect. If the grace window
-lapses first, the server reports the ad `gone`. Reconnects use jittered backoff.
+(`PartySocket`) and uses it for reading, hosting and the Discord features. The
+open connection is itself the ad's keep-alive: the server refreshes the ad's TTL
+while the client is connected, so there is no periodic heartbeat. On a brief drop
+the ad survives a grace window, and the plugin resumes it by id on reconnect. If
+the grace window lapses first, the server reports the ad `gone`. Reconnects use
+jittered backoff.
 
 Messages are JSON frames with a `type`. Client-to-server frames:
 
 | Frame | Payload | Purpose |
 |-------|---------|---------|
 | `subscribe` | `activity?` | Start receiving the live list, optionally scoped to one activity id |
-| `unsubscribe` | — | Stop receiving the list (the socket stays up for hosting) |
+| `unsubscribe` | (none) | Stop receiving the list (the socket stays up for hosting) |
 | `host` | `request`, `key` | Advertise a new party |
 | `update` | `id`, `key`, `patch` | Change fields on the hosted ad (live occupancy, or a host edit) |
 | `unhost` | `id`, `key` | Close the ad |
 | `resume` | `id`, `key` | Reclaim the ad by id+key after a reconnect |
 | `getByCode` | `code` | Look up one party by invite code |
 | `getByHost` | `host` | Look up the ad a player is hosting (used to rejoin after a restart) |
+| `createVoiceChannel` | `id`, `key` | Host: provision a Discord voice channel for the party |
+| `kickVoiceMember` | `id`, `key`, `accountHash` | Host: disconnect a member from the voice channel |
+| `requestVoiceAccess` | `id`, `accountHash` | Member: request per-user access to the voice channel |
+| `startDiscordLink` | `accountHash` | Begin an OAuth Discord account link |
+| `getDiscordLink` | `accountHash` | Look up the account's Discord link status |
+| `unlinkDiscord` | `accountHash` | Remove the account's Discord binding |
+| `setBadgeVisibility` | `accountHash`, `visible` | Show or hide the caller's own role badges |
 
 Server-to-client frames:
 
@@ -179,12 +244,17 @@ Server-to-client frames:
 | `gone` | `id` | The ad's grace window lapsed before a resume |
 | `error` | `detail` | A host action was rejected |
 | `byCode` / `byHost` | `id`, `party` | Reply to a one-shot lookup |
+| `voiceChannel` | `url` | The provisioned voice channel's invite URL |
+| `discordLinkUrl` | `url` | The OAuth authorize URL to open in a browser |
+| `discordLink` | link status | The account's Discord link and badge-visibility state |
+| `voiceAccess` | grant | Reply to a `requestVoiceAccess` |
+| `presence` | `online` | The current count of connected plugin clients |
 
 While the Search tab is visible the plugin subscribes and renders the snapshot
 plus deltas, so list load is driven by changes rather than by user count.
 Subscribing with an activity scopes the server's fan-out to just the matching
 ads. In a `batch`, `created` entries carry whole parties while `updated` entries
-are `PartyDelta`s — only the fields that changed, plus the id — merged onto the
+are `PartyDelta`s: only the fields that changed, plus the id, merged onto the
 party the client already holds (see [`PartyDelta`](src/main/java/net/osparty/model/PartyDelta.java)).
 Off the tab the plugin unsubscribes but the connection stays up.
 
@@ -193,10 +263,10 @@ Off the tab the plugin unsubscribes but the connection stays up.
 So that another client can't hijack or close someone else's ad, host-only changes
 are gated by a per-party secret. On create the plugin mints a random UUID and
 sends it as the `key` on the `host` frame. The server stores it in the party's
-session — it's never returned in any response — and requires the same key on that
-party's `update`, `unhost` and `resume`. A wrong or missing key is rejected. The
-plugin persists the key locally so it can keep managing the ad after a client
-restart.
+session (it's never returned in any response) and requires the same key on that
+party's `update`, `unhost`, `resume`, `createVoiceChannel` and `kickVoiceMember`.
+A wrong or missing key is rejected. The plugin persists the key locally so it can
+keep managing the ad after a client restart.
 
 `PartyRequest` (the `host` frame's `request`):
 
@@ -233,26 +303,26 @@ Two kinds of `update` patch travel over the socket:
   empty description, a zeroed minimum KC). This is what the Edit party button
   sends.
 
-Activity ids are the `id` values in `Activity.java` (`cox`, `tob`, `toa`, and so
-on). `minHardModeKillCount` only means something for activities with a harder
-variant (`hardModeLabel` in `Activity.java`: CoX → CM, ToB → HM, ToA → Expert).
-The host key never appears in a `Party`.
+Activity ids are the `id` values in `Activity.java` (`cox`, `tob`, `toa`, `ba`,
+and so on). `minHardModeKillCount` only means something for activities with a
+harder variant (`hardModeLabel` in `Activity.java`: CoX to CM, ToB to HM, ToA to
+Expert). The host key never appears in a `Party`.
 
 ## Live party (peer-to-peer)
 
 Once you create or join an ad, the actual party runs over RuneLite's party
 network, keyed by the ad's passphrase.
 
-- **Roster and live data** — every member broadcasts a `PlayerUpdate` (equipment,
+- **Roster and live data**: every member broadcasts a `PlayerUpdate` (equipment,
   inventory, combat stats, chosen role, learner mark) that everyone renders on the
-  Current tab. The host broadcasts a `PartyStateMessage`: the authoritative
-  admitted roster plus the rules.
-- **Host management** — applicants who join the room are pending until the host
+  Party tab. The host broadcasts a `PartyStateMessage`: the authoritative admitted
+  roster plus the rules.
+- **Host management**: applicants who join the room are pending until the host
   admits them, so the host sees their real gear, stats and role before deciding.
   Decline and Kick send a `MemberCommand` the target honours by leaving, and
   capacity is enforced by the host. Admitting or declining from the side panel
   also dismisses the in-game chatbox prompt for that applicant.
-- **Trust** — enforcement is cooperative, not server-enforced; a modified client
+- **Trust**: enforcement is cooperative, not server-enforced; a modified client
   could ignore it. This is the same trust model as the rest of RuneLite's party
   network.
 
@@ -263,7 +333,7 @@ network, keyed by the ad's passphrase.
 - Leaving starts a 30-second cooldown on that party before you can re-apply
   (client-side, to curb spam).
 - After joining you're pending until the host admits you. You show up on the
-  host's Current tab with your live gear, stats and role for them to vet.
+  host's Party tab with your live gear, stats and role for them to vet.
 - While in a party, a banner shows whether you're in the host's friends chat and
   on the host's world, both derived from read-only client state and refreshed each
   second. The plugin never joins the FC or hops for you (that would be disallowed
@@ -271,7 +341,7 @@ network, keyed by the ad's passphrase.
 
 ### Hosting a party
 
-Creating an ad opens the live room and switches the Current tab to a manage view:
+Creating an ad opens the live room and switches the Party tab to a manage view:
 the roster (host plus admitted members), Pending applicants with Admit and
 Decline, per-member Kick, and Disband. When an applicant joins, the host gets a
 chatbox ping and an in-game overlay of their combat stats and role; admitting adds

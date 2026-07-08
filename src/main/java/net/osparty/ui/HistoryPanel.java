@@ -36,6 +36,7 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextField;
+import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.event.DocumentEvent;
@@ -169,9 +170,11 @@ class HistoryPanel extends JPanel
 		listContent.setLayout(new BoxLayout(listContent, BoxLayout.Y_AXIS));
 		listContent.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
-		JPanel column = new JPanel(new BorderLayout());
+		// Width-tracking view (see ScrollableColumn): rows otherwise clip under the vertical
+		// scrollbar, hiding the right-hand timestamps. NORTH keeps a short list top-anchored.
+		JPanel column = new ScrollableColumn(new BorderLayout());
 		column.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		column.add(listContent, BorderLayout.CENTER);
+		column.add(listContent, BorderLayout.NORTH);
 
 		scroll = new JScrollPane(column);
 		scroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
@@ -336,8 +339,24 @@ class HistoryPanel extends JPanel
 		when.setFont(FontManager.getRunescapeSmallFont());
 		when.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
 
+		// Per-row delete (drawn X, no confirm — it's one row; Clear covers the nuke case).
+		JButton delete = iconButton(StatusIcons.CROSS, "Remove this party from your history");
+		delete.addActionListener(e ->
+		{
+			historyService.delete(entry);
+			expanded.remove(keyOf(entry));
+			SwingUtilities.invokeLater(this::refresh);
+		});
+
+		JPanel east = new JPanel();
+		east.setLayout(new BoxLayout(east, BoxLayout.X_AXIS));
+		east.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		east.add(when);
+		east.add(Box.createHorizontalStrut(4));
+		east.add(delete);
+
 		header.add(text, BorderLayout.CENTER);
-		header.add(when, BorderLayout.EAST);
+		header.add(east, BorderLayout.EAST);
 
 		boolean expandable = entry.getMembers() != null && !entry.getMembers().isEmpty();
 		if (!expandable)
@@ -419,7 +438,7 @@ class HistoryPanel extends JPanel
 		return detail;
 	}
 
-	/** One member line: name (host tagged) on the left, "joined–left" times (and quick actions) on the right. */
+	/** One member line: name (host tagged) on the left; favourite, block, then join/leave times on the right. */
 	private JPanel memberLine(PartyHistoryEntry entry, HistoryMember m)
 	{
 		JPanel line = new JPanel(new BorderLayout(6, 0));
@@ -432,24 +451,34 @@ class HistoryPanel extends JPanel
 		nameLabel.setFont(FontManager.getRunescapeSmallFont());
 		nameLabel.setForeground(m.isPresent() ? PRESENT_COLOR : ColorScheme.MEDIUM_GRAY_COLOR);
 
-		String span = clock(m.getJoinedAt()) + " – " + (m.isPresent() ? "now" : clock(m.getLeftAt()));
+		// Plain ASCII hyphen: the en dash renders as a missing-glyph box in the RuneScape font on Linux.
+		String span = clock(m.getJoinedAt()) + " - " + (m.isPresent() ? "now" : clock(m.getLeftAt()));
 		JLabel timeLabel = new JLabel(span);
 		timeLabel.setFont(FontManager.getRunescapeSmallFont());
 		timeLabel.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
+		// Fixed-width, right-aligned time column: the span varies per row ("- now" vs "- 13:45"),
+		// which would otherwise shift the favourite/block icons out of column alignment.
+		timeLabel.setHorizontalAlignment(SwingConstants.RIGHT);
+		Dimension timeSize = new Dimension(
+			timeLabel.getFontMetrics(timeLabel.getFont()).stringWidth("00:00 - 00:00"),
+			timeLabel.getPreferredSize().height);
+		timeLabel.setPreferredSize(timeSize);
+		timeLabel.setMinimumSize(timeSize);
+		timeLabel.setMaximumSize(timeSize);
 
 		line.add(nameLabel, BorderLayout.WEST);
 
-		// Right side: the join/leave span, plus quick favourite/block actions for other players.
+		// Right side, in reading order: favourite, block, then the join/leave span.
 		JPanel right = new JPanel();
 		right.setLayout(new BoxLayout(right, BoxLayout.X_AXIS));
 		right.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		right.add(timeLabel);
 		JComponent actions = memberActions(m);
 		if (actions != null)
 		{
-			right.add(Box.createHorizontalStrut(6));
 			right.add(actions);
+			right.add(Box.createHorizontalStrut(6));
 		}
+		right.add(timeLabel);
 
 		line.add(right, BorderLayout.EAST);
 		line.setMaximumSize(new Dimension(Integer.MAX_VALUE, line.getPreferredSize().height));
@@ -457,10 +486,11 @@ class HistoryPanel extends JPanel
 	}
 
 	/**
-	 * A favourite + block button pair for {@code m}, or {@code null} when there's nothing to offer:
-	 * an unnamed row, yourself (you can't favourite/block yourself), or a player already on either
-	 * list (manage those from the Favorites / Blocked tabs). Favouriting and blocking are mutually
-	 * exclusive, so each action clears the other.
+	 * A favourite + block toggle pair for {@code m}, reflecting current state (filled star / red ban
+	 * when set), or {@code null} for an unnamed row. For your own row the pair is still shown but
+	 * disabled (you can't favourite or block yourself), which also keeps the action column aligned
+	 * with every other row. Favouriting and blocking are mutually exclusive, so setting one clears the
+	 * other.
 	 */
 	private JComponent memberActions(HistoryMember m)
 	{
@@ -470,37 +500,49 @@ class HistoryPanel extends JPanel
 		}
 		final long hash = m.getAccountHash();
 		final String name = m.getName();
-		if (blockListService.isSelf(hash, name)
-			|| favoritesService.isFavorite(hash, name)
-			|| blockListService.isBlocked(hash, name))
-		{
-			return null;
-		}
+		final boolean self = blockListService.isSelf(hash, name);
+		boolean isFavorite = favoritesService.isFavorite(hash, name);
+		boolean isBlocked = blockListService.isBlocked(hash, name);
 
 		JPanel actions = new JPanel();
 		actions.setLayout(new BoxLayout(actions, BoxLayout.X_AXIS));
 		actions.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 
-		JButton fav = iconButton(StatusIcons.STAR_OUTLINE, "Add " + name + " to Favorites");
+		JButton fav = iconButton(isFavorite ? StatusIcons.STAR_FILLED : StatusIcons.STAR_OUTLINE,
+			self ? "You can't favourite yourself"
+				: (isFavorite ? "Remove " + name + " from" : "Add " + name + " to") + " Favorites");
+		JButton block = iconButton(isBlocked ? StatusIcons.BLOCK_ON : StatusIcons.BLOCK_OFF,
+			self ? "You can't block yourself" : (isBlocked ? "Unblock " + name : "Block " + name));
+
+		if (self)
+		{
+			// Grey the icons out and skip the listeners: you can't favourite or block yourself.
+			disableButton(fav);
+			disableButton(block);
+			actions.add(fav);
+			actions.add(Box.createHorizontalStrut(2));
+			actions.add(block);
+			return actions;
+		}
+
 		fav.addActionListener(e ->
 		{
 			favoritesService.toggle(hash, name);
-			if (blockListService.isBlocked(hash, name))
+			if (!isFavorite && blockListService.isBlocked(hash, name))
 			{
 				blockListService.toggle(hash, name);
 			}
 			flagsChanged();
 		});
 
-		JButton block = iconButton(StatusIcons.BLOCK_OFF, "Block " + name);
 		block.addActionListener(e ->
 		{
-			if (!BlockConfirm.confirm(block, name))
+			if (!isBlocked && !BlockConfirm.confirm(block, name))
 			{
 				return;
 			}
 			blockListService.toggle(hash, name);
-			if (favoritesService.isFavorite(hash, name))
+			if (!isBlocked && favoritesService.isFavorite(hash, name))
 			{
 				favoritesService.toggle(hash, name);
 			}
@@ -511,6 +553,13 @@ class HistoryPanel extends JPanel
 		actions.add(Box.createHorizontalStrut(2));
 		actions.add(block);
 		return actions;
+	}
+
+	/** Grey out and neutralise an inline action button (Swing auto-greys the icon; drop the hand cursor). */
+	private static void disableButton(JButton button)
+	{
+		button.setEnabled(false);
+		button.setCursor(Cursor.getDefaultCursor());
 	}
 
 	/** A borderless, transparent icon button sized for an inline roster action. */
@@ -638,7 +687,8 @@ class HistoryPanel extends JPanel
 
 	private static String truncate(String s, int max)
 	{
-		return s.length() <= max ? s : s.substring(0, Math.max(0, max - 1)) + "…";
+		// ASCII dots, not the ellipsis glyph — same missing-glyph issue as the en dash on Linux.
+		return s.length() <= max ? s : s.substring(0, Math.max(0, max - 1)) + "...";
 	}
 
 	/** A coarse "x ago" label for the given epoch-millis timestamp. */

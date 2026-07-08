@@ -332,8 +332,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		worldPinger = new WorldPinger();
 
 		// Guard against a player blocking themselves (self-block is meaningless and hides
-		// your own ads); the service matches by hash when known, else by current name.
-		blockListService.setSelf(this::getAccountHash, this::getPlayerName);
+		// your own ads); the service matches by hash when known, else by current name. Uses the
+		// pre-login-aware name so "that's you" is recognised on the login screen too (the account
+		// hash stays -1 until logged in, so pre-login the match is by name).
+		blockListService.setSelf(this::getAccountHash, this::getSelfName);
 
 		panel = new OSPartyPanel(partyService, config, this::getPlayerName, this,
 			this::getFriendsChatOwner, this::getCurrentWorld, itemManager, liveParty, runeWatchService,
@@ -708,11 +710,25 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 	/**
 	 * @return the currently logged in player's name, or {@code null} if not
-	 * logged in. Safe to call from the EDT.
+	 * logged in. Safe to call from the EDT. Callers use a null result as the
+	 * "logged out" signal (it gates hosting/applying), so this stays strictly the
+	 * in-game name; for pre-login identity use {@link #getSelfName()}.
 	 */
 	public String getPlayerName()
 	{
 		return playerName;
+	}
+
+	/**
+	 * The local player's name for <em>identity</em> matching (isSelf, favourites, blocks), which we can
+	 * know before login: once in-game it's {@link #getPlayerName()}, otherwise the Jagex-launcher display
+	 * name of the character about to play (the one on the "Play Now" button), via RuneLite's
+	 * {@code getLauncherDisplayName()}. {@code null} only when logged out and not started from the Jagex
+	 * launcher. Unlike {@link #getPlayerName()} this is not a "logged in?" signal. Safe from the EDT.
+	 */
+	public String getSelfName()
+	{
+		return playerName != null ? playerName : client.getLauncherDisplayName();
 	}
 
 	/** @return owner of the friends chat the player is in, or null. Safe from the EDT. */
