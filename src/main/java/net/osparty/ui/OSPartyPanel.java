@@ -36,6 +36,7 @@ import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.Timer;
 import javax.swing.JPanel;
+import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JMenuItem;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
@@ -104,6 +105,8 @@ public class OSPartyPanel extends PluginPanel
 	private long lastLinkQueryHash = Long.MIN_VALUE;
 	/** Whether the local account is currently Discord-linked; gates the Party tab's voice buttons. */
 	private volatile boolean discordLinked;
+	/** The account's server-side badge-privacy preference, mirrored from the last link status. */
+	private volatile boolean badgesVisible = true;
 	private final SearchPanel searchPanel;
 	private final FriendsPanel favoritesPanel;
 	private final BlockedPanel blockedPanel;
@@ -412,9 +415,28 @@ public class OSPartyPanel extends PluginPanel
 		relink.addActionListener(a -> startDiscordLink());
 		JMenuItem unlink = new JMenuItem("Unlink");
 		unlink.addActionListener(a -> unlinkDiscord());
+		// Server-side privacy: unticking strips this account's badges from ads for everyone
+		// (unlike the client-side "Discord role badges" config toggle, which only hides them locally).
+		JCheckBoxMenuItem showBadges = new JCheckBoxMenuItem("Show my role badges to others", badgesVisible);
+		showBadges.setToolTipText("When unticked, other players won't see your Discord role badges on your parties.");
+		showBadges.addActionListener(a -> setBadgeVisibility(showBadges.isSelected()));
 		menu.add(relink);
 		menu.add(unlink);
+		menu.addSeparator();
+		menu.add(showBadges);
 		menu.show(discordLinkButton, e.getX(), e.getY());
+	}
+
+	/** Push the badge-privacy preference server-side; the ack refreshes the cached link state. */
+	private void setBadgeVisibility(boolean visible)
+	{
+		long hash = accountHashSupplier.getAsLong();
+		if (hash == 0 || hash == -1)
+		{
+			return;
+		}
+		partyService.setBadgeVisibility(hash, visible,
+			status -> SwingUtilities.invokeLater(() -> applyLinkStatus(status)));
 	}
 
 	/** Remove the Discord binding server-side and reset the local UI state. */
@@ -449,6 +471,7 @@ public class OSPartyPanel extends PluginPanel
 		discordLinkButton.setVisible(loggedIn);
 
 		boolean linked = loggedIn && status != null && status.isLinked();
+		badgesVisible = status == null || status.isBadgesVisible();
 		discordLinkButton.setIconTextGap(4);
 		if (linked)
 		{
@@ -551,6 +574,18 @@ public class OSPartyPanel extends PluginPanel
 			linkPollTimer.stop();
 		}
 		searchPanel.dispose();
+	}
+
+	/**
+	 * Re-render every view that draws Discord-role badges. Called by the plugin when the
+	 * "Discord role badges" config toggle flips, so the change applies immediately instead
+	 * of waiting for the next feed event or roster change.
+	 */
+	public void refreshDiscordBadgeViews()
+	{
+		searchPanel.reapplyFilters();
+		favoritesPanel.render();
+		partyPanel.refresh();
 	}
 
 	/**

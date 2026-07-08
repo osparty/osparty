@@ -9,6 +9,7 @@ import net.osparty.api.PartySubscription;
 import net.osparty.model.AccountTypes;
 import net.osparty.model.Activity;
 import net.osparty.model.LootRule;
+import net.osparty.model.Member;
 import net.osparty.model.Party;
 import net.osparty.model.Role;
 import net.osparty.party.LiveParty;
@@ -994,7 +995,7 @@ class SearchPanel extends PartyCardPanel
 		return panel;
 	}
 
-	private void reapplyFilters()
+	void reapplyFilters()
 	{
 		if (lastResults != null)
 		{
@@ -1796,6 +1797,20 @@ class SearchPanel extends PartyCardPanel
 		StringBuilder sb = new StringBuilder(partyContentSignature(party, System.currentTimeMillis()));
 		sb.append('h').append(party.getHost() == null ? "" : party.getHost())
 			.append('t').append(party.getHostAccountType() == null ? "" : party.getHostAccountType());
+		// Host Discord-role badges (rendered in the card header) — without this, a badge change
+		// arriving in a members delta (or the config toggle flipping) wouldn't rebuild the card.
+		if (config == null || config.showDiscordBadges())
+		{
+			List<Member> sigMembers = party.getMembers();
+			if (sigMembers != null && !sigMembers.isEmpty() && sigMembers.get(0).getBadges() != null)
+			{
+				sb.append('B').append(sigMembers.get(0).getBadges());
+			}
+		}
+		else
+		{
+			sb.append("B-off");
+		}
 		Integer worldNum = parseWorldNum(party);
 		if (worldNum != null && worldPinger != null)
 		{

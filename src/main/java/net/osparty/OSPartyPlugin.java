@@ -398,6 +398,16 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	}
 
 	@Subscribe
+	public void onConfigChanged(net.runelite.client.events.ConfigChanged event)
+	{
+		if (OSPartyConfig.GROUP.equals(event.getGroup())
+			&& "showDiscordBadges".equals(event.getKey()) && panel != null)
+		{
+			SwingUtilities.invokeLater(panel::refreshDiscordBadgeViews);
+		}
+	}
+
+	@Subscribe
 	public void onGameStateChanged(GameStateChanged event)
 	{
 		// The local player (and its name) is usually not yet available at the

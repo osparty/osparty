@@ -168,6 +168,12 @@ public class PartyApiClient implements PartyService
 	}
 
 	@Override
+	public void setBadgeVisibility(long accountHash, boolean visible, Consumer<DiscordLinkStatus> onResult)
+	{
+		partySocket.setBadgeVisibility(accountHash, visible, onResult);
+	}
+
+	@Override
 	public void kickVoiceMember(String partyId, String hostKey, long accountHash)
 	{
 		partySocket.kickVoiceMember(partyId, hostKey, accountHash);

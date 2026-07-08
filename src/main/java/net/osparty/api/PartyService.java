@@ -89,6 +89,13 @@ public interface PartyService
 	void unlinkDiscord(long accountHash);
 
 	/**
+	 * Badge privacy: when {@code visible} is false the server strips this account's Discord-role
+	 * badges from party ads, so other players never see them. {@code onResult} gets the refreshed
+	 * link status (or null if offline).
+	 */
+	void setBadgeVisibility(long accountHash, boolean visible, Consumer<DiscordLinkStatus> onResult);
+
+	/**
 	 * Host action: disconnect the kicked member from the party's Discord voice channel. Fire-and-forget;
 	 * the backend no-ops unless the member is linked and currently in that channel. {@code hostKey}
 	 * authorises it.

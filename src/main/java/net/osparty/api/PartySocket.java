@@ -389,6 +389,27 @@ public class PartySocket extends WebSocketListener
 		send(gson.toJson(new AccountHashFrame("unlinkDiscord", accountHash)));
 	}
 
+	/**
+	 * Badge privacy: hide (or re-show) {@code accountHash}'s Discord-role badges on party ads for
+	 * everyone. The server acks with the refreshed link status, delivered to {@code onResult}.
+	 */
+	public void setBadgeVisibility(long accountHash, boolean visible, Consumer<DiscordLinkStatus> onResult)
+	{
+		if (!connected)
+		{
+			if (onResult != null)
+			{
+				onResult.accept(null);
+			}
+			return;
+		}
+		if (onResult != null)
+		{
+			pendingLinkStatus.put(accountHash, onResult);
+		}
+		send(gson.toJson(new BadgeVisibilityFrame(accountHash, visible)));
+	}
+
 	/** Host action: ask the backend bot to disconnect a kicked member from the party's voice channel. */
 	public void kickVoiceMember(String id, String key, long accountHash)
 	{
@@ -496,7 +517,7 @@ public class PartySocket extends WebSocketListener
 				completeLinkUrl(frame.url);
 				break;
 			case "discordLink":
-				completeLinkStatus(frame.accountHash, frame.id, frame.username);
+				completeLinkStatus(frame.accountHash, frame.id, frame.username, frame.badgesVisible);
 				break;
 			case "voiceAccess":
 				completeVoiceAccess(frame.id);
@@ -713,7 +734,7 @@ public class PartySocket extends WebSocketListener
 		}
 	}
 
-	private void completeLinkStatus(Long accountHash, String discordId, String username)
+	private void completeLinkStatus(Long accountHash, String discordId, String username, Boolean badgesVisible)
 	{
 		if (accountHash == null)
 		{
@@ -722,7 +743,9 @@ public class PartySocket extends WebSocketListener
 		Consumer<DiscordLinkStatus> callback = pendingLinkStatus.remove(accountHash);
 		if (callback != null)
 		{
-			callback.accept(new DiscordLinkStatus(discordId != null, discordId, username));
+			// Older servers omit badgesVisible; treat absent as visible (the default).
+			callback.accept(new DiscordLinkStatus(discordId != null, discordId, username,
+				badgesVisible == null || badgesVisible));
 		}
 	}
 
@@ -848,9 +871,11 @@ public class PartySocket extends WebSocketListener
 		String detail;
 		// "voiceChannel"/"discordLinkUrl" frame: an invite or OAuth authorize URL.
 		String url;
-		// "discordLink" frame: the linked Discord username + the echoed accountHash the status is for.
+		// "discordLink" frame: the linked Discord username + the echoed accountHash the status is for,
+		// plus the account's badge-privacy preference (null on older servers = visible).
 		String username;
 		Long accountHash;
+		Boolean badgesVisible;
 		// "batch" frame: a tick's worth of changes, applied together.
 		Party[] created;
 		PartyDelta[] updated;
@@ -952,6 +977,20 @@ public class PartySocket extends WebSocketListener
 		{
 			this.type = type;
 			this.accountHash = accountHash;
+		}
+	}
+
+	/** Badge privacy self-service: show/hide the caller's Discord-role badges on party ads. */
+	private static final class BadgeVisibilityFrame
+	{
+		final String type = "setBadgeVisibility";
+		final long accountHash;
+		final boolean visible;
+
+		BadgeVisibilityFrame(long accountHash, boolean visible)
+		{
+			this.accountHash = accountHash;
+			this.visible = visible;
 		}
 	}
 

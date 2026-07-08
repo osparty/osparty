@@ -998,8 +998,21 @@ public class LiveParty
 	 */
 	public List<net.osparty.model.Member> rosterMembers()
 	{
+		// Our own PlayerUpdate may not have round-tripped yet right after the room opens, leaving
+		// accountHashFor(localId()) at 0. Fall back to the client's own hash so the heartbeat never
+		// advertises the host hash-less — that would strip block/favourite matching and Discord
+		// badges from the ad server-side until the sync lands.
+		long hostHash = accountHashFor(localId());
+		if (hostHash == 0)
+		{
+			long own = client.getAccountHash();
+			if (own != -1)
+			{
+				hostHash = own;
+			}
+		}
 		List<net.osparty.model.Member> out = new ArrayList<>();
-		out.add(new net.osparty.model.Member(hostName, accountHashFor(localId())));
+		out.add(new net.osparty.model.Member(hostName, hostHash));
 		admitted.entrySet().stream()
 			.sorted(Map.Entry.comparingByKey())
 			.forEach(e -> out.add(new net.osparty.model.Member(e.getValue(), accountHashFor(e.getKey()))));

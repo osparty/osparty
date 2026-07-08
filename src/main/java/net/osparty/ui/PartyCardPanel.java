@@ -6,6 +6,7 @@ import net.osparty.api.PartyService;
 import net.osparty.model.AccountTypes;
 import net.osparty.model.Activity;
 import net.osparty.model.LootRule;
+import net.osparty.model.Member;
 import net.osparty.model.Party;
 import net.osparty.model.Role;
 import net.osparty.party.LiveParty;
@@ -13,6 +14,7 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.Insets;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
@@ -132,6 +134,7 @@ abstract class PartyCardPanel extends JPanel
 				img -> { if (img != null) memberStarImg = ImageUtil.resizeImage(img, 14, 14); });
 			spriteManager.getSpriteAsync(1130, 0,
 				img -> { if (img != null) freeStarImg = ImageUtil.resizeImage(img, 14, 14); });
+			BadgeIcons.preload(spriteManager);
 		}
 	}
 
@@ -870,11 +873,55 @@ abstract class PartyCardPanel extends JPanel
 		actionPanel.add(rolePicker);
 		actionPanel.add(applyWrap);
 
-		card.add(activityLabel, BorderLayout.NORTH);
+		// Header: activity title on the left, the host's Discord-role badges tucked into the
+		// otherwise-empty top-right corner (server-asserted, see Member#getBadges).
+		JPanel header = new JPanel(new BorderLayout());
+		header.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		header.add(activityLabel, BorderLayout.CENTER);
+		JPanel badgeRow = buildHostBadgeRow(party);
+		if (badgeRow != null)
+		{
+			header.add(badgeRow, BorderLayout.EAST);
+		}
+
+		card.add(header, BorderLayout.NORTH);
 		card.add(info, BorderLayout.CENTER);
 		card.add(actionPanel, BorderLayout.SOUTH);
 
 		return card;
+	}
+
+	/**
+	 * The host's Discord-role badges (all held, in priority order) as a right-aligned icon row,
+	 * or {@code null} when the host has none. Tooltips carry the role names.
+	 */
+	private JPanel buildHostBadgeRow(Party party)
+	{
+		if (config != null && !config.showDiscordBadges())
+		{
+			return null;
+		}
+		List<Member> members = party.getMembers();
+		Member host = members == null || members.isEmpty() ? null : members.get(0);
+		List<DiscordBadge> badges = host == null ? List.of() : DiscordBadge.fromWire(host.getBadges());
+		JPanel row = null;
+		for (DiscordBadge badge : badges)
+		{
+			ImageIcon icon = BadgeIcons.get(badge);
+			if (icon == null)
+			{
+				continue;
+			}
+			if (row == null)
+			{
+				row = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+				row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+			}
+			JLabel label = new JLabel(icon);
+			label.setToolTipText("Host is " + (badge == DiscordBadge.DEVELOPER ? "an " : "a ") + badge.getTooltip());
+			row.add(label);
+		}
+		return row;
 	}
 
 	/** A read-only, layout-wrapping text component (replaces manual char-count wrapping). */

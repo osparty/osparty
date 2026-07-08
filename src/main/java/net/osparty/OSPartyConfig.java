@@ -109,6 +109,18 @@ public interface OSPartyConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "showDiscordBadges",
+		name = "Discord role badges",
+		description = "Show Discord role badges (developer, content creator, beta tester, backer) next to party hosts in Search and next to members in your party.",
+		position = 17,
+		section = GENERAL
+	)
+	default boolean showDiscordBadges()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 		keyName = "inGamePrompts",
 		name = "In-game join prompts",
 		description = "As a host, show Accept/Decline for new applicants in the in-game chatbox (not just the side panel).",

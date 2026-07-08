@@ -12,6 +12,7 @@ import net.osparty.model.Activity;
 import net.osparty.model.Applicant;
 import net.osparty.model.Applicant.EquipmentSlot;
 import net.osparty.model.LootRule;
+import net.osparty.model.Member;
 import net.osparty.model.Party;
 import net.osparty.model.Role;
 import net.osparty.party.LiveParty;
@@ -688,8 +689,25 @@ class PartyPanel extends JPanel
 		chevron.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 2));
 		chevron.addMouseListener(expandOnClick(member));
 
+		// Discord-role badges sit just left of the chevron. Badges are server-asserted on the
+		// party ad's members (never from P2P player sync), matched here by accountHash.
+		JPanel east = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+		east.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		for (DiscordBadge badge : DiscordBadge.fromWire(adBadges(party, member)))
+		{
+			ImageIcon badgeIcon = BadgeIcons.get(badge);
+			if (badgeIcon != null)
+			{
+				JLabel badgeLabel = new JLabel(badgeIcon);
+				badgeLabel.setToolTipText(badge.getTooltip());
+				badgeLabel.setBorder(BorderFactory.createEmptyBorder(0, 4, 0, 0));
+				east.add(badgeLabel);
+			}
+		}
+		east.add(chevron);
+
 		topRow.add(left, BorderLayout.CENTER);
-		topRow.add(chevron, BorderLayout.EAST);
+		topRow.add(east, BorderLayout.EAST);
 		stack.add(topRow);
 
 		// ---- secondary line: role · learner · world, plus the friends-chat icons ----
@@ -864,6 +882,53 @@ class PartyPanel extends JPanel
 	private static long memberHash(RosterMember member)
 	{
 		return member.getData() != null ? member.getData().getAccountHash() : 0L;
+	}
+
+	/**
+	 * The Discord-role badge strings the API asserted for this roster member on the party ad,
+	 * or {@code null} when badges are hidden, the member isn't on the ad, or they have none.
+	 * Matched by accountHash first, falling back to the display name for members whose hash
+	 * hasn't synced through the live room yet.
+	 */
+	private List<String> adBadges(Party party, RosterMember member)
+	{
+		if (config != null && !config.showDiscordBadges())
+		{
+			return null;
+		}
+		if (party == null || party.getMembers() == null)
+		{
+			return null;
+		}
+		long hash = memberHash(member);
+		if (hash != 0)
+		{
+			for (Member adMember : party.getMembers())
+			{
+				if (adMember != null && adMember.getAccountHash() == hash)
+				{
+					return adMember.getBadges();
+				}
+			}
+		}
+		String name = member.getName();
+		if (name != null)
+		{
+			for (Member adMember : party.getMembers())
+			{
+				if (adMember != null && adMember.getName() != null
+					&& normalizeName(adMember.getName()).equalsIgnoreCase(normalizeName(name)))
+				{
+					return adMember.getBadges();
+				}
+			}
+		}
+		return null;
+	}
+
+	private static String normalizeName(String name)
+	{
+		return name.replace(' ', ' ').trim();
 	}
 
 	private MouseAdapter expandOnClick(RosterMember member)
