@@ -142,6 +142,27 @@ public class PartyApiClient implements PartyService
 	}
 
 	@Override
+	public void transferHost(String partyId, String currentHostKey, String newHost, String newHostKey,
+		Consumer<Party> onSuccess, Consumer<Throwable> onError)
+	{
+		// Unlike disband there IS a server ack ('transferred'), because the old host must not relinquish
+		// the P2P party until the backend re-key actually succeeded.
+		partySocket.transferHost(partyId, currentHostKey, newHost, newHostKey, onSuccess, onError);
+	}
+
+	@Override
+	public void adoptHostedParty(String partyId, String hostKey)
+	{
+		partySocket.setHosting(partyId, hostKey);
+	}
+
+	@Override
+	public void releaseHostedParty(String partyId)
+	{
+		partySocket.clearHosting(partyId);
+	}
+
+	@Override
 	public void createVoiceChannel(String partyId, String hostKey, Consumer<String> onUrl, Consumer<Throwable> onError)
 	{
 		// One-shot request/reply over the socket, mirroring the getByCode/getByHost lookups. The reply

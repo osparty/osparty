@@ -8,6 +8,7 @@ import net.osparty.model.Activity;
 import net.osparty.model.Applicant;
 import net.osparty.model.Party;
 import net.osparty.party.FcRequestMessage;
+import net.osparty.party.HostTransferMessage;
 import net.osparty.party.LiveParty;
 import net.osparty.party.MemberCommand;
 import net.osparty.party.PartyStateMessage;
@@ -342,7 +343,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			this::getAccountType, killcountService, skillIconManager, this::hopTo, this::getMapRegions,
 			this::regionForWorld, this::getCoxLayout, configManager, gson,
 			worldPinger, this::worldAddressForNum, this::getFriendNames, favoritesService, blockListService,
-			this::getAccountHash, spriteManager, partyHistoryService);
+			this::getAccountHash, spriteManager, partyHistoryService, this::gameMessage);
 
 		navButton = NavigationButton.builder()
 			.tooltip("OSParty")
@@ -586,6 +587,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			playResourceSound("/net/osparty/sounds/kicked.wav");
 		}
+	}
+
+	@Subscribe
+	public void onHostTransferMessage(HostTransferMessage event)
+	{
+		panel.onHostTransferMessage(event);
 	}
 
 	@Subscribe

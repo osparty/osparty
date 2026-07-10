@@ -14,6 +14,7 @@ public class PartyDelta
 {
 	private String id;
 	private String activity;
+	private String host;
 	private Integer size;
 	private List<Member> members;
 	private String world;
@@ -37,6 +38,10 @@ public class PartyDelta
 	/** Merge the present (non-null) fields of this delta onto an existing party in place. */
 	public void applyTo(Party p)
 	{
+		if (host != null)
+		{
+			p.setHost(host);
+		}
 		if (size != null)
 		{
 			p.setSize(size);

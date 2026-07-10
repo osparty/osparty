@@ -9,6 +9,7 @@ import net.osparty.api.DiscordLinkStatus;
 import net.osparty.api.PartyService;
 import net.osparty.history.PartyHistoryService;
 import net.osparty.model.Party;
+import net.osparty.party.HostTransferMessage;
 import net.osparty.party.LiveParty;
 import com.google.gson.Gson;
 import net.osparty.runewatch.RuneWatchService;
@@ -21,6 +22,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.IntFunction;
 import java.util.function.IntSupplier;
@@ -96,6 +98,7 @@ public class OSPartyPanel extends PluginPanel
 	private final PartyState partyState;
 	private final LiveParty liveParty;
 	private final PartyService partyService;
+	private final HostTransferHandler hostTransferHandler;
 	private final LongSupplier accountHashSupplier;
 	private final JLabel activeUsersLabel = new JLabel();
 	private final JButton discordLinkButton = new JButton();
@@ -143,7 +146,7 @@ public class OSPartyPanel extends PluginPanel
 		WorldPinger worldPinger, IntFunction<String> worldAddressResolver,
 		Supplier<Set<String>> friendNamesSupplier, FavoritesService favoritesService,
 		BlockListService blockListService, LongSupplier accountHashSupplier,
-		SpriteManager spriteManager, PartyHistoryService historyService)
+		SpriteManager spriteManager, PartyHistoryService historyService, Consumer<String> gameMessage)
 	{
 		super(false);
 
@@ -152,6 +155,8 @@ public class OSPartyPanel extends PluginPanel
 		this.accountHashSupplier = accountHashSupplier;
 		this.historyService = historyService;
 		this.partyState = new PartyState(configManager);
+		this.hostTransferHandler = new HostTransferHandler(liveParty, partyService, partyState,
+			playerNameSupplier, gameMessage);
 
 		setLayout(new BorderLayout());
 		setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -186,7 +191,7 @@ public class OSPartyPanel extends PluginPanel
 			hostApplicationHandler, partyState, itemManager, liveParty, runeWatchService, killcountService,
 			skillIconManager, worldSupplier, worldHopper, friendsChatOwnerSupplier, coxLayoutSupplier,
 			config, configManager, favoritesService, blockListService, spriteManager,
-			() -> discordLinked, this::startDiscordLink, accountHashSupplier);
+			() -> discordLinked, this::startDiscordLink, accountHashSupplier, hostTransferHandler);
 		historyPanel = new HistoryPanel(historyService, favoritesService, blockListService);
 		// Favouriting/blocking a player from a history roster refreshes the affected tabs.
 		historyPanel.setOnFlagChanged(() ->
@@ -605,6 +610,12 @@ public class OSPartyPanel extends PluginPanel
 		partyState.resumeHosting(party);
 	}
 
+	/** Route an inbound host-transfer handshake message (from the plugin's party-bus subscription). */
+	public void onHostTransferMessage(HostTransferMessage message)
+	{
+		hostTransferHandler.onMessage(message);
+	}
+
 	private void onPartyStateChanged()
 	{
 		boolean inParty = partyState.isInParty();
@@ -653,6 +664,8 @@ public class OSPartyPanel extends PluginPanel
 		}
 		else if (!inParty && wasInParty)
 		{
+			// Any in-flight host transfer is moot once we're out of the party.
+			hostTransferHandler.reset();
 			// Left / disbanded / party ended: stamp the still-present members (host included) as gone,
 			// so the concluded row no longer shows anyone as in the party. currentParty is already null.
 			if (historyRecorded && historyService.closeParty(currentHistoryPartyId, System.currentTimeMillis()))
