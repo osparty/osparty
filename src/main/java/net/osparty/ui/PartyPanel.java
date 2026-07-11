@@ -57,6 +57,7 @@ import javax.swing.BoxLayout;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -124,6 +125,7 @@ class PartyPanel extends JPanel
 	private final java.util.function.BooleanSupplier discordLinkedSupplier;
 	private final Runnable onAuthorizeDiscord;
 	private final java.util.function.LongSupplier accountHashSupplier;
+	private final HostTransferHandler hostTransferHandler;
 	/** Favorite-star sprites (gold = favorited, grey = not), matching the Search panel; null until loaded. */
 	private BufferedImage memberStarImg;
 	private BufferedImage freeStarImg;
@@ -179,9 +181,10 @@ class PartyPanel extends JPanel
 		OSPartyConfig config, ConfigManager configManager, FavoritesService favoritesService,
 		net.osparty.BlockListService blockListService, SpriteManager spriteManager,
 		java.util.function.BooleanSupplier discordLinkedSupplier, Runnable onAuthorizeDiscord,
-		java.util.function.LongSupplier accountHashSupplier)
+		java.util.function.LongSupplier accountHashSupplier, HostTransferHandler hostTransferHandler)
 	{
 		this.partyService = partyService;
+		this.hostTransferHandler = hostTransferHandler;
 		this.discordLinkedSupplier = discordLinkedSupplier;
 		this.onAuthorizeDiscord = onAuthorizeDiscord;
 		this.accountHashSupplier = accountHashSupplier;
@@ -1762,13 +1765,30 @@ class PartyPanel extends JPanel
 		actions.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		actions.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-		// Host-only: edit the advertised settings of this party.
-		if (host && onEditParty != null)
+		// Host-only buttons stacked above the disband/leave action: edit, and — when there's someone to
+		// hand the party to — transfer host (the old host stays a member).
+		if (host)
 		{
-			JButton edit = new JButton("Edit party");
-			edit.setFocusPainted(false);
-			edit.addActionListener(e -> onEditParty.run());
-			actions.add(edit, BorderLayout.NORTH);
+			JPanel hostButtons = new JPanel(new GridLayout(0, 1, 0, 4));
+			hostButtons.setBackground(ColorScheme.DARK_GRAY_COLOR);
+			if (onEditParty != null)
+			{
+				JButton edit = new JButton("Edit party");
+				edit.setFocusPainted(false);
+				edit.addActionListener(e -> onEditParty.run());
+				hostButtons.add(edit);
+			}
+			if (hostTransferHandler != null && !transferCandidates().isEmpty())
+			{
+				JButton transfer = new JButton("Transfer host");
+				transfer.setFocusPainted(false);
+				transfer.addActionListener(e -> promptTransferHost(true));
+				hostButtons.add(transfer);
+			}
+			if (hostButtons.getComponentCount() > 0)
+			{
+				actions.add(hostButtons, BorderLayout.NORTH);
+			}
 		}
 
 		JButton button = new JButton(host ? "Disband party" : "Leave party");
@@ -1804,6 +1824,23 @@ class PartyPanel extends JPanel
 			disband(party, button);
 			return;
 		}
+		// With other members still present, offer to hand the party over instead of destroying it.
+		if (hostTransferHandler != null && !transferCandidates().isEmpty())
+		{
+			Object[] options = {"Transfer to a member & leave", "Disband for everyone", "Cancel"};
+			int choice = JOptionPane.showOptionDialog(this,
+				"Other members are still in this party. Transfer it to a member, or disband it for everyone?",
+				"Disband party", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[0]);
+			if (choice == 0)
+			{
+				promptTransferHost(false);
+			}
+			else if (choice == 1)
+			{
+				disband(party, button);
+			}
+			return;
+		}
 		JPanel msg = new JPanel(new BorderLayout(0, 6));
 		msg.add(new JLabel("Disband this party? All members will be removed."), BorderLayout.NORTH);
 		JCheckBox dontAsk = new JCheckBox("Don't ask me again");
@@ -1819,6 +1856,64 @@ class PartyPanel extends JPanel
 			configManager.setConfiguration(OSPartyConfig.GROUP, "skipDisbandConfirm", true);
 		}
 		disband(party, button);
+	}
+
+	/** The admitted, online members (excluding us) the host could hand the party to. */
+	private List<LiveParty.RosterMember> transferCandidates()
+	{
+		List<LiveParty.RosterMember> out = new ArrayList<>();
+		for (LiveParty.RosterMember member : liveParty.roster())
+		{
+			if (member.getStatus() == LiveParty.Status.MEMBER && member.isOnline() && !member.isLocal())
+			{
+				out.add(member);
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * Ask the host which member to hand the party to, then kick off the transfer. With a single
+	 * candidate it's a straight confirm; otherwise a member picker. {@code hostStays} is true for the
+	 * dedicated "Transfer host" button (old host stays a member) and false for the disband path (old
+	 * host leaves).
+	 */
+	private void promptTransferHost(boolean hostStays)
+	{
+		List<LiveParty.RosterMember> candidates = transferCandidates();
+		if (candidates.isEmpty())
+		{
+			return;
+		}
+		String tail = hostStays ? " and you'll stay in the party." : " and you'll leave the party.";
+		LiveParty.RosterMember target;
+		if (candidates.size() == 1)
+		{
+			target = candidates.get(0);
+			int ok = JOptionPane.showConfirmDialog(this,
+				"Make " + target.getName() + " the host" + tail, "Transfer host",
+				JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
+			if (ok != JOptionPane.OK_OPTION)
+			{
+				return;
+			}
+		}
+		else
+		{
+			String[] names = candidates.stream().map(LiveParty.RosterMember::getName).toArray(String[]::new);
+			JComboBox<String> combo = new JComboBox<>(names);
+			JPanel msg = new JPanel(new BorderLayout(0, 6));
+			msg.add(new JLabel("Make which member the host?" + tail), BorderLayout.NORTH);
+			msg.add(combo, BorderLayout.CENTER);
+			int ok = JOptionPane.showConfirmDialog(this, msg, "Transfer host",
+				JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
+			if (ok != JOptionPane.OK_OPTION || combo.getSelectedIndex() < 0)
+			{
+				return;
+			}
+			target = candidates.get(combo.getSelectedIndex());
+		}
+		hostTransferHandler.offerTransfer(target.getMemberId(), hostStays);
 	}
 
 	private void disband(Party party, JButton button)

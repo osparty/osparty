@@ -67,6 +67,28 @@ public interface PartyService
 	void disbandParty(String partyId, String host, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
 	/**
+	 * Host action: reassign the ad to {@code newHost} in place, keeping the party id, invite code and
+	 * Discord channel. {@code currentHostKey} authorises it; {@code newHostKey} becomes the ad's
+	 * credential so the new host (and only the new host) can keep managing it. {@code onSuccess} fires
+	 * on the server's ack; {@code onError} if the socket is down or the server rejects it. This clears
+	 * our own hosting state — the caller is giving the party away.
+	 */
+	void transferHost(String partyId, String currentHostKey, String newHost, String newHostKey,
+		Consumer<Party> onSuccess, Consumer<Throwable> onError);
+
+	/**
+	 * New host: adopt an ad we've just been handed (via {@link #transferHost}) so the socket owns it and
+	 * resumes it on reconnect. {@code hostKey} is the credential the previous host set for us.
+	 */
+	void adoptHostedParty(String partyId, String hostKey);
+
+	/**
+	 * Old host: drop our local hosting state for a party we've handed away, WITHOUT disbanding it (the
+	 * ad lives on under the new host). Stops us resuming or keeping the ad alive.
+	 */
+	void releaseHostedParty(String partyId);
+
+	/**
 	 * Host action: provision a Discord voice channel for the party via the backend bot. {@code onUrl}
 	 * receives the invite URL to share with members; {@code onError} fires if the socket is down or the
 	 * server can't create one. Idempotent — repeated calls return the same channel's URL. {@code hostKey}

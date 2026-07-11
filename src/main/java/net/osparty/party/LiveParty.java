@@ -163,6 +163,7 @@ public class LiveParty
 		wsClient.registerMessage(FcRequestMessage.class);
 		wsClient.registerMessage(ReadyCheckMessage.class);
 		wsClient.registerMessage(PingMessage.class);
+		wsClient.registerMessage(HostTransferMessage.class);
 	}
 
 	public void unregister()
@@ -173,6 +174,7 @@ public class LiveParty
 		wsClient.unregisterMessage(FcRequestMessage.class);
 		wsClient.unregisterMessage(ReadyCheckMessage.class);
 		wsClient.unregisterMessage(PingMessage.class);
+		wsClient.unregisterMessage(HostTransferMessage.class);
 		reset();
 	}
 
@@ -467,6 +469,100 @@ public class LiveParty
 	public String passphrase()
 	{
 		return partyService.getPartyPassphrase();
+	}
+
+	// ---- host transfer -------------------------------------------------------
+
+	/**
+	 * Take over as the party's host without leaving the room (used by the new host at the end of a
+	 * {@link HostTransferMessage} handshake). Adopts the admitted roster and settings from the last
+	 * host state, becomes the P2P authority, and marks the state dirty so the next tick broadcasts a
+	 * fresh {@link PartyStateMessage} with us as the host. Does not touch the socket/passphrase.
+	 */
+	public void promoteToHost(String hostName)
+	{
+		PartyStateMessage state = lastState;
+		hosting = true;
+		this.hostName = hostName;
+		long localId = localId();
+		admitted.clear();
+		if (state != null)
+		{
+			this.capacity = state.getCapacity();
+			this.currentTeamSize = state.getCapacity();
+			this.locked = state.isLocked();
+			this.discordInviteUrl = state.getDiscordInviteUrl();
+			for (RosterEntry entry : state.getRoster())
+			{
+				if (entry.getMemberId() != localId)
+				{
+					admitted.put(entry.getMemberId(), entry.getName());
+				}
+			}
+		}
+		lastState = null; // we are the authority now; ignore our own prior view
+		stateDirty = true;
+		localDirty = true;
+		fire();
+	}
+
+	/** Old host: offer the party to {@code targetMemberId}, carrying the key it'll use to own the ad. */
+	public void offerHostTransfer(long targetMemberId, String newHostKey, String newHostName, boolean hostStays)
+	{
+		HostTransferMessage message = new HostTransferMessage();
+		message.setKind(HostTransferMessage.Kind.OFFER);
+		message.setTargetMemberId(targetMemberId);
+		message.setNewHostKey(newHostKey);
+		message.setNewHostName(newHostName);
+		message.setHostStays(hostStays);
+		partyService.send(message);
+	}
+
+	/** New host: confirm to {@code oldHostMemberId} that we're here and able to take over. */
+	public void acceptHostTransfer(long oldHostMemberId)
+	{
+		HostTransferMessage message = new HostTransferMessage();
+		message.setKind(HostTransferMessage.Kind.ACCEPT);
+		message.setTargetMemberId(oldHostMemberId);
+		partyService.send(message);
+	}
+
+	/** Old host: the backend re-key succeeded — tell {@code targetMemberId} to take over. */
+	public void commitHostTransfer(long targetMemberId, String newHostKey, boolean hostStays)
+	{
+		HostTransferMessage message = new HostTransferMessage();
+		message.setKind(HostTransferMessage.Kind.COMMIT);
+		message.setTargetMemberId(targetMemberId);
+		message.setNewHostKey(newHostKey);
+		message.setHostStays(hostStays);
+		partyService.send(message);
+	}
+
+	/** Old host: the transfer failed — tell {@code targetMemberId} to stay a member. */
+	public void abortHostTransfer(long targetMemberId)
+	{
+		HostTransferMessage message = new HostTransferMessage();
+		message.setKind(HostTransferMessage.Kind.ABORT);
+		message.setTargetMemberId(targetMemberId);
+		partyService.send(message);
+	}
+
+	/**
+	 * Step down from hosting while staying in the room (used by the old host during a transfer). Drops
+	 * our host-authoritative state so we now accept the new host's {@link PartyStateMessage}. Unlike
+	 * {@link #leave()} this keeps the socket connection and does not broadcast a closing state, so the
+	 * party keeps running under the new host.
+	 */
+	public void demoteToMember()
+	{
+		hosting = false;
+		hostName = null;
+		capacity = 0;
+		locked = false;
+		discordInviteUrl = null;
+		admitted.clear();
+		stateDirty = false;
+		fire();
 	}
 
 	// ---- host actions --------------------------------------------------------

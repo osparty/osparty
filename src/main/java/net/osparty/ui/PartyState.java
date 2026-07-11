@@ -114,6 +114,22 @@ class PartyState
 		fire();
 	}
 
+	/**
+	 * Step down from hosting the current party to being a member of it (after transferring the party to
+	 * another player). Keeps {@code currentParty} but drops the host role and credential, and clears the
+	 * persisted host key so a restart doesn't try to resume a party we no longer host.
+	 */
+	void demoteToMember(Party party)
+	{
+		currentParty = party;
+		host = false;
+		advertiseLayout = false;
+		hostKey = null;
+		configManager.unsetConfiguration(OSPartyConfig.GROUP, KEY_HOST_KEY);
+		configManager.unsetConfiguration(OSPartyConfig.GROUP, KEY_HOST_KEY_PARTY);
+		fire();
+	}
+
 	/** Replace the current party object (e.g. after a roster change), keeping the role. */
 	void update(Party party)
 	{

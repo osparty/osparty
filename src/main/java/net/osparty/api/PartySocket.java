@@ -78,6 +78,8 @@ public class PartySocket extends WebSocketListener
 	private final Map<Long, Consumer<DiscordLinkStatus>> pendingLinkStatus = new ConcurrentHashMap<>();
 	// Member requestVoiceAccess calls awaiting a voiceAccess ack (or matching error), keyed by party id.
 	private final Map<String, VoicePending> pendingVoiceAccess = new ConcurrentHashMap<>();
+	// Host transferHost calls awaiting a transferred ack (or matching error), keyed by party id.
+	private final Map<String, VoicePending> pendingTransfer = new ConcurrentHashMap<>();
 	private volatile boolean started;
 	private volatile boolean closed;
 	private volatile boolean connected;
@@ -307,6 +309,41 @@ public class PartySocket extends WebSocketListener
 		}
 	}
 
+	/**
+	 * Host action: hand the ad to a new host in place, re-keying the credential to {@code newKey} so the
+	 * previous host's key stops working. Authorised by our current owner session (or {@code oldKey}).
+	 * {@code onSuccess} fires on the server's {@code transferred} ack; {@code onError} if the socket is
+	 * down or the server rejects it. We keep our local hosting state until the ack: only once the re-key
+	 * actually succeeds does the caller {@link #clearHosting} the ad it gave away, so a failed transfer
+	 * leaves us keeping the ad alive as before. Callbacks run on the socket reader thread.
+	 */
+	public void transferHost(String id, String oldKey, String newHost, String newKey,
+		Consumer<Party> onSuccess, Consumer<Throwable> onError)
+	{
+		if (id == null || !connected)
+		{
+			onError.accept(new IOException("socket not connected"));
+			return;
+		}
+		pendingTransfer.put(id, new VoicePending(url -> onSuccess.accept(null), onError));
+		send(gson.toJson(new TransferFrame(id, oldKey, newHost, newKey)));
+	}
+
+	/**
+	 * Drop our local hosting state for {@code id} WITHOUT disbanding the ad (unlike {@link #unhost}).
+	 * Used by the old host after a transfer: the ad lives on under the new host, but we must stop
+	 * resuming/keeping it alive.
+	 */
+	public void clearHosting(String id)
+	{
+		if (id != null && id.equals(hostingId))
+		{
+			hostingId = null;
+			hostingKey = null;
+			lastSentPatch = null;
+		}
+	}
+
 	// --- One-shot lookups (request/response over the socket) ---
 
 	/** Look up a party by invite code; {@code onResult} gets the party, or null if none/offline. */
@@ -522,6 +559,9 @@ public class PartySocket extends WebSocketListener
 			case "voiceAccess":
 				completeVoiceAccess(frame.id);
 				break;
+			case "transferred":
+				completeTransfer(frame.id);
+				break;
 			case "error":
 				handleError(frame.id, frame.detail);
 				break;
@@ -669,6 +709,12 @@ public class PartySocket extends WebSocketListener
 				access.onError.accept(new IOException("voice access failed: " + detail));
 				return;
 			}
+			VoicePending transfer = pendingTransfer.remove(id);
+			if (transfer != null)
+			{
+				transfer.onError.accept(new IOException("host transfer failed: " + detail));
+				return;
+			}
 		}
 		// Link errors (e.g. "linking disabled", "missing accountHash") carry no id; if a link URL
 		// request is in flight, route the failure to it rather than mistaking it for a host rejection.
@@ -728,6 +774,19 @@ public class PartySocket extends WebSocketListener
 			return;
 		}
 		VoicePending pending = pendingVoiceAccess.remove(id);
+		if (pending != null)
+		{
+			pending.onUrl.accept(null);
+		}
+	}
+
+	private void completeTransfer(String id)
+	{
+		if (id == null)
+		{
+			return;
+		}
+		VoicePending pending = pendingTransfer.remove(id);
 		if (pending != null)
 		{
 			pending.onUrl.accept(null);
@@ -952,6 +1011,24 @@ public class PartySocket extends WebSocketListener
 		{
 			this.id = id;
 			this.key = key;
+		}
+	}
+
+	/** Host-authorised reassignment of the ad to a new host, re-keying the credential to {@code newKey}. */
+	private static final class TransferFrame
+	{
+		final String type = "transferHost";
+		final String id;
+		final String key;
+		final String host;
+		final String newKey;
+
+		TransferFrame(String id, String key, String host, String newKey)
+		{
+			this.id = id;
+			this.key = key;
+			this.host = host;
+			this.newKey = newKey;
 		}
 	}
 
