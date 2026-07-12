@@ -98,9 +98,17 @@ public class CoxRaidScanner
 	/** Accumulated rooms by grid index (null = not yet scanned). */
 	private final RaidRoom[] rooms = new RaidRoom[ROOM_COUNT];
 	private boolean haveBase;
-	/** Lobby south-west tile in world coordinates (stable anchor for the grid). */
+	/**
+	 * Lobby south-west tile in world coordinates. The anchor is only valid for the
+	 * scene it was measured in: a scene reload (e.g. climbing the raid stairs) shifts
+	 * the world base, so we also record that base ({@link #anchorSceneBaseX}/Y) and
+	 * re-locate the lobby whenever it changes rather than projecting stale tiles.
+	 */
 	private int lobbyBaseX;
 	private int lobbyBaseY;
+	/** Scene base (client.getBaseX()/Y) the lobby anchor was captured against. */
+	private int anchorSceneBaseX;
+	private int anchorSceneBaseY;
 	private int baseX;
 	private int baseY;
 	private CoxLayout solvedLayout;
@@ -125,6 +133,17 @@ public class CoxRaidScanner
 			logState("bail inRaid=" + inRaid + " state=" + state + " sceneNull=" + sceneNull);
 			reset();
 			return;
+		}
+
+		// A scene reload (climbing the raid stairs) shifts the world base, which
+		// invalidates the lobby anchor captured against the old scene: projecting the
+		// room grid with it would scan the wrong tiles and corrupt the solved layout.
+		// Detect the base change and re-locate the lobby against the current scene. The
+		// solved layout and accumulated rooms are raid-stable, so they are kept.
+		if (haveBase && (client.getBaseX() != anchorSceneBaseX || client.getBaseY() != anchorSceneBaseY))
+		{
+			logState("re-anchor (scene reload: base moved)");
+			haveBase = false;
 		}
 
 		if (!haveBase && !locateLobby())
@@ -198,10 +217,13 @@ public class CoxRaidScanner
 		{
 			return false;
 		}
-		// Store the lobby anchor in scene-relative grid terms; rooms are scanned each
-		// tick relative to the player so the world base shifting doesn't matter.
+		// Capture the lobby anchor in world coordinates together with the scene base it
+		// was measured against, so a later base shift (scene reload) is detected in
+		// update() and triggers a re-locate instead of silently scanning wrong tiles.
 		this.lobbyBaseX = client.getBaseX() + base.getX();
 		this.lobbyBaseY = client.getBaseY() + base.getY();
+		this.anchorSceneBaseX = client.getBaseX();
+		this.anchorSceneBaseY = client.getBaseY();
 		this.baseX = lobbyIndex % ROOMS_PER_X;
 		this.baseY = lobbyIndex % ROOMS_PER_PLANE > (ROOMS_PER_X - 1) ? 1 : 0;
 		haveBase = true;
