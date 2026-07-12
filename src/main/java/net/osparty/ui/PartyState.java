@@ -25,6 +25,8 @@ class PartyState
 	/** ConfigManager keys for the persisted host credential and the party it belongs to. */
 	private static final String KEY_HOST_KEY = "hostKey";
 	private static final String KEY_HOST_KEY_PARTY = "hostKeyPartyId";
+	/** Persisted with the credential so a resumed host keeps advertising the CoX layout. */
+	private static final String KEY_ADVERTISE_LAYOUT = "hostAdvertiseLayout";
 
 	private final ConfigManager configManager;
 
@@ -64,6 +66,9 @@ class PartyState
 	void setAdvertiseLayout(boolean advertiseLayout)
 	{
 		this.advertiseLayout = advertiseLayout;
+		// Persisted alongside the host credential so resumeHosting() can restore it;
+		// without this, a client restart silently stopped the layout heartbeats.
+		configManager.setConfiguration(OSPartyConfig.GROUP, KEY_ADVERTISE_LAYOUT, advertiseLayout);
 	}
 
 	boolean isInParty()
@@ -93,6 +98,10 @@ class PartyState
 		currentParty = party;
 		host = true;
 		this.hostKey = loadHostKey(party.getId());
+		// Restore the layout-advertising choice too; only trust it when the saved
+		// credential actually belongs to this party (same guard as the host key).
+		this.advertiseLayout = hostKey != null && Boolean.parseBoolean(
+			configManager.getConfiguration(OSPartyConfig.GROUP, KEY_ADVERTISE_LAYOUT));
 		fire();
 	}
 
@@ -127,6 +136,7 @@ class PartyState
 		hostKey = null;
 		configManager.unsetConfiguration(OSPartyConfig.GROUP, KEY_HOST_KEY);
 		configManager.unsetConfiguration(OSPartyConfig.GROUP, KEY_HOST_KEY_PARTY);
+		configManager.unsetConfiguration(OSPartyConfig.GROUP, KEY_ADVERTISE_LAYOUT);
 		fire();
 	}
 
@@ -146,6 +156,7 @@ class PartyState
 		// The party is over; drop the persisted credential so it isn't resumed later.
 		configManager.unsetConfiguration(OSPartyConfig.GROUP, KEY_HOST_KEY);
 		configManager.unsetConfiguration(OSPartyConfig.GROUP, KEY_HOST_KEY_PARTY);
+		configManager.unsetConfiguration(OSPartyConfig.GROUP, KEY_ADVERTISE_LAYOUT);
 		fire();
 	}
 
