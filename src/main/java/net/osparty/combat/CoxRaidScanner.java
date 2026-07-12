@@ -409,7 +409,13 @@ public class CoxRaidScanner
 		for (int[] entry : layout.ordered)
 		{
 			int position = entry[0];
-			if (position < ROOM_COUNT && rooms[position] == null)
+			// Treat EMPTY like "not scanned yet": a room the scanner saw but couldn't
+			// identify (out of view / unvisited) reads as EMPTY. Leaving it EMPTY drops
+			// it from the layout string and, for combat slots, shifts setCombatRooms so
+			// the rotation duplicates/misorders. Seed it from the known layout symbol
+			// (UNKNOWN_COMBAT / UNKNOWN_PUZZLE / SCAVENGERS / ...) so every room shows;
+			// scanRooms refines it to the real room once the player reaches it.
+			if (position < ROOM_COUNT && (rooms[position] == null || rooms[position] == RaidRoom.EMPTY))
 			{
 				rooms[position] = unsolvedRoom((char) entry[1]);
 			}
