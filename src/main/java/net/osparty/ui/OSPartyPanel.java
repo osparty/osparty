@@ -71,7 +71,7 @@ public class OSPartyPanel extends PluginPanel
 	// with runelite-plugin.properties on each release.
 	private static final String VERSION = "1.0.24";
 	private static final String GITHUB_URL = "https://github.com/osparty/osparty";
-	private static final String DISCORD_URL = "https://discord.gg/3xrf7wkb5F";
+	private static final String DISCORD_URL = "https://discord.gg/EtMRxTHXWJ";
 
 	/** Distinct green used for the Party tab's "a party is running" underline, so it reads apart
 	 *  from the orange {@link MaterialTab} selection underline. */

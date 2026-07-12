@@ -57,12 +57,19 @@ public class PartySocket extends WebSocketListener
 	private final String url;
 
 	private final Map<String, Party> parties = new LinkedHashMap<>();
-	private final ScheduledExecutorService reconnects = Executors.newSingleThreadScheduledExecutor(r ->
+	// Recreated on each start(): stop() shuts it down for good, so a disable/re-enable cycle needs a
+	// fresh executor to schedule reconnects onto.
+	private volatile ScheduledExecutorService reconnects;
+
+	private static ScheduledExecutorService newReconnectExecutor()
 	{
-		Thread t = new Thread(r, "osparty-socket");
-		t.setDaemon(true);
-		return t;
-	});
+		return Executors.newSingleThreadScheduledExecutor(r ->
+		{
+			Thread t = new Thread(r, "osparty-socket");
+			t.setDaemon(true);
+			return t;
+		});
+	}
 
 	private final List<Consumer<List<Party>>> searchListeners = new CopyOnWriteArrayList<>();
 	// Activity to scope the live list to (null = all). Kept across reconnects so onOpen re-sends it.
@@ -129,6 +136,12 @@ public class PartySocket extends WebSocketListener
 		}
 		started = true;
 		closed = false;
+		attempt = 0;
+		// A prior stop() shuts the executor down permanently; give this run a fresh one.
+		if (reconnects == null || reconnects.isShutdown())
+		{
+			reconnects = newReconnectExecutor();
+		}
 		connect();
 	}
 
@@ -137,7 +150,11 @@ public class PartySocket extends WebSocketListener
 	{
 		closed = true;
 		connected = false;
-		reconnects.shutdownNow();
+		started = false;
+		if (reconnects != null)
+		{
+			reconnects.shutdownNow();
+		}
 		WebSocket socket = webSocket;
 		if (socket != null)
 		{
