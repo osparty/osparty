@@ -114,10 +114,20 @@ public class CoxRaidScanner
 	/** Scan the scene and (re)solve the layout; resets when not in a raid. Client thread. */
 	public void update()
 	{
-		if (client.getVarbitValue(Varbits.IN_RAID) != 1 || client.getGameState() != GameState.LOGGED_IN
-			|| client.getScene() == null)
+		// Only drop everything once we've actually left the raid.
+		if (client.getVarbitValue(Varbits.IN_RAID) != 1)
 		{
 			reset();
+			return;
+		}
+
+		// Still in the raid, but the scene is mid-reload — taking the stairs between floors briefly
+		// flips the game state to LOADING (and the scene may be null for a tick). Skip this tick
+		// WITHOUT resetting: resetting here wipes the lobby anchor, and once we're on the upper floor
+		// findLobbyBase() can't see the lobby wall to re-anchor, so the layout would never come back
+		// until a full re-entry. Keeping the accumulated rooms + solved layout lets it resume cleanly.
+		if (client.getGameState() != GameState.LOGGED_IN || client.getScene() == null)
+		{
 			return;
 		}
 
