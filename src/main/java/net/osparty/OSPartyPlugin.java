@@ -43,6 +43,7 @@ import net.runelite.api.Tile;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
+import net.runelite.api.events.VarbitChanged;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.StatChanged;
 import net.runelite.api.vars.AccountType;
@@ -407,6 +408,20 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			&& "showDiscordBadges".equals(event.getKey()) && panel != null)
 		{
 			SwingUtilities.invokeLater(panel::refreshDiscordBadgeViews);
+		}
+	}
+
+	@Subscribe
+	public void onVarbitChanged(VarbitChanged event)
+	{
+		// The CoX entrance-stairs "reload" re-rolls the raid, flicking IN_RAID
+		// 1 -> 0 -> 1 within a single tick. Only the event stream sees that flick
+		// (the scanner's per-tick poll misses it), and it must wipe the solved
+		// layout so the fresh instance gets rescouted - same signal RuneLite's
+		// Raids plugin resets on.
+		if (event.getVarbitId() == net.runelite.api.Varbits.IN_RAID)
+		{
+			coxRaidScanner.onInRaidChanged(event.getValue());
 		}
 	}
 

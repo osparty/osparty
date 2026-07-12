@@ -99,16 +99,14 @@ public class CoxRaidScanner
 	private final RaidRoom[] rooms = new RaidRoom[ROOM_COUNT];
 	private boolean haveBase;
 	/**
-	 * Lobby south-west tile in world coordinates. The anchor is only valid for the
-	 * scene it was measured in: a scene reload (e.g. climbing the raid stairs) shifts
-	 * the world base, so we also record that base ({@link #anchorSceneBaseX}/Y) and
-	 * re-locate the lobby whenever it changes rather than projecting stale tiles.
+	 * Lobby south-west tile in world coordinates, captured once. CoX is instanced, so
+	 * a tile's world coordinates stay fixed for the whole raid even though the scene
+	 * base shifts on a reload (e.g. climbing the stairs); re-projecting worldX minus
+	 * the current base gives the right scene tile every scan. This mirrors RuneLite's
+	 * Raids plugin, which stores the lobby world point once and reuses it.
 	 */
 	private int lobbyBaseX;
 	private int lobbyBaseY;
-	/** Scene base (client.getBaseX()/Y) the lobby anchor was captured against. */
-	private int anchorSceneBaseX;
-	private int anchorSceneBaseY;
 	private int baseX;
 	private int baseY;
 	private CoxLayout solvedLayout;
@@ -124,31 +122,44 @@ public class CoxRaidScanner
 	/** Scan the scene and (re)solve the layout; resets when not in a raid. Client thread. */
 	public void update()
 	{
-		int inRaid = client.getVarbitValue(Varbits.IN_RAID);
-		GameState state = client.getGameState();
-		boolean sceneNull = client.getScene() == null;
-		if (inRaid != 1 || state != GameState.LOGGED_IN || sceneNull)
+		// A scene reload (e.g. climbing the raid stairs) briefly leaves the LOGGED_IN
+		// state; skip those ticks but keep the solved raid, like RuneLite's plugin,
+		// which persists the raid across scene loads and only clears it when the
+		// player actually leaves.
+		if (client.getGameState() != GameState.LOGGED_IN || client.getScene() == null)
 		{
-			// TEMP DIAG: why did we bail/reset? Watch this line when clicking the stairs.
-			logState("bail inRaid=" + inRaid + " state=" + state + " sceneNull=" + sceneNull);
+			return;
+		}
+		if (client.getVarbitValue(Varbits.IN_RAID) != 1)
+		{
 			reset();
 			return;
 		}
 
-		// A scene reload (climbing the raid stairs) shifts the world base, which
-		// invalidates the lobby anchor captured against the old scene: projecting the
-		// room grid with it would scan the wrong tiles and corrupt the solved layout.
-		// Detect the base change and re-locate the lobby against the current scene. The
-		// solved layout and accumulated rooms are raid-stable, so they are kept.
-		if (haveBase && (client.getBaseX() != anchorSceneBaseX || client.getBaseY() != anchorSceneBaseY))
+		// The entrance-stairs "reload" re-rolls the raid into a fresh instance, which
+		// moves the lobby to a new world coordinate (otherwise invariant for the
+		// raid's lifetime - the same fact that lets scanRooms() project the grid
+		// across scene reloads). Reset before scanning so this tick can't read tiles
+		// against the stale anchor. onInRaidChanged() catches the same re-roll via
+		// the IN_RAID varbit event, but in practice that event arrives after this
+		// tick's poll, so this check is what stops a garbage scan (both were observed
+		// firing on every reload). findLobbyBase() returns null when the lobby isn't
+		// in the scene, so this only runs near the start/stairs - exactly where a
+		// reload happens.
+		if (haveBase)
 		{
-			logState("re-anchor (scene reload: base moved)");
-			haveBase = false;
+			Point lobby = findLobbyBase();
+			if (lobby != null
+				&& (client.getBaseX() + lobby.getX() != lobbyBaseX
+					|| client.getBaseY() + lobby.getY() != lobbyBaseY))
+			{
+				log.debug("CoX raid re-rolled (lobby moved); rescouting layout");
+				reset();
+			}
 		}
 
 		if (!haveBase && !locateLobby())
 		{
-			logState("no-anchor (locateLobby failed)");
 			return;
 		}
 		scanRooms();
@@ -158,7 +169,6 @@ public class CoxRaidScanner
 			CoxLayout layout = findLayout(toCode());
 			if (layout == null)
 			{
-				logState("unsolved code=[" + toCode() + "]");
 				return; // not enough scanned to uniquely match yet - keep accumulating
 			}
 			solvedLayout = layout;
@@ -169,26 +179,33 @@ public class CoxRaidScanner
 		solveRotation(combat);
 		setCombatRooms(solvedLayout, combat);
 		cachedLayout = orderedRooms(solvedLayout);
-		logState("cached=[" + cachedLayout + "]");
-	}
-
-	// ---- TEMP DIAG: log only on a state change so it isn't per-tick spam. Remove once fixed. ----
-	private String lastLogged;
-
-	private void logState(String msg)
-	{
-		String line = "haveBase=" + haveBase + " solved=" + (solvedLayout != null) + " " + msg;
-		if (!line.equals(lastLogged))
-		{
-			lastLogged = line;
-			log.info("[coxdiag] {}", line);
-		}
 	}
 
 	/** @return the solved raid rotation (combat + puzzle rooms in order), or null. */
 	public String layout()
 	{
 		return cachedLayout;
+	}
+
+	/**
+	 * Reset when the IN_RAID varbit leaves 1. Fed from the plugin's VarbitChanged
+	 * subscription: the entrance-stairs "reload" flicks the varbit 1 -> 0 -> 1 within
+	 * a single tick, which the per-tick poll in {@link #update()} never sees but the
+	 * event stream does - this is how RuneLite's Raids plugin catches the re-roll.
+	 * Complements the lobby-moved check in update(): that one fires first (inside the
+	 * tick, guarding the scan), this one is the authoritative lifecycle signal and
+	 * covers any case where the lobby isn't scannable.
+	 */
+	public void onInRaidChanged(int value)
+	{
+		if (value != 1 && solvedLayout != null)
+		{
+			log.debug("IN_RAID left 1 (event); resetting CoX scan");
+		}
+		if (value != 1)
+		{
+			reset();
+		}
 	}
 
 	private void reset()
@@ -217,13 +234,11 @@ public class CoxRaidScanner
 		{
 			return false;
 		}
-		// Capture the lobby anchor in world coordinates together with the scene base it
-		// was measured against, so a later base shift (scene reload) is detected in
-		// update() and triggers a re-locate instead of silently scanning wrong tiles.
+		// Capture the lobby anchor once in world coordinates. scanRooms() re-projects it
+		// against the current scene base each tick, so it stays correct across scene
+		// reloads without ever re-locating (which would risk a different grid index).
 		this.lobbyBaseX = client.getBaseX() + base.getX();
 		this.lobbyBaseY = client.getBaseY() + base.getY();
-		this.anchorSceneBaseX = client.getBaseX();
-		this.anchorSceneBaseY = client.getBaseY();
 		this.baseX = lobbyIndex % ROOMS_PER_X;
 		this.baseY = lobbyIndex % ROOMS_PER_PLANE > (ROOMS_PER_X - 1) ? 1 : 0;
 		haveBase = true;
