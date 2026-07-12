@@ -17,6 +17,7 @@ import net.runelite.api.NullObjectID;
 import net.runelite.api.Point;
 import net.runelite.api.Tile;
 import net.runelite.api.Varbits;
+import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.plugins.raids.RaidRoom;
 import net.runelite.client.plugins.raids.RoomType;
 
@@ -36,6 +37,7 @@ import net.runelite.client.plugins.raids.RoomType;
  * would duplicate the entries the Raids plugin already built and break its
  * single-match guarantee. The matcher is the WooxSolo raids-layout algorithm.
  */
+@Slf4j
 @Singleton
 public class CoxRaidScanner
 {
@@ -114,25 +116,20 @@ public class CoxRaidScanner
 	/** Scan the scene and (re)solve the layout; resets when not in a raid. Client thread. */
 	public void update()
 	{
-		// Only drop everything once we've actually left the raid.
-		if (client.getVarbitValue(Varbits.IN_RAID) != 1)
+		int inRaid = client.getVarbitValue(Varbits.IN_RAID);
+		GameState state = client.getGameState();
+		boolean sceneNull = client.getScene() == null;
+		if (inRaid != 1 || state != GameState.LOGGED_IN || sceneNull)
 		{
+			// TEMP DIAG: why did we bail/reset? Watch this line when clicking the stairs.
+			logState("bail inRaid=" + inRaid + " state=" + state + " sceneNull=" + sceneNull);
 			reset();
-			return;
-		}
-
-		// Still in the raid, but the scene is mid-reload — taking the stairs between floors briefly
-		// flips the game state to LOADING (and the scene may be null for a tick). Skip this tick
-		// WITHOUT resetting: resetting here wipes the lobby anchor, and once we're on the upper floor
-		// findLobbyBase() can't see the lobby wall to re-anchor, so the layout would never come back
-		// until a full re-entry. Keeping the accumulated rooms + solved layout lets it resume cleanly.
-		if (client.getGameState() != GameState.LOGGED_IN || client.getScene() == null)
-		{
 			return;
 		}
 
 		if (!haveBase && !locateLobby())
 		{
+			logState("no-anchor (locateLobby failed)");
 			return;
 		}
 		scanRooms();
@@ -142,6 +139,7 @@ public class CoxRaidScanner
 			CoxLayout layout = findLayout(toCode());
 			if (layout == null)
 			{
+				logState("unsolved code=[" + toCode() + "]");
 				return; // not enough scanned to uniquely match yet - keep accumulating
 			}
 			solvedLayout = layout;
@@ -152,6 +150,20 @@ public class CoxRaidScanner
 		solveRotation(combat);
 		setCombatRooms(solvedLayout, combat);
 		cachedLayout = orderedRooms(solvedLayout);
+		logState("cached=[" + cachedLayout + "]");
+	}
+
+	// ---- TEMP DIAG: log only on a state change so it isn't per-tick spam. Remove once fixed. ----
+	private String lastLogged;
+
+	private void logState(String msg)
+	{
+		String line = "haveBase=" + haveBase + " solved=" + (solvedLayout != null) + " " + msg;
+		if (!line.equals(lastLogged))
+		{
+			lastLogged = line;
+			log.info("[coxdiag] {}", line);
+		}
 	}
 
 	/** @return the solved raid rotation (combat + puzzle rooms in order), or null. */
