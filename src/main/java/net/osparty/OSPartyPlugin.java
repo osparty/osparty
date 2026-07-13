@@ -40,6 +40,7 @@ import net.runelite.api.Player;
 import net.runelite.api.Skill;
 import net.runelite.api.Tile;
 import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.events.CommandExecuted;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.VarbitChanged;
@@ -49,8 +50,8 @@ import net.runelite.api.vars.AccountType;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.api.World;
-import net.runelite.api.widgets.ComponentID;
 import net.runelite.client.audio.AudioPlayer;
+import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.input.KeyManager;
 import net.runelite.client.input.MouseAdapter;
@@ -156,6 +157,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Inject
 	private net.osparty.api.PartySocket partySocket;
 
+	@Inject
+	private EventBus eventBus;
+
 	private OSPartyPanel panel;
 	private NavigationButton navButton;
 	private ApplicantOverlay applicantOverlay;
@@ -241,13 +245,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	/** Snapshot of the local player's friends list, updated each game tick. */
 	private volatile Set<String> friendNames = java.util.Collections.emptySet();
 
-	/** Pending quick-hop target (driven on game ticks), or null when not hopping. */
-	private volatile net.runelite.http.api.worlds.World quickHopTarget;
-	/** How many ticks we've waited for the world switcher widget to appear. */
-	private int quickHopAttempts;
-	/** Give up opening the world switcher after this many ticks. */
-	private static final int QUICK_HOP_MAX_ATTEMPTS = 35;
-
 	/** Applicants awaiting an in-game Accept/Decline prompt (host only). */
 	private final java.util.Deque<PendingPrompt> promptQueue = new java.util.ArrayDeque<>();
 	/** True while one of our chatbox prompts is open, so we show them one at a time. */
@@ -301,6 +298,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// The defence tracker reads RuneLite's Special Attack Counter events, which
 		// only fire while that plugin is running, so make sure it's enabled.
 		enablePluginByName("Special Attack Counter");
+		// We hop to a party member's world by firing World Hopper's ::hop command
+		// (see hopTo), so that plugin must be running to receive it.
+		enablePluginByName("World Hopper");
 
 		// Hotkey + click to ping a tile for the party.
 		keyManager.registerKeyListener(pingHotkeyListener);
@@ -447,7 +447,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			mapRegions = null;
 			accountType = null;
 			accountHash = -1L;
-			quickHopTarget = null;
 			promptQueue.clear();
 		}
 		// Re-arm the rejoin check on a real logout (not a world hop).
@@ -501,9 +500,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// scan can't see the whole raid), so it keeps filling in and updating.
 		coxRaidScanner.update();
 		coxLayout = coxRaidScanner.layout();
-
-		// Drive any in-progress world hop (needs the client thread).
-		processQuickHop();
 
 		// Show the next in-game applicant prompt if the chatbox is free.
 		drainApplicantPrompts();
@@ -836,10 +832,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 	/**
 	 * Hop the client to {@code worldNum} (a party member's world). Safe to call
-	 * from the EDT. At the login screen we can switch directly; while logged in the
-	 * actual hop is driven over game ticks (see {@link #processQuickHop()}), which
-	 * - following RuneLite's World Hopper - opens the world switcher first so
-	 * {@code hopToWorld} works from anywhere without the player opening it manually.
+	 * from the EDT. At the login screen we can switch worlds directly; while logged
+	 * in we delegate the hop to RuneLite's World Hopper plugin by firing its
+	 * {@code ::hop} command, rather than calling {@code client.hopToWorld} ourselves
+	 * (that method is no longer permitted for plugin-hub plugins). World Hopper is
+	 * enabled on startup (see {@link #startUp()}) so its command handler is present.
 	 */
 	public void hopTo(int worldNum)
 	{
@@ -862,43 +859,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			return;
 		}
 
-		// Queue it; the game-tick handler opens the switcher then hops.
-		quickHopAttempts = 0;
-		quickHopTarget = target;
-	}
-
-	/**
-	 * Progress a queued world hop. RuneLite's {@code hopToWorld} only works once the
-	 * world-switcher widget has been built, so we open it first and retry over a few
-	 * ticks until it exists, then hop. Runs on the client thread (from GameTick).
-	 */
-	private void processQuickHop()
-	{
-		net.runelite.http.api.worlds.World target = quickHopTarget;
-		if (target == null)
-		{
-			return;
-		}
-		if (client.getWorld() == target.getId() || client.getGameState() != GameState.LOGGED_IN)
-		{
-			quickHopTarget = null;
-			return;
-		}
-
-		if (client.getWidget(ComponentID.WORLD_SWITCHER_WORLD_LIST) == null)
-		{
-			// Switcher not built yet - open it and try again next tick.
-			client.openWorldHopper();
-			if (++quickHopAttempts >= QUICK_HOP_MAX_ATTEMPTS)
-			{
-				quickHopTarget = null;
-				gameMessage("Could not open the world switcher to hop to world " + target.getId() + ".");
-			}
-			return;
-		}
-
-		client.hopToWorld(toRsWorld(target));
-		quickHopTarget = null;
+		// Fire World Hopper's ::hop command; it validates the world, opens the
+		// switcher and performs the hop the same way a manual ::hop would.
+		clientThread.invoke(() ->
+			eventBus.post(new CommandExecuted("hop", new String[]{Integer.toString(worldNum)})));
 	}
 
 	private World toRsWorld(net.runelite.http.api.worlds.World source)
