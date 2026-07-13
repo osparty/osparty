@@ -1,4 +1,4 @@
-package net.osparty;
+package net.osparty.tools;
 
 import net.osparty.model.Activity;
 import net.osparty.model.Applicant;

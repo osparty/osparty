@@ -1,7 +1,9 @@
-package net.osparty;
+package net.osparty.service;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
+
+import net.osparty.OSPartyConfig;
 import net.osparty.model.Party;
 import net.osparty.store.FlagKind;
 import net.osparty.store.PartyStore;

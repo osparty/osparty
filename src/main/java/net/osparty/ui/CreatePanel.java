@@ -51,7 +51,7 @@ import javax.swing.Timer;
 import javax.swing.event.AncestorEvent;
 import javax.swing.event.AncestorListener;
 import net.runelite.api.vars.AccountType;
-import net.osparty.KillcountService;
+import net.osparty.service.KillcountService;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;

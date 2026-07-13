@@ -1,11 +1,11 @@
 package net.osparty.ui;
 
-import net.osparty.FavoritesService;
-import net.osparty.HostApplicationHandler;
-import net.osparty.KillcountService;
-import net.osparty.BlockedApplicantAction;
+import net.osparty.service.FavoritesService;
+import net.osparty.tools.HostApplicationHandler;
+import net.osparty.service.KillcountService;
+import net.osparty.enums.BlockedApplicantAction;
 import net.osparty.OSPartyConfig;
-import net.osparty.PersonalBests;
+import net.osparty.tools.PersonalBests;
 import net.osparty.api.PartyService;
 import net.osparty.model.AccountTypes;
 import net.osparty.model.Activity;
@@ -19,8 +19,8 @@ import net.osparty.party.LiveParty;
 import net.osparty.party.LiveParty.RosterMember;
 import net.osparty.party.LiveParty.Status;
 import net.osparty.party.PlayerUpdate;
-import net.osparty.runewatch.RuneWatchCase;
-import net.osparty.runewatch.RuneWatchService;
+import net.osparty.model.RuneWatchCase;
+import net.osparty.service.RuneWatchService;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.image.BufferedImage;
@@ -41,6 +41,8 @@ import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+
+import net.osparty.service.BlockListService;
 import net.runelite.api.vars.AccountType;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -120,7 +122,7 @@ class PartyPanel extends JPanel
 	private final OSPartyConfig config;
 	private final ConfigManager configManager;
 	private final FavoritesService favoritesService;
-	private final net.osparty.BlockListService blockListService;
+	private final BlockListService blockListService;
 	/** Whether the local account is Discord-linked (gates the voice buttons), and the action to start linking. */
 	private final java.util.function.BooleanSupplier discordLinkedSupplier;
 	private final Runnable onAuthorizeDiscord;
@@ -174,14 +176,14 @@ class PartyPanel extends JPanel
 	private static final long FC_REQUEST_COOLDOWN_MS = 10_000;
 
 	PartyPanel(PartyService partyService, Supplier<String> playerNameSupplier,
-		HostApplicationHandler hostApplicationHandler, PartyState partyState, ItemManager itemManager,
-		LiveParty liveParty, RuneWatchService runeWatch, KillcountService killcounts,
-		SkillIconManager skillIcons, IntSupplier currentWorld, IntConsumer worldHopper,
-		Supplier<String> friendsChatOwnerSupplier, Supplier<String> coxLayoutSupplier,
-		OSPartyConfig config, ConfigManager configManager, FavoritesService favoritesService,
-		net.osparty.BlockListService blockListService, SpriteManager spriteManager,
-		java.util.function.BooleanSupplier discordLinkedSupplier, Runnable onAuthorizeDiscord,
-		java.util.function.LongSupplier accountHashSupplier, HostTransferHandler hostTransferHandler)
+               HostApplicationHandler hostApplicationHandler, PartyState partyState, ItemManager itemManager,
+               LiveParty liveParty, RuneWatchService runeWatch, KillcountService killcounts,
+               SkillIconManager skillIcons, IntSupplier currentWorld, IntConsumer worldHopper,
+               Supplier<String> friendsChatOwnerSupplier, Supplier<String> coxLayoutSupplier,
+               OSPartyConfig config, ConfigManager configManager, FavoritesService favoritesService,
+               BlockListService blockListService, SpriteManager spriteManager,
+               java.util.function.BooleanSupplier discordLinkedSupplier, Runnable onAuthorizeDiscord,
+               java.util.function.LongSupplier accountHashSupplier, HostTransferHandler hostTransferHandler)
 	{
 		this.partyService = partyService;
 		this.hostTransferHandler = hostTransferHandler;

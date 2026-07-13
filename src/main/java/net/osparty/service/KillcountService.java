@@ -1,4 +1,4 @@
-package net.osparty;
+package net.osparty.service;
 
 import net.osparty.model.Activity;
 import java.util.Map;

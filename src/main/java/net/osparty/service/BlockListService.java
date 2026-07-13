@@ -1,4 +1,4 @@
-package net.osparty;
+package net.osparty.service;
 
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;

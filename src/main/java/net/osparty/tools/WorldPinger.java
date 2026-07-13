@@ -1,4 +1,4 @@
-package net.osparty;
+package net.osparty.tools;
 
 import java.net.InetSocketAddress;
 import java.net.Socket;

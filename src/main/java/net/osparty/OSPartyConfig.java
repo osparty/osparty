@@ -1,7 +1,10 @@
 package net.osparty;
 
 import java.awt.Color;
-import net.osparty.combat.DefenceOverlayPosition;
+
+import net.osparty.enums.BlockedApplicantAction;
+import net.osparty.enums.DefenceOverlayPosition;
+import net.osparty.enums.SceneFontSize;
 import net.runelite.client.config.Alpha;
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;

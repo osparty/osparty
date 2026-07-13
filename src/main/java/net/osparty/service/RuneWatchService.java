@@ -1,4 +1,4 @@
-package net.osparty.runewatch;
+package net.osparty.service;
 
 import net.osparty.OSPartyConfig;
 import com.google.gson.Gson;
@@ -14,6 +14,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
+import net.osparty.model.RuneWatchCase;
 import net.runelite.client.util.Text;
 import okhttp3.Call;
 import okhttp3.Callback;

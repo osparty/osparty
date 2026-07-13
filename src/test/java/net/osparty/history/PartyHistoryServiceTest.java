@@ -5,8 +5,12 @@ import java.io.File;
 import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.List;
+
+import net.osparty.model.HistoryMember;
 import net.osparty.model.Member;
 import net.osparty.model.Party;
+import net.osparty.model.PartyHistoryEntry;
+import net.osparty.service.PartyHistoryService;
 import org.junit.Before;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;

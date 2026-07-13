@@ -1,10 +1,10 @@
 package net.osparty.ui;
 
-import net.osparty.BlockListService;
-import net.osparty.FavoritesService;
-import net.osparty.history.HistoryMember;
-import net.osparty.history.PartyHistoryEntry;
-import net.osparty.history.PartyHistoryService;
+import net.osparty.service.BlockListService;
+import net.osparty.service.FavoritesService;
+import net.osparty.model.HistoryMember;
+import net.osparty.model.PartyHistoryEntry;
+import net.osparty.service.PartyHistoryService;
 import net.osparty.model.Activity;
 import java.awt.BorderLayout;
 import java.awt.Color;

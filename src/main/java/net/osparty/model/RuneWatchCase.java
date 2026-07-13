@@ -1,4 +1,4 @@
-package net.osparty.runewatch;
+package net.osparty.model;
 
 import com.google.gson.annotations.SerializedName;
 import lombok.Data;

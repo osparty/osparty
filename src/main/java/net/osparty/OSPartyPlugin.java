@@ -2,8 +2,8 @@ package net.osparty;
 
 import net.osparty.api.PartyApiClient;
 import net.osparty.api.PartyService;
-import net.osparty.combat.CoxRaidScanner;
-import net.osparty.combat.DefenceTracker;
+import net.osparty.service.*;
+import net.osparty.tools.*;
 import net.osparty.model.Activity;
 import net.osparty.model.Applicant;
 import net.osparty.model.Party;
@@ -15,7 +15,6 @@ import net.osparty.party.PartyStateMessage;
 import net.osparty.party.PingMessage;
 import net.osparty.party.PlayerUpdate;
 import net.osparty.party.ReadyCheckMessage;
-import net.osparty.runewatch.RuneWatchService;
 import net.osparty.ui.OSPartyPanel;
 import net.osparty.ui.ApplicantOverlay;
 import net.osparty.ui.FcRequestOverlay;
@@ -235,7 +234,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private net.osparty.store.PartyStore partyStore;
 
 	@Inject
-	private net.osparty.history.PartyHistoryService partyHistoryService;
+	private PartyHistoryService partyHistoryService;
 
 	@Inject
 	private SpriteManager spriteManager;

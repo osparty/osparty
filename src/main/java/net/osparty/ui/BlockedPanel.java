@@ -1,6 +1,6 @@
 package net.osparty.ui;
 
-import net.osparty.BlockListService;
+import net.osparty.service.BlockListService;
 import net.osparty.store.PlayerFlag;
 import java.awt.BorderLayout;
 import java.awt.Component;

@@ -1,4 +1,4 @@
-package net.osparty;
+package net.osparty.enums;
 
 import java.awt.Font;
 import net.runelite.client.ui.FontManager;

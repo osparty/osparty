@@ -1,6 +1,7 @@
-package net.osparty.combat;
+package net.osparty.enums;
 
 import lombok.Getter;
+import net.osparty.tools.DefenceTracker;
 
 /**
  * Base combat stats for monsters whose defence can be drained by special attacks,

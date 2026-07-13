@@ -1,4 +1,4 @@
-package net.osparty.combat;
+package net.osparty.enums;
 
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;

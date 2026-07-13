@@ -1,4 +1,4 @@
-package net.osparty.combat;
+package net.osparty.tools;
 
 import java.util.ArrayList;
 import java.util.Arrays;

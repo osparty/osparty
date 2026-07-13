@@ -17,7 +17,7 @@ import javax.inject.Singleton;
 import javax.swing.SwingUtilities;
 import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
-import net.osparty.PersonalBests;
+import net.osparty.tools.PersonalBests;
 import net.runelite.api.Client;
 import net.runelite.api.Skill;
 import net.runelite.api.coords.WorldPoint;

@@ -1,9 +1,9 @@
 package net.osparty.ui;
 
 import net.osparty.OSPartyConfig;
-import net.osparty.combat.DefenceOverlayPosition;
-import net.osparty.combat.DefenceTracker;
-import net.osparty.combat.DefenceTracker.DefenceState;
+import net.osparty.enums.DefenceOverlayPosition;
+import net.osparty.tools.DefenceTracker;
+import net.osparty.tools.DefenceTracker.DefenceState;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FontMetrics;

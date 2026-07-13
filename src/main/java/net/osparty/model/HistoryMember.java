@@ -1,4 +1,4 @@
-package net.osparty.history;
+package net.osparty.model;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;

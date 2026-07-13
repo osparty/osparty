@@ -1,9 +1,10 @@
-package net.osparty.history;
+package net.osparty.model;
 
 import java.util.List;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import net.osparty.service.PartyHistoryService;
 
 /**
  * One row of the local party history: a party the player was part of, recorded the

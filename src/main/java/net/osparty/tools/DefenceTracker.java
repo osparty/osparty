@@ -1,10 +1,11 @@
-package net.osparty.combat;
+package net.osparty.tools;
 
 import java.util.ArrayList;
 import java.util.List;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.Value;
+import net.osparty.enums.BossDefence;
 import net.runelite.api.Client;
 import net.runelite.api.NPC;
 import net.runelite.api.Varbits;

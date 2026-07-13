@@ -1,8 +1,8 @@
 package net.osparty.ui;
 
 import net.osparty.OSPartyConfig;
-import net.osparty.combat.DefenceTracker;
-import net.osparty.combat.DefenceTracker.DefenceState;
+import net.osparty.tools.DefenceTracker;
+import net.osparty.tools.DefenceTracker.DefenceState;
 import java.awt.Color;
 import java.awt.image.BufferedImage;
 import net.runelite.client.plugins.Plugin;

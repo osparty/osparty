@@ -1,4 +1,4 @@
-package net.osparty.history;
+package net.osparty.service;
 
 import com.google.gson.Gson;
 import java.io.File;
@@ -16,8 +16,10 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
 import net.osparty.OSPartyConfig;
+import net.osparty.model.HistoryMember;
 import net.osparty.model.Member;
 import net.osparty.model.Party;
+import net.osparty.model.PartyHistoryEntry;
 import net.runelite.client.RuneLite;
 
 /**

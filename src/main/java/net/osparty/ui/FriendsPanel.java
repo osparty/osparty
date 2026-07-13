@@ -1,8 +1,8 @@
 package net.osparty.ui;
 
-import net.osparty.FavoritesService;
-import net.osparty.KillcountService;
-import net.osparty.WorldPinger;
+import net.osparty.service.FavoritesService;
+import net.osparty.service.KillcountService;
+import net.osparty.tools.WorldPinger;
 import net.osparty.api.PartyService;
 import net.osparty.api.PartySubscription;
 import net.osparty.model.Activity;
@@ -28,6 +28,8 @@ import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
 import javax.swing.event.AncestorEvent;
 import javax.swing.event.AncestorListener;
+
+import net.osparty.service.BlockListService;
 import net.runelite.api.vars.AccountType;
 import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.ColorScheme;
@@ -90,7 +92,7 @@ class FriendsPanel extends PartyCardPanel
 		IntFunction<WorldRegion> worldRegionResolver,
 		IntFunction<String> worldAddressResolver,
 		FavoritesService favoritesService,
-		net.osparty.BlockListService blockListService,
+		BlockListService blockListService,
 		Supplier<Set<String>> friendNamesSupplier,
 		SpriteManager spriteManager,
 		net.osparty.OSPartyConfig config)

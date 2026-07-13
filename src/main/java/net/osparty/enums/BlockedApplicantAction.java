@@ -1,4 +1,6 @@
-package net.osparty;
+package net.osparty.enums;
+
+import net.osparty.OSPartyConfig;
 
 /**
  * What the host's client does when a player on the block list applies to their party.

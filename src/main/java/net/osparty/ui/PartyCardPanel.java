@@ -1,7 +1,7 @@
 package net.osparty.ui;
 
-import net.osparty.FavoritesService;
-import net.osparty.KillcountService;
+import net.osparty.service.FavoritesService;
+import net.osparty.service.KillcountService;
 import net.osparty.api.PartyService;
 import net.osparty.model.AccountTypes;
 import net.osparty.model.Activity;
@@ -36,6 +36,9 @@ import javax.swing.JPanel;
 import javax.swing.JTextArea;
 import javax.swing.Timer;
 import javax.swing.text.DefaultCaret;
+
+import net.osparty.service.BlockListService;
+import net.osparty.tools.WorldPinger;
 import net.runelite.api.vars.AccountType;
 import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.ColorScheme;
@@ -61,11 +64,11 @@ abstract class PartyCardPanel extends JPanel
 	protected final LiveParty liveParty;
 	protected final Supplier<AccountType> accountTypeSupplier;
 	protected final KillcountService killcountService;
-	protected final net.osparty.WorldPinger worldPinger;
+	protected final WorldPinger worldPinger;
 	protected final IntFunction<WorldRegion> worldRegionResolver;
 	protected final IntFunction<String> worldAddressResolver;
 	protected final FavoritesService favoritesService;
-	protected final net.osparty.BlockListService blockListService;
+	protected final BlockListService blockListService;
 	protected final Supplier<Set<String>> friendNamesSupplier;
 	protected final net.osparty.OSPartyConfig config;
 
@@ -105,11 +108,11 @@ abstract class PartyCardPanel extends JPanel
 		LiveParty liveParty,
 		Supplier<AccountType> accountTypeSupplier,
 		KillcountService killcountService,
-		net.osparty.WorldPinger worldPinger,
+		WorldPinger worldPinger,
 		IntFunction<WorldRegion> worldRegionResolver,
 		IntFunction<String> worldAddressResolver,
 		FavoritesService favoritesService,
-		net.osparty.BlockListService blockListService,
+		BlockListService blockListService,
 		Supplier<Set<String>> friendNamesSupplier,
 		SpriteManager spriteManager,
 		net.osparty.OSPartyConfig config)
