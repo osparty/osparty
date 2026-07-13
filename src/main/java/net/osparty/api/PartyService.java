@@ -8,25 +8,20 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * Source of party advertisements, implemented by {@link PartyApiClient} over the live
- * WebSocket. Only discovery/advertising is handled here; membership/roster runs
- * peer-to-peer. Results may arrive on a background thread, so UI callers must marshal
- * back onto the EDT themselves.
+ * Source of party advertisements, implemented by {@link PartyApiClient} over the live WebSocket.
+ * Results may arrive off the EDT, so UI callers must marshal back themselves.
  */
 public interface PartyService
 {
 	/**
-	 * Subscribe to live updates of the open-party list. The server pushes a full snapshot
-	 * on (re)connect and incremental changes after; {@code onParties} is invoked with the
-	 * complete current list each time it changes. Reconnects automatically. Returns a
-	 * handle to close when done.
+	 * Subscribe to live updates of the open-party list; {@code onParties} gets the full list on each
+	 * change. Reconnects automatically. Returns a handle to close when done.
 	 */
 	PartySubscription subscribeParties(Consumer<List<Party>> onParties, Consumer<Throwable> onError);
 
 	/**
-	 * Like {@link #subscribeParties(Consumer, Consumer)} but scopes the server feed to a single
-	 * activity id ({@code null} = all), so the server only fans out the matching ads. Re-scope later
-	 * via {@link PartySubscription#setActivity}.
+	 * Like {@link #subscribeParties(Consumer, Consumer)} but scopes the feed to one activity id
+	 * ({@code null} = all). Re-scope later via {@link PartySubscription#setActivity}.
 	 */
 	PartySubscription subscribeParties(Consumer<List<Party>> onParties, Consumer<Throwable> onError, String activityId);
 
@@ -37,28 +32,22 @@ public interface PartyService
 	void getPartyByHost(String host, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
 	/**
-	 * Create an advertised party. {@code hostKey} is a secret the caller mints; the server
-	 * stores it in the party's session and requires it on later host-only mutations, so
-	 * only the real host can change or close the ad.
+	 * Create an advertised party. {@code hostKey} is a secret the caller mints; the server requires it on
+	 * later host-only mutations, so only the real host can change or close the ad.
 	 */
 	void createParty(PartyRequest partyRequest, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
 	/**
-	 * Report live occupancy/world/layout/roles for the hosted ad. With the socket open the
-	 * connection itself is the keep-alive, so this only carries genuine field changes. A
-	 * non-positive {@code size}/{@code world} or null/blank {@code layout}/{@code roles}
-	 * means "unknown" and is left unchanged. {@code members} is the live roster (host first,
-	 * with accountHashes) advertised so search clients can block/favourite-match members;
-	 * null/empty leaves it unchanged. {@code hostKey} authorises the mutation.
+	 * Report live occupancy/world/layout/roles for the hosted ad; only genuine changes are sent. A
+	 * non-positive/null/blank field means "unknown" and is left unchanged. {@code members} is the live
+	 * roster (host first, with accountHashes) for block/favourite matching. {@code hostKey} authorises it.
 	 */
 	void heartbeat(String partyId, int size, int world, String layout, String roles, List<Member> members,
 		String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
 	/**
-	 * Host action: edit the advertised settings of a party (description, capacity, loot rule,
-	 * requirements, roles, etc.). Unlike {@link #heartbeat}, this carries every editable field
-	 * so values can be cleared as well as set. {@code hostKey} authorises the mutation; the
-	 * updated ad arrives back via the live list (and a roster broadcast for joined members).
+	 * Host action: edit the advertised party settings. Unlike {@link #heartbeat} this carries every
+	 * editable field so values can be cleared as well as set. {@code hostKey} authorises it.
 	 */
 	void editParty(String partyId, String hostKey, PartyEditRequest edit, Consumer<Party> onSuccess,
 		Consumer<Throwable> onError);
@@ -67,40 +56,27 @@ public interface PartyService
 	void disbandParty(String partyId, String host, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
 	/**
-	 * Host action: reassign the ad to {@code newHost} in place, keeping the party id, invite code and
-	 * Discord channel. {@code currentHostKey} authorises it; {@code newHostKey} becomes the ad's
-	 * credential so the new host (and only the new host) can keep managing it. {@code onSuccess} fires
-	 * on the server's ack; {@code onError} if the socket is down or the server rejects it. This clears
-	 * our own hosting state — the caller is giving the party away.
+	 * Host action: reassign the ad to {@code newHost} in place (same id/code/channel). {@code newHostKey}
+	 * becomes the ad's credential. {@code onSuccess} fires on the ack; {@code onError} on failure.
 	 */
 	void transferHost(String partyId, String currentHostKey, String newHost, String newHostKey,
 		Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
-	/**
-	 * New host: adopt an ad we've just been handed (via {@link #transferHost}) so the socket owns it and
-	 * resumes it on reconnect. {@code hostKey} is the credential the previous host set for us.
-	 */
+	/** New host: adopt an ad handed to us via {@link #transferHost} so the socket owns and resumes it. */
 	void adoptHostedParty(String partyId, String hostKey);
 
-	/**
-	 * Old host: drop our local hosting state for a party we've handed away, WITHOUT disbanding it (the
-	 * ad lives on under the new host). Stops us resuming or keeping the ad alive.
-	 */
+	/** Old host: drop local hosting state for a handed-away party WITHOUT disbanding it. */
 	void releaseHostedParty(String partyId);
 
 	/**
-	 * Host action: provision a Discord voice channel for the party via the backend bot. {@code onUrl}
-	 * receives the invite URL to share with members; {@code onError} fires if the socket is down or the
-	 * server can't create one. Idempotent — repeated calls return the same channel's URL. {@code hostKey}
-	 * authorises the request. Callbacks may arrive off the EDT.
+	 * Host action: provision a Discord voice channel via the backend bot. {@code onUrl} gets the invite
+	 * URL, {@code onError} on failure. Idempotent. {@code hostKey} authorises it. Callbacks may be off the EDT.
 	 */
 	void createVoiceChannel(String partyId, String hostKey, Consumer<String> onUrl, Consumer<Throwable> onError);
 
 	/**
-	 * Begin an OAuth2 Discord account link for {@code accountHash}. {@code onUrl} receives the Discord
-	 * authorize URL to open in a browser; {@code onError} fires if the socket is down or linking is
-	 * disabled server-side. The binding is one-time and stored server-side; poll {@link #getDiscordLink}
-	 * to learn when it completes.
+	 * Begin an OAuth2 Discord link for {@code accountHash}. {@code onUrl} gets the authorize URL,
+	 * {@code onError} on failure. Poll {@link #getDiscordLink} to learn when it completes.
 	 */
 	void startDiscordLink(long accountHash, Consumer<String> onUrl, Consumer<Throwable> onError);
 
@@ -111,23 +87,20 @@ public interface PartyService
 	void unlinkDiscord(long accountHash);
 
 	/**
-	 * Badge privacy: when {@code visible} is false the server strips this account's Discord-role
-	 * badges from party ads, so other players never see them. {@code onResult} gets the refreshed
-	 * link status (or null if offline).
+	 * Badge privacy: when {@code visible} is false the server strips this account's Discord-role badges
+	 * from party ads. {@code onResult} gets the refreshed link status (or null if offline).
 	 */
 	void setBadgeVisibility(long accountHash, boolean visible, Consumer<DiscordLinkStatus> onResult);
 
 	/**
-	 * Host action: disconnect the kicked member from the party's Discord voice channel. Fire-and-forget;
-	 * the backend no-ops unless the member is linked and currently in that channel. {@code hostKey}
-	 * authorises it.
+	 * Host action: disconnect a kicked member from the party's voice channel. Fire-and-forget; no-ops
+	 * unless they're linked and in that channel. {@code hostKey} authorises it.
 	 */
 	void kickVoiceMember(String partyId, String hostKey, long accountHash);
 
 	/**
-	 * Member action: request per-user access to the party's voice channel (for someone who joined/linked
-	 * after it was created), then open the invite. {@code onGranted} fires on success; {@code onError} if
-	 * refused or offline. Verified server-side by roster membership + Discord link.
+	 * Member action: request per-user access to the party's voice channel, then open the invite.
+	 * {@code onGranted} fires on success; {@code onError} if refused or offline.
 	 */
 	void requestVoiceAccess(String partyId, long accountHash, Runnable onGranted, Consumer<Throwable> onError);
 

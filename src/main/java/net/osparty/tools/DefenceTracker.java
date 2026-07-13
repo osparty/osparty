@@ -26,7 +26,6 @@ import net.runelite.client.plugins.specialcounter.SpecialWeapon;
 @Singleton
 public class DefenceTracker
 {
-	/** CoX scaled-party-size varbit (number of players the raid is scaled for). */
 	private static final int COX_SCALED_PARTY_SIZE_VARBIT = 9540;
 
 	private final Client client;

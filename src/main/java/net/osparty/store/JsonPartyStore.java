@@ -17,15 +17,8 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.RuneLite;
 
 /**
- * Flat-file {@link PartyStore}. Persists the favourite / block lists as a single
- * {@code <runelite>/osparty/flags.json} document, rewritten whenever a flag changes
- * (the lists are small and mutated from the EDT at human speed, so a full rewrite is
- * cheap and keeps the on-disk file trivially inspectable).
- *
- * <p>Replaces the former H2-backed store: the RuneLite Plugin Hub's
- * dependency-verification made bundling H2 fragile, and plain JSON needs no runtime
- * dependency at all. Matching semantics (hash-keyed when known, name-only otherwise)
- * are identical, so callers are unaffected.
+ * Flat-file {@link PartyStore}: favourite/block lists as one {@code <runelite>/osparty/flags.json},
+ * rewritten on every change. Replaces the former H2 store (Plugin Hub made bundling H2 fragile).
  */
 @Slf4j
 @Singleton
@@ -88,8 +81,7 @@ public class JsonPartyStore implements PartyStore
 		}
 		catch (Exception e)
 		{
-			// Corrupt/unreadable file: start empty rather than break the plugin. A subsequent
-			// write overwrites the bad file.
+			// Corrupt/unreadable file: start empty; a later write overwrites it.
 			log.warn("OSParty: could not read {}, starting with empty flags", file, e);
 			flags.clear();
 		}
@@ -123,8 +115,7 @@ public class JsonPartyStore implements PartyStore
 		String norm = lower(flag.getUsername());
 		if (flag.hasKnownHash())
 		{
-			// Replace any row with the same hash, and fold in a stale name-only row for the
-			// same username (hash backfill) — mirrors the old H2 upsert.
+			// Replace any same-hash row and fold in a stale name-only row (hash backfill).
 			list.removeIf(f -> f.getAccountHash() == flag.getAccountHash()
 				|| (!f.hasKnownHash() && lower(f.getUsername()).equals(norm)));
 		}

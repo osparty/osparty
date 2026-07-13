@@ -23,12 +23,8 @@ import net.osparty.model.PartyHistoryEntry;
 import net.runelite.client.RuneLite;
 
 /**
- * Local, capped log of the parties the player has been in. Recorded on entry (host or
- * join) and persisted as {@code <runelite>/osparty/history.json}. Newest entry first;
- * the list is trimmed to the configured limit ({@link OSPartyConfig#partyHistoryLimit()})
- * on every write, so lowering the limit takes effect on the next recorded party.
- *
- * <p>All access is guarded by the instance monitor; callers are the Swing EDT.
+ * Local, capped log of past parties, persisted as {@code <runelite>/osparty/history.json} (newest
+ * first, trimmed to {@link OSPartyConfig#partyHistoryLimit()} on write). Guarded by the instance monitor.
  */
 @Slf4j
 @Singleton
@@ -72,11 +68,7 @@ public class PartyHistoryService
 		List<PartyHistoryEntry> entries = new ArrayList<>();
 	}
 
-	/**
-	 * Record that the player just entered {@code party}. No-op for a null party or one
-	 * already at the head of the history (so a resume-after-restart or a repeat render
-	 * doesn't duplicate the same party session).
-	 */
+	/** Record that the player just entered {@code party}. No-op for null or an already-recorded party. */
 	public synchronized void record(Party party, boolean hosted)
 	{
 		if (party == null)
@@ -96,8 +88,7 @@ public class PartyHistoryService
 		}
 		long now = System.currentTimeMillis();
 		List<HistoryMember> snapshot = snapshotMembers(party, now);
-		// size tracks the present-member count; fall back to the ad's own size only for a member-less
-		// (legacy/seed) ad so it stays consistent with what updateRoster maintains from here on.
+		// size = present-member count; fall back to the ad's size only for a member-less (legacy) ad.
 		int size = snapshot.isEmpty() ? party.getSize() : snapshot.size();
 		entries.add(0, new PartyHistoryEntry(id, party.getActivity(), party.getHost(), hosted,
 			size, party.getCapacity(), party.isHardMode(), party.getInvocation(),
@@ -107,18 +98,11 @@ public class PartyHistoryService
 	}
 
 	/**
-	 * Merge the live roster of an already-recorded party (matched by {@code partyId}) into its history
-	 * row so joins and leaves after the player entered are reflected. Members who left are flagged (a
-	 * {@link HistoryMember#getLeftAt() leftAt} timestamp) rather than dropped, new members are appended
-	 * with a {@code joinedAt} of now, and a member who reappears has their {@code leftAt} cleared. The
-	 * entry's {@link PartyHistoryEntry#getSize() size} tracks the currently-present count.
+	 * Merge the live roster into the history row for {@code partyId}: leavers flagged, joiners appended,
+	 * rejoiners cleared. No write when unmatched, when {@code live} is null/empty (a transient
+	 * disconnect must not flag everyone left), or when nothing changed (called on every tick).
 	 *
-	 * <p>No-op — and, crucially, no disk write — when there is no matching entry, when {@code live} is
-	 * null/empty (a transient disconnected roster must not flag everyone as left), or when nothing
-	 * actually changed. That last guard matters because this is called on every live-party tick
-	 * (presence pings included), so we only touch {@code history.json} when membership truly changed.
-	 *
-	 * @return {@code true} when an entry was updated and persisted; {@code false} otherwise.
+	 * @return {@code true} when an entry was updated and persisted.
 	 */
 	public synchronized boolean updateRoster(String partyId, List<Member> live)
 	{
@@ -143,14 +127,8 @@ public class PartyHistoryService
 	}
 
 	/**
-	 * Mark the party {@code partyId} as ended: stamp {@link HistoryMember#getLeftAt() leftAt} on every
-	 * member still flagged present so the concluded row shows nobody as "still here" (the local player /
-	 * host included). Called when the player leaves, disbands, or the party otherwise ends — the point
-	 * past which we can no longer observe the roster, so "present at the end" is recorded as left then.
-	 *
-	 * <p>The frozen {@link PartyHistoryEntry#getSize() size} is left as the last active count (a handy
-	 * "how big it got" summary); nothing mutates the row after this. No-op — no write — when there's no
-	 * matching entry or everyone had already left. Returns whether anything changed.
+	 * Mark party {@code partyId} ended: stamp {@code leftAt} on every still-present member so the row
+	 * shows nobody still here. Called when the player leaves/disbands. Returns whether anything changed.
 	 */
 	public synchronized boolean closeParty(String partyId, long when)
 	{
@@ -182,11 +160,7 @@ public class PartyHistoryService
 		return false;
 	}
 
-	/**
-	 * Reconcile {@code entry}'s stored roster against the {@code live} members observed at {@code now}.
-	 * Returns whether anything changed. Members are identified by accountHash when known, falling back
-	 * to name; a stored member whose hash was unknown is upgraded once the live roster carries one.
-	 */
+	/** Reconcile {@code entry}'s stored roster against {@code live} (matched by hash, else name). Returns whether changed. */
 	private static boolean mergeRoster(PartyHistoryEntry entry, List<Member> live, long now)
 	{
 		List<HistoryMember> stored = entry.getMembers();
@@ -257,10 +231,7 @@ public class PartyHistoryService
 		return changed;
 	}
 
-	/**
-	 * Index of the stored (not yet matched) member corresponding to {@code lm}: by accountHash when
-	 * both carry one, else by case-insensitive name. {@code -1} when this is a newly-seen member.
-	 */
+	/** Index of the stored member matching {@code lm} (by hash, else name); {@code -1} if newly seen. */
 	private static int indexOfMember(List<HistoryMember> stored, boolean[] matched, Member lm)
 	{
 		if (lm.getAccountHash() != 0)
@@ -291,10 +262,7 @@ public class PartyHistoryService
 		return a != null && b != null && a.trim().equalsIgnoreCase(b.trim());
 	}
 
-	/**
-	 * The party's initial roster (name + accountHash, host first) as present members joined at
-	 * {@code now}. Returns an empty list when the ad carried no members (e.g. a legacy/seed ad).
-	 */
+	/** The party's initial roster as present members joined at {@code now}; empty when the ad had none. */
 	private static List<HistoryMember> snapshotMembers(Party party, long now)
 	{
 		List<HistoryMember> out = new ArrayList<>();
@@ -326,11 +294,7 @@ public class PartyHistoryService
 		save();
 	}
 
-	/**
-	 * Remove a single recorded party, matched by identity: the party id when both sides carry one,
-	 * else host + joinedAt (the same identity {@code keyOf} uses for UI state). Returns whether an
-	 * entry was removed (and the file rewritten).
-	 */
+	/** Remove a single recorded party (matched by id, else host + joinedAt). Returns whether removed. */
 	public synchronized boolean delete(PartyHistoryEntry entry)
 	{
 		if (entry == null)
@@ -407,12 +371,7 @@ public class PartyHistoryService
 		trim();
 	}
 
-	/**
-	 * Bring a loaded entry up to the current shape. Rows written by the pre-timestamp format (v1)
-	 * deserialise into {@link HistoryMember}s with {@code joinedAt}/{@code leftAt} defaulting to 0;
-	 * treat everyone as still-present (they were, when recorded) and stamp {@code joinedAt} with the
-	 * party's own start time so the UI has a sensible value rather than the epoch.
-	 */
+	/** Bring a loaded entry up to the current shape: v1 rows get {@code joinedAt} stamped from the party start. */
 	private static void migrate(PartyHistoryEntry entry)
 	{
 		List<HistoryMember> members = entry.getMembers();

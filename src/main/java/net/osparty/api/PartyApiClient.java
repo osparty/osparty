@@ -11,22 +11,14 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 
 /**
- * {@link PartyService} backed entirely by the live {@link PartySocket}. Discovery,
- * hosting, keep-alive and one-shot lookups all travel over the single session-long
- * WebSocket; there is no REST path. Callbacks fire on the socket's reader thread, so
- * UI callers must marshal back onto the EDT themselves.
+ * {@link PartyService} backed entirely by the live {@link PartySocket}; no REST path. Callbacks fire
+ * on the socket's reader thread, so UI callers must marshal back onto the EDT themselves.
  */
 @Singleton
 public class PartyApiClient implements PartyService
 {
-	/** Production party advertising API, used unless overridden for local development. */
 	private static final String DEFAULT_API_BASE_URL = "https://api.osparty.net";
 
-	/**
-	 * The API base URL. Defaults to {@link #DEFAULT_API_BASE_URL}, but can be pointed
-	 * at a local API during development via the {@code osparty.apiUrl} system property.
-	 * Read by {@link PartySocket} to derive the WebSocket URL.
-	 */
 	private static final String API_BASE_URL = resolveBaseUrl();
 
 	private static String resolveBaseUrl()
@@ -61,9 +53,7 @@ public class PartyApiClient implements PartyService
 	@Override
 	public PartySubscription subscribeParties(Consumer<List<Party>> onParties, Consumer<Throwable> onError, String activityId)
 	{
-		// The connection is owned by PartySocket (plugin-lifetime); registering a listener
-		// subscribes it to the live list. Closing the handle just unregisters — it does not
-		// drop the socket (a host still needs it open).
+		// Registering a listener subscribes the socket to the live list; closing just unregisters.
 		partySocket.setSearchListener(onParties, activityId);
 		return new PartySubscription()
 		{
@@ -108,8 +98,7 @@ public class PartyApiClient implements PartyService
 	@Override
 	public void createParty(PartyRequest partyRequest, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
-		// The socket advertises the ad and is its own keep-alive; the hosted ack carries
-		// the server-assigned id. If the socket is down, host() reports the error.
+		// The socket advertises the ad; the hosted ack carries the server-assigned id.
 		partySocket.host(partyRequest, hostKey, onSuccess, onError);
 	}
 
@@ -118,8 +107,7 @@ public class PartyApiClient implements PartyService
 		java.util.List<net.osparty.model.Member> members, String hostKey,
 		Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
-		// The open socket is the keep-alive; just push the changed fields (deduped inside
-		// PartySocket). There is no acknowledgement — list changes come back as deltas.
+		// The open socket is the keep-alive; push only changed fields (deduped in PartySocket).
 		partySocket.update(partyId, hostKey, patchOf(size, world, layout, roles, members));
 	}
 
@@ -127,9 +115,7 @@ public class PartyApiClient implements PartyService
 	public void editParty(String partyId, String hostKey, PartyEditRequest edit, Consumer<Party> onSuccess,
 		Consumer<Throwable> onError)
 	{
-		// The edit request mirrors the server's PartyUpdate field-for-field, so it serialises
-		// straight into the update frame's patch. There's no ack (like disband), so report
-		// success optimistically; the refreshed ad comes back as an 'updated' broadcast.
+		// No ack (like disband): report success optimistically; the refreshed ad returns as an 'updated' broadcast.
 		partySocket.edit(partyId, hostKey, edit);
 		onSuccess.accept(null);
 	}
@@ -145,8 +131,7 @@ public class PartyApiClient implements PartyService
 	public void transferHost(String partyId, String currentHostKey, String newHost, String newHostKey,
 		Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
-		// Unlike disband there IS a server ack ('transferred'), because the old host must not relinquish
-		// the P2P party until the backend re-key actually succeeded.
+		// Unlike disband there IS a 'transferred' ack; the old host mustn't relinquish until the re-key succeeds.
 		partySocket.transferHost(partyId, currentHostKey, newHost, newHostKey, onSuccess, onError);
 	}
 
@@ -165,8 +150,7 @@ public class PartyApiClient implements PartyService
 	@Override
 	public void createVoiceChannel(String partyId, String hostKey, Consumer<String> onUrl, Consumer<Throwable> onError)
 	{
-		// One-shot request/reply over the socket, mirroring the getByCode/getByHost lookups. The reply
-		// (or a matching error) resolves exactly one of the callbacks.
+		// One-shot request/reply over the socket; the reply or a matching error resolves one callback.
 		partySocket.createVoiceChannel(partyId, hostKey, onUrl, onError);
 	}
 

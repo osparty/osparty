@@ -38,14 +38,8 @@ import net.runelite.client.util.ImageUtil;
 import net.runelite.http.api.worlds.WorldRegion;
 
 /**
- * The "Favorites" tab. Shows two collapsible sections:
- * <ol>
- *   <li><b>Favorites</b> — open parties where the host or any member is in the
- *       player's local favourites list (starred from the Search tab).
- *   <li><b>Friends</b> — open parties hosted by someone in the in-game friends list.
- * </ol>
- * Each section renders the same party cards as the Search tab (via the shared
- * {@link PartyCardPanel} base) so Apply / Cancel / cooldown all work identically.
+ * The "Favorites" tab: two collapsible sections, Favorites (parties with a starred player) and
+ * Friends (parties hosted by an in-game friend), rendered as Search-tab cards via {@link PartyCardPanel}.
  */
 class FriendsPanel extends PartyCardPanel
 {
@@ -182,8 +176,7 @@ class FriendsPanel extends PartyCardPanel
 		add(scroll, BorderLayout.CENTER);
 		add(statusLabel, BorderLayout.SOUTH);
 
-		// Subscribe to the live party list only while this tab is visible; the socket
-		// pushes the full list and every change, so there is no polling.
+		// Subscribe to the live party list only while this tab is visible (socket push, no polling).
 		addAncestorListener(new AncestorListener()
 		{
 			@Override
@@ -348,10 +341,7 @@ class FriendsPanel extends PartyCardPanel
 
 	// ---- section header builder -------------------------------------------
 
-	/**
-	 * Builds a collapsible section header. Stores the count badge label as a
-	 * client property keyed {@code "count"} so the caller can update it.
-	 */
+	/** Builds a collapsible section header, exposing its sub-labels as client properties. */
 	private static JPanel buildSectionHeader(String title, Runnable onToggle)
 	{
 		JPanel header = new JPanel(new BorderLayout(6, 0));

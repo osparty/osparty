@@ -22,8 +22,7 @@ public class FcRequestOverlay extends OverlayPanel
 
 	public FcRequestOverlay()
 	{
-		// Distinct anchor from the ready-check overlay (TOP_CENTER) so the two never
-		// stack; movable/snappable so the user can reposition it (point 41).
+		// Distinct anchor from the ready-check overlay so the two never stack; user can reposition.
 		setPosition(OverlayPosition.TOP_RIGHT);
 		setMovable(true);
 		setSnappable(true);
@@ -61,7 +60,7 @@ public class FcRequestOverlay extends OverlayPanel
 			.leftColor(Color.YELLOW)
 			.build());
 
-		// Visible countdown so a glance tells you how long it stays (point 44).
+		// Visible countdown so a glance tells you how long it stays.
 		int secs = (int) Math.ceil(Math.max(0, expiresAt - System.currentTimeMillis()) / 1000.0);
 		panelComponent.getChildren().add(LineComponent.builder()
 			.left("Closing in")

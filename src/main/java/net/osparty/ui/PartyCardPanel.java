@@ -46,11 +46,7 @@ import net.runelite.client.ui.FontManager;
 import net.runelite.client.util.ImageUtil;
 import net.runelite.http.api.worlds.WorldRegion;
 
-/**
- * Abstract base for panels that display party cards (Search and Faves).
- * Holds all apply/cancel logic, cooldown tracking, and the shared
- * {@link #buildPartyCard} method so neither subclass duplicates it.
- */
+/** Abstract base for party-card panels (Search and Faves): apply/cancel, cooldowns, {@link #buildPartyCard}. */
 abstract class PartyCardPanel extends JPanel
 {
 	protected static final long COOLDOWN_MS = 30_000;
@@ -299,16 +295,14 @@ abstract class PartyCardPanel extends JPanel
 		}
 
 		Activity activity = Activity.fromId(party.getActivity());
-		// The learner mark is a raid-only choice made as part of the application (ToA/ToB/CoX),
-		// shown unless the user disabled the toggle in config.
+		// Learner mark is a raid-only application choice, unless disabled in config.
 		boolean askLearner = activity != null && activity.isRaid() && config.learnerRaidToggle();
 		if (activity != null && activity.hasRoles())
 		{
 			List<Role> opts = roleOptionsFor(party, activity);
 			if (opts.size() > 1 || askLearner)
 			{
-				// Show the inline picker (role choice and/or the learner checkbox); the join
-				// fires from the picker's button callback (point 15).
+				// Inline picker (role and/or learner); join fires from its button callback.
 				showApplyPicker(party, opts, askLearner);
 				return;
 			}
@@ -352,11 +346,7 @@ abstract class PartyCardPanel extends JPanel
 				}
 			}
 		}
-		// Fixed-composition activities (ToB) have an exact role make-up for the party size, so
-		// never offer a slot outside it — e.g. a 3-man only needs a North freeze, so South must
-		// not be pickable. Derive the composition from capacity (north-first) and constrain to
-		// it; if we couldn't read the still-needed roles, offer the whole composition instead of
-		// every role the activity supports.
+		// Fixed-composition activities (ToB): constrain picks to the size's exact role make-up.
 		List<Role> composition = activity.fixedComposition(party.getCapacity());
 		if (composition != null && !composition.isEmpty())
 		{
@@ -380,11 +370,9 @@ abstract class PartyCardPanel extends JPanel
 		return options;
 	}
 
-	/** Populate and reveal the card's inline role picker (themed, non-modal). */
 	/**
-	 * Inline application picker: an optional "I'm a learner" checkbox (raids only) plus either a
-	 * role button per {@code options} or, when there are no roles (ToA), a single Apply button.
-	 * The chosen role and the learner state are carried into {@link #beginApply}.
+	 * Inline application picker: optional "I'm a learner" checkbox (raids) plus a role button per
+	 * {@code options}, or a single Apply button when there are no roles (ToA). Feeds {@link #beginApply}.
 	 */
 	private void showApplyPicker(Party party, List<Role> options, boolean askLearner)
 	{
@@ -488,10 +476,7 @@ abstract class PartyCardPanel extends JPanel
 			partyService.disbandParty(current.getId(), playerNameSupplier.get(), partyState.getHostKey(),
 				p -> { }, e -> { });
 		}
-		// Switch rooms without tearing down the party socket: leaveForSwitch() keeps it open
-		// so the follow-up joinParty() parts the old room and joins the new on the same
-		// connection. A full leave() here would close-then-reopen and lose our applicant
-		// broadcast to the target host (party disbands, but no request arrives).
+		// leaveForSwitch() keeps the socket open so joinParty() can switch rooms without a close-reopen race.
 		liveParty.leaveForSwitch();
 		partyState.clear();
 		next.run();
@@ -508,8 +493,7 @@ abstract class PartyCardPanel extends JPanel
 		String passphrase = party.getPassphrase();
 		if (passphrase == null || passphrase.isEmpty())
 		{
-			// No room to switch into — leaveForSwitch() left us still in the old room, so
-			// exit it cleanly now (a lone changeParty(null) doesn't hit the reopen race).
+			// No room to switch into; exit the old room cleanly now.
 			liveParty.leave();
 			setStatus("This party has no live room to join.");
 			updateAllButtons();
@@ -712,9 +696,7 @@ abstract class PartyCardPanel extends JPanel
 			}
 		});
 
-		// Block button: a small "no entry" toggle. Blocking a host hides their ads from
-		// search (unless "Show blocked parties" is on); favouriting and blocking are mutually
-		// exclusive, so blocking clears any favourite on the same host.
+		// Block toggle: hides the host's ads from search; mutually exclusive with favouriting.
 		boolean hostBlocked = blockListService != null && blockListService.isBlocked(hostHash, party.getHost());
 		if (hostBlocked)
 		{
@@ -752,8 +734,7 @@ abstract class PartyCardPanel extends JPanel
 			}
 		});
 
-		// Host row: star | name | block. The favourite (left) and block (right) toggles are
-		// kept apart — one common action, one rare/destructive — so they can't be misclicked.
+		// Host row: star | name | block, kept apart so they can't be misclicked.
 		JPanel hostRow = new JPanel(new BorderLayout(2, 0));
 		hostRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		hostRow.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -876,8 +857,7 @@ abstract class PartyCardPanel extends JPanel
 		actionPanel.add(rolePicker);
 		actionPanel.add(applyWrap);
 
-		// Header: activity title on the left, the host's Discord-role badges tucked into the
-		// otherwise-empty top-right corner (server-asserted, see Member#getBadges).
+		// Header: activity title left, host's Discord-role badges top-right (see Member#getBadges).
 		JPanel header = new JPanel(new BorderLayout());
 		header.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		header.add(activityLabel, BorderLayout.CENTER);
@@ -894,10 +874,7 @@ abstract class PartyCardPanel extends JPanel
 		return card;
 	}
 
-	/**
-	 * The host's Discord-role badges (all held, in priority order) as a right-aligned icon row,
-	 * or {@code null} when the host has none. Tooltips carry the role names.
-	 */
+	/** The host's Discord-role badges as a right-aligned icon row, or {@code null} when none. */
 	private JPanel buildHostBadgeRow(Party party)
 	{
 		if (config != null && !config.showDiscordBadges())
@@ -931,10 +908,7 @@ abstract class PartyCardPanel extends JPanel
 	private static JComponent wrappedLabel(String text, Color fg)
 	{
 		JTextArea area = new JTextArea();
-		// Never let the caret drive scrolling: inserting text moves the caret, and DefaultCaret
-		// schedules a deferred scrollRectToVisible that yanks the results viewport to whichever
-		// card was (re)built last. Must be disabled before the text goes in — the scroll is
-		// queued from the insert itself.
+		// Disable caret-driven scrolling before setText, or a rebuild yanks the viewport to this card.
 		if (area.getCaret() instanceof DefaultCaret)
 		{
 			((DefaultCaret) area.getCaret()).setUpdatePolicy(DefaultCaret.NEVER_UPDATE);
@@ -964,18 +938,12 @@ abstract class PartyCardPanel extends JPanel
 		this.onBlockChanged = r;
 	}
 
-	/**
-	 * Called when the star button is clicked. Subclasses can override to refresh
-	 * their results (e.g. the Favorites panel removes the party when its host is un-starred).
-	 */
+	/** Called when the star is clicked; subclasses override to refresh their results. */
 	protected void onFavoriteToggled(Party party)
 	{
 	}
 
-	/**
-	 * Called when the block button is clicked. Subclasses can override to refresh
-	 * their results (e.g. Search hides the card once its host is blocked).
-	 */
+	/** Called when the block button is clicked; subclasses override to refresh their results. */
 	protected void onBlockToggled(Party party)
 	{
 	}

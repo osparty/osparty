@@ -63,12 +63,7 @@ import javax.swing.event.DocumentListener;
 import javax.swing.text.AbstractDocument;
 import javax.swing.text.DocumentFilter;
 
-/**
- * "Create" tab: a form to host a new party. On submit the logged in player is
- * recorded as the host and the party is pushed to the queue API; the player
- * then enters that party (managed on the "Party" tab). A player can only host
- * while not already in a party.
- */
+/** "Create" tab: a form to host a new party (only while not already in one). */
 class CreatePanel extends JPanel implements Scrollable
 {
 	private static final int DESC_MAX = 200;
@@ -255,8 +250,7 @@ class CreatePanel extends JPanel implements Scrollable
 		includeLayoutRow.setVisible(false);
 		add(includeLayoutRow);
 
-		// A CM/HMT toggle (CoX/ToB) or an invocation level (ToA). Only the relevant
-		// control is shown, driven by applyActivityBounds.
+		// A CM/HMT toggle (CoX/ToB) or an invocation level (ToA); applyActivityBounds picks one.
 		hardModeRow = checkBoxRow(hardModeCheck);
 		hardModeRow.setVisible(false);
 		add(hardModeRow);
@@ -265,8 +259,7 @@ class CreatePanel extends JPanel implements Scrollable
 		invocationRow.setVisible(false);
 		add(invocationRow);
 
-		// Learner-raid tagging (raids only): ticking either Learner or Teacher marks
-		// the ad as a learner raid; neither leaves it a normal raid.
+		// Learner-raid tagging (raids only): either Learner or Teacher marks the ad.
 		learnerRow = buildLearnerRow();
 		learnerRow.setVisible(false);
 		add(learnerRow);
@@ -278,8 +271,7 @@ class CreatePanel extends JPanel implements Scrollable
 		rolesSection.setVisible(false);
 		add(rolesSection);
 
-		// ToB's composition is fixed by party size, and CoX's Fill count should track
-		// capacity, so rebuild the role controls whenever the party size changes.
+		// Party size drives ToB's composition and CoX's Fill count, so rebuild roles on change.
 		capacitySpinner.addChangeListener(e -> {
 			Activity activity = (Activity) activityDropdown.getSelectedItem();
 			if (!rebuildingRoles && activity != null && activity.hasRoles())
@@ -289,8 +281,7 @@ class CreatePanel extends JPanel implements Scrollable
 			}
 		});
 
-		// Chambers of Xeric's role split (normal vs CM) changes with the hard-mode
-		// toggle, so rebuild the role controls when it flips.
+		// CoX's role split (normal vs CM) changes with hard mode, so rebuild on flip.
 		hardModeCheck.addActionListener(e -> {
 			Activity activity = (Activity) activityDropdown.getSelectedItem();
 			if (!rebuildingRoles && activity != null && activity.hasRoles())
@@ -299,9 +290,6 @@ class CreatePanel extends JPanel implements Scrollable
 				absorbRemainderIntoFill();
 			}
 		});
-
-		// Only ironman accounts may host an ironman-only party: the toggle is disabled
-		// for mains (see updateIronmanToggle), so there's nothing to bounce here.
 
 		createButton.setFocusPainted(false);
 		createButton.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -332,19 +320,15 @@ class CreatePanel extends JPanel implements Scrollable
 		});
 		applyActivityBounds();
 
-		// Pre-fill the form with the last settings the player used (remembered across sessions).
 		applyPreset(loadLastPreset());
 
-		// Suggest the activity we're standing near when the tab opens, and re-check
-		// every 10s while it's visible.
 		addAncestorListener(new AncestorListener()
 		{
 			@Override
 			public void ancestorAdded(AncestorEvent event)
 			{
 				applyRecommendation();
-				// Re-read the configured default each time the tab is shown, so a
-				// changed "default party size" takes effect without a client restart.
+				// Re-read the configured default so a changed party size applies without a restart.
 				applyDefaultCapacity();
 				updateLoginState();
 			}
@@ -366,8 +350,6 @@ class CreatePanel extends JPanel implements Scrollable
 			}
 		}).start();
 
-		// Re-check login state often so the form enables/disables promptly when the
-		// player logs in or out while this tab is open.
 		new Timer(1_000, e -> {
 			if (isShowing())
 			{
@@ -378,10 +360,7 @@ class CreatePanel extends JPanel implements Scrollable
 		updateLoginState();
 	}
 
-	/**
-	 * The form stays usable while logged out (so presets/favourites can be built);
-	 * only hosting needs a logged-in account, so just the Create button is gated.
-	 */
+	/** The form stays usable logged out; only the Create button is gated on login. */
 	private void updateLoginState()
 	{
 		boolean loggedIn = playerNameSupplier.get() != null;
@@ -425,9 +404,7 @@ class CreatePanel extends JPanel implements Scrollable
 		}
 		if (activity.hasRoles())
 		{
-			// Mirror create()'s check exactly. captureRequiredRoles already returns the
-			// fixed composition for ToB (always sized to capacity) and the spinner-built
-			// composition for CoX — don't use assignedRoleTotal(), which is 0 for ToB.
+			// Mirror create(): use captureRequiredRoles, not assignedRoleTotal() (0 for ToB).
 			int capacity = (Integer) capacitySpinner.getValue();
 			List<String> req = captureRequiredRoles(activity, capacity);
 			if (!activity.hasFlexibleRoles())
@@ -463,11 +440,7 @@ class CreatePanel extends JPanel implements Scrollable
 			? ColorScheme.PROGRESS_ERROR_COLOR : ColorScheme.LIGHT_GRAY_COLOR);
 	}
 
-	/**
-	 * If the player is standing near an activity, float it to the top of the
-	 * dropdown and select it. No-op when the nearby activity hasn't changed, so it
-	 * doesn't fight a manual selection.
-	 */
+	/** Float the nearby activity to the top and select it; no-op when unchanged (don't fight a manual pick). */
 	private void applyRecommendation()
 	{
 		Activity near = Activity.nearby(mapRegionsSupplier.get());
@@ -507,9 +480,7 @@ class CreatePanel extends JPanel implements Scrollable
 
 	private JPanel field(JLabel label, Component input)
 	{
-		// Cap the height to the preferred size *dynamically* (computed after the
-		// children are laid out); a fixed maximum set at construction time
-		// collapses the field under BoxLayout and overlaps its contents.
+		// Cap height to the preferred size dynamically; a fixed max collapses the field under BoxLayout.
 		JPanel panel = new JPanel(new BorderLayout(0, 4))
 		{
 			@Override
@@ -564,7 +535,6 @@ class CreatePanel extends JPanel implements Scrollable
 		boxes.add(teacherCheck);
 
 		// Learner and Teacher are mutually exclusive; ticking one clears the other.
-		// Either can still be unticked to leave it a normal raid.
 		learnerCheck.addActionListener(e -> {
 			if (learnerCheck.isSelected())
 			{
@@ -616,8 +586,7 @@ class CreatePanel extends JPanel implements Scrollable
 			model.setValue(activity.getMaxPartySize());
 		}
 
-		// A minimum-KC bar only makes sense where there's a hiscore killcount to check
-		// (Barbarian Assault, a minigame, has none).
+		// A minimum-KC bar only makes sense where there's a hiscore killcount (BA has none).
 		boolean hasKillcount = activity.hasKillcount();
 		minKcField.setVisible(hasKillcount);
 		if (!hasKillcount)
@@ -625,8 +594,7 @@ class CreatePanel extends JPanel implements Scrollable
 			minKcSpinner.setValue(0);
 		}
 
-		// The hard-mode KC requirement only applies to activities that have one
-		// (e.g. Chambers of Xeric CM, Theatre of Blood HM, Tombs of Amascut Expert).
+		// The hard-mode KC requirement only applies to activities with one (CoX CM, ToB HM, ToA Expert).
 		boolean hardMode = activity.hasHardMode();
 		hardKcField.setVisible(hardMode);
 		if (hardMode)
@@ -720,12 +688,7 @@ class CreatePanel extends JPanel implements Scrollable
 		return panel;
 	}
 
-	/**
-	 * Rebuild the role controls for {@code activity} at the current party size. The
-	 * "my role" dropdown lists the activity's roles. Theatre of Blood's composition
-	 * is fixed by size (shown as a read-only summary); Chambers of Xeric uses a
-	 * count spinner per role, with Fill auto-absorbing any remainder.
-	 */
+	/** Rebuild the role controls at the current party size: ToB is fixed by size, CoX uses count spinners. */
 	private void rebuildRoles(Activity activity)
 	{
 		int capacity = (Integer) capacitySpinner.getValue();
@@ -734,7 +697,6 @@ class CreatePanel extends JPanel implements Scrollable
 		List<Role> roles = activity.roles(hardMode);
 		Role fillRole = activity.fillRole(hardMode);
 
-		// "My role" dropdown - the roles the host can be.
 		Role previousMine = (Role) myRoleDropdown.getSelectedItem();
 		rebuildingRoles = true;
 		myRoleDropdown.removeAllItems();
@@ -754,8 +716,7 @@ class CreatePanel extends JPanel implements Scrollable
 
 		if (activity.hasFlexibleRoles())
 		{
-			// Barbarian Assault: no spinners - one of each role plus a flexible "extra" slot that
-			// whoever applies doubles up (capped at two of any one role), for a team of the size.
+			// Barbarian Assault: no spinners - one of each role plus a flexible "extra" slot.
 			rebuildingRoles = true;
 			roleCountSpinners.clear();
 			roleCountsPanel.removeAll();
@@ -788,8 +749,7 @@ class CreatePanel extends JPanel implements Scrollable
 			roleCountsPanel.removeAll();
 			for (Role role : roles)
 			{
-				// Seed the Fill slot (CoX only) with the whole party on the first build
-				// so the total matches capacity; otherwise keep what the host entered.
+				// Seed Fill (CoX only) with the whole party on first build so the total matches capacity.
 				int seed = firstBuild && role == fillRole ? capacity : 0;
 				int value = previous.getOrDefault(role.getId(), seed);
 				JSpinner spinner = new JSpinner(new SpinnerNumberModel(Math.max(0, value), 0, 100, 1));
@@ -891,10 +851,7 @@ class CreatePanel extends JPanel implements Scrollable
 		return String.join(", ", parts);
 	}
 
-	/**
-	 * The required-role multiset (role ids) for the activity: ToB's fixed
-	 * composition, or the CoX count spinners. Null when the activity has no roles.
-	 */
+	/** The required-role multiset for the activity (ToB fixed / CoX spinners); null when it has no roles. */
 	private List<String> captureRequiredRoles(Activity activity, int capacity)
 	{
 		if (activity == null || !activity.hasRoles())
@@ -903,9 +860,7 @@ class CreatePanel extends JPanel implements Scrollable
 		}
 		if (activity.hasFlexibleRoles())
 		{
-			// Barbarian Assault: the composition isn't laid out slot by slot. We advertise the
-			// base roles (one of each is mandatory); the flexible "extra" is resolved as members
-			// pick, so it isn't part of the stored multiset.
+			// Barbarian Assault: advertise the base roles only; the flexible "extra" isn't stored.
 			List<String> roles = new ArrayList<>();
 			for (Role role : activity.roles(false))
 			{
@@ -977,8 +932,7 @@ class CreatePanel extends JPanel implements Scrollable
 			return;
 		}
 
-		// A host must meet the killcount requirement they set (point 18). Block only when
-		// we know they're below; if not yet looked up, kick off a lookup and allow.
+		// A host must meet their own KC requirement; block only when known below, else look up and allow.
 		if ((minKc > 0 || minHardKc > 0) && killcountService != null)
 		{
 			KillcountService.Killcount kc = killcountService.cached(player, activity);
@@ -998,8 +952,7 @@ class CreatePanel extends JPanel implements Scrollable
 			}
 		}
 
-		// Chambers of Xeric: advertise the live raid layout (sent via heartbeat once
-		// the host is inside the raid), rather than baking it into the description.
+		// CoX: advertise the live raid layout (sent via heartbeat once inside), not baked into the description.
 		boolean advertiseLayout = includeLayoutCheck.isSelected() && "cox".equals(activityId);
 
 		// Raid difficulty: CM/HMT toggle (CoX/ToB) or invocation level (ToA).
@@ -1010,9 +963,7 @@ class CreatePanel extends JPanel implements Scrollable
 		boolean learner = activity.isRaid() && learnerCheck.isSelected();
 		boolean teacher = activity.isRaid() && teacherCheck.isSelected();
 
-		// Roles (ToB/CoX): the composition must fill exactly the party size, and the
-		// host's chosen role must be one of those slots (the host fills it). ToB's
-		// composition is fixed by size, so it always validates; CoX is host-defined.
+		// Roles (ToB/CoX): the composition must fill the party size and include the host's chosen role.
 		RoleSelection selection = captureRoleSelection(activity, capacity);
 		if (selection == null)
 		{
@@ -1029,11 +980,9 @@ class CreatePanel extends JPanel implements Scrollable
 		setStatus("Creating party…");
 
 		final String advertisedDescription = description;
-		// A secret that authorises host-only changes to this ad: sent on create (the
-		// server binds it to the party's session) and on later heartbeat/disband.
+		// A secret authorising host-only changes to this ad; bound to the session server-side.
 		final String hostKey = java.util.UUID.randomUUID().toString();
-		// The passphrase must be generated on the client thread (RuneLite reads item
-		// names to build it), so this is async; advertise once we have it.
+		// The passphrase must be built on the client thread (reads item names), so this is async.
 		final long hostAccountHash = accountHashSupplier != null ? accountHashSupplier.getAsLong() : 0L;
 		liveParty.generatePassphrase(passphrase -> {
 			PartyRequest request = new PartyRequest(
@@ -1059,11 +1008,9 @@ class CreatePanel extends JPanel implements Scrollable
 		creating = false;
 		createButton.setEnabled(true);
 		descriptionArea.setText("");
-		// Remember whether to advertise the live CoX layout, so the Party tab's
-		// heartbeat knows to include it once the host is inside the raid.
+		// Remember whether to advertise the live CoX layout, for the Party tab's heartbeat.
 		partyState.setAdvertiseLayout(advertiseLayout);
-		// Host the live room now that the ad is up; applicants who join are pending
-		// until admitted from the Party tab.
+		// Host the live room now the ad is up; applicants are pending until admitted.
 		liveParty.hostParty(passphrase, host, party.getActivity(), capacity, false, hostRole, hostLearner, hostTeacher);
 		if (party.isPrivateParty() && party.getInviteCode() != null)
 		{
@@ -1076,11 +1023,7 @@ class CreatePanel extends JPanel implements Scrollable
 		partyState.setHosting(party, hostKey);
 	}
 
-	/**
-	 * The "Join existing" section: an invite-code field + Join button, sitting above the
-	 * create form so hosting and joining live in one place. The apply itself is delegated to
-	 * {@link #joinByCodeHandler} (wired to the Search tab, which owns the apply flow).
-	 */
+	/** The "Join existing" section: invite-code field + Join button; the apply is delegated to {@link #joinByCodeHandler}. */
 	private JPanel buildJoinExisting()
 	{
 		JPanel section = new JPanel();
@@ -1159,11 +1102,7 @@ class CreatePanel extends JPanel implements Scrollable
 		}
 	}
 
-	/**
-	 * Validate and capture the role composition for {@code activity} at {@code capacity}. Returns
-	 * the selection, or null after setting a status message when the composition is invalid.
-	 * Activities without roles return an empty selection.
-	 */
+	/** Validate and capture the role composition; null (with a status message) when invalid. */
 	private RoleSelection captureRoleSelection(Activity activity, int capacity)
 	{
 		if (!activity.hasRoles())
@@ -1171,8 +1110,7 @@ class CreatePanel extends JPanel implements Scrollable
 			return new RoleSelection(null, null);
 		}
 		List<String> requiredRoles = captureRequiredRoles(activity, capacity);
-		// Flexible activities (BA) advertise the base roles rather than a size-exact multiset —
-		// the "extra" slot is filled by whoever doubles up, so don't demand assigned == capacity.
+		// Flexible activities (BA) advertise base roles, so don't demand assigned == capacity.
 		if (!activity.hasFlexibleRoles())
 		{
 			int assigned = requiredRoles == null ? 0 : requiredRoles.size();
@@ -1201,10 +1139,7 @@ class CreatePanel extends JPanel implements Scrollable
 		this.onEditDone = onEditDone;
 	}
 
-	/**
-	 * Switch the form into edit mode, pre-filled from {@code party}. The activity can't be
-	 * changed (it keys the live room and the role/difficulty model), so its dropdown is locked.
-	 */
+	/** Switch to edit mode, pre-filled from {@code party}. The activity is locked (it keys the live room). */
 	void enterEditMode(Party party)
 	{
 		if (party == null)
@@ -1337,8 +1272,7 @@ class CreatePanel extends JPanel implements Scrollable
 	{
 		createButton.setEnabled(true);
 
-		// Reflect the edit on our local hosted-party copy so the Party tab updates at once
-		// (the server's own 'updated' broadcast only refreshes the search list).
+		// Reflect the edit locally so the Party tab updates at once (the server broadcast only refreshes search).
 		party.setDescription(edit.getDescription());
 		party.setCapacity(edit.getCapacity());
 		party.setWorld(edit.getWorld());
@@ -1357,8 +1291,7 @@ class CreatePanel extends JPanel implements Scrollable
 		partyState.setAdvertiseLayout(advertiseLayout);
 		partyState.update(party);
 
-		// Sync the live P2P room so admit limits, the host's role and learner/teacher markers
-		// follow the edit and re-broadcast to members.
+		// Sync the live P2P room so admit limits, host role and learner/teacher markers follow the edit.
 		liveParty.setCapacity(edit.getCapacity());
 		liveParty.setLocalRole(edit.getHostRole());
 		liveParty.setLocalLearner(edit.isLearner());

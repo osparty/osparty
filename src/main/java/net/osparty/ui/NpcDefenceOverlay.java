@@ -18,11 +18,7 @@ import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
 import net.runelite.client.ui.overlay.OverlayUtil;
 
-/**
- * Draws the live defence of the monster the party is draining, next to its
- * overhead health bar: the Defence skill icon, the current level, and — once it's
- * been drained — a red down-arrow with the amount lost (e.g. [icon] 170 ▼30).
- */
+/** Draws a monster's live defence by its health bar: Defence icon, current level, and drain amount. */
 public class NpcDefenceOverlay extends Overlay
 {
 	private static final Color DRAIN_COLOR = new Color(255, 80, 80);
@@ -81,8 +77,7 @@ public class NpcDefenceOverlay extends Overlay
 		int drainBlockW = showDrain ? (GAP + arrowW + 2 + fm.stringWidth(drainStr)) : 0;
 		int totalW = iconW + GAP + levelW + drainBlockW;
 
-		// Anchor on the npc at the height the chosen position implies, then lay the
-		// row out centred on it (with any sideways nudge for the chosen position).
+		// Anchor on the npc at the chosen position's height, then lay the row out centred on it.
 		DefenceOverlayPosition position = config.defenceHpBarPosition();
 		int zOffset = (int) (npc.getLogicalHeight() * position.getHeightFactor()) + position.getHeightOffset();
 		Point anchor = npc.getCanvasTextLocation(graphics, "", zOffset);

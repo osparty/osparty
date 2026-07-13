@@ -22,7 +22,7 @@ public class BlockListService extends PlayerFlagService
 	private volatile Supplier<String> selfName;
 
 	@Inject
-	BlockListService(PartyStore store)
+    public BlockListService(PartyStore store)
 	{
 		super(store, FlagKind.BLOCK);
 	}

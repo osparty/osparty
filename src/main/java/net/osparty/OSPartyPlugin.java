@@ -48,8 +48,6 @@ import net.runelite.api.events.StatChanged;
 import net.runelite.api.vars.AccountType;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
-import net.runelite.api.World;
-import net.runelite.api.widgets.ComponentID;
 import net.runelite.client.audio.AudioPlayer;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.input.KeyManager;
@@ -61,7 +59,6 @@ import net.runelite.client.game.SkillIconManager;
 import net.runelite.client.game.chatbox.ChatboxPanelManager;
 import net.runelite.client.game.SpriteManager;
 import net.runelite.client.game.WorldService;
-import net.runelite.client.util.WorldUtil;
 import net.runelite.http.api.worlds.WorldRegion;
 import net.runelite.http.api.worlds.WorldResult;
 import net.runelite.client.party.events.UserJoin;
@@ -202,10 +199,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 	};
 
-	/**
-	 * Last known logged in player name. Updated on the client thread and read
-	 * (volatile) from the EDT by the panel.
-	 */
+	/** Last known logged-in player name. Written on the client thread, read (volatile) from the EDT. */
 	private volatile String playerName;
 
 	private volatile String friendsChatOwner;
@@ -241,12 +235,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	/** Snapshot of the local player's friends list, updated each game tick. */
 	private volatile Set<String> friendNames = java.util.Collections.emptySet();
 
-	/** Pending quick-hop target (driven on game ticks), or null when not hopping. */
-	private volatile net.runelite.http.api.worlds.World quickHopTarget;
-	/** How many ticks we've waited for the world switcher widget to appear. */
-	private int quickHopAttempts;
-	/** Give up opening the world switcher after this many ticks. */
-	private static final int QUICK_HOP_MAX_ATTEMPTS = 35;
 
 	/** Applicants awaiting an in-game Accept/Decline prompt (host only). */
 	private final java.util.Deque<PendingPrompt> promptQueue = new java.util.ArrayDeque<>();
@@ -270,12 +258,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Override
 	protected void startUp()
 	{
-		// Discovery/advertising goes through the real HTTP API (osrs-party-api);
-		// the live party itself runs peer-to-peer (see LiveParty).
+		// Discovery/advertising via the API; the live party runs peer-to-peer (see LiveParty).
 		PartyService partyService = apiClient;
 
-		// Open the live socket for the plugin session: search reads and host writes both
-		// run over it, and an open connection is the host's keep-alive.
 		partySocket.start();
 
 		applicantOverlay = new ApplicantOverlay(config);
@@ -298,16 +283,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			ImageUtil.resizeImage(ImageUtil.loadImageResource(getClass(), "/net/osparty/icons/learner.png"), 12, 12),
 			ImageUtil.resizeImage(ImageUtil.loadImageResource(getClass(), "/net/osparty/icons/teacher.png"), 12, 12));
 		overlayManager.add(playerMarkerOverlay);
-		// The defence tracker reads RuneLite's Special Attack Counter events, which
-		// only fire while that plugin is running, so make sure it's enabled.
+		// Special Attack Counter must run for the defence tracker to receive its events.
 		enablePluginByName("Special Attack Counter");
 
-		// Hotkey + click to ping a tile for the party.
 		keyManager.registerKeyListener(pingHotkeyListener);
 		mouseManager.registerMouseListener(pingMouseListener);
 
-		// Ready-check notifications: a chat ping when one starts/expires, and a chat
-		// line plus optional sound when everyone is ready.
+		// Ready-check notifications: chat pings and an optional all-ready sound.
 		liveParty.setOnReadyCheckStarted(starter -> {
 			gameMessage(starter + " started a ready check - ready up in the OSParty panel.");
 			if (config.readyCheckSound())
@@ -323,8 +305,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		});
 		liveParty.setOnReadyExpired(() -> gameMessage("Ready check expired."));
 
-		// Stand up the live P2P party layer (real roster + gear/inv/stats + host
-		// management); the API only advertises the room.
+		// Stand up the live P2P party layer; the API only advertises the room.
 		liveParty.register();
 
 		// Pull the scammer watchlist now; it refreshes periodically (see schedule).
@@ -332,15 +313,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		worldPinger = new WorldPinger();
 
-		// Guard against a player blocking themselves (self-block is meaningless and hides
-		// your own ads); the service matches by hash when known, else by current name. Uses the
-		// pre-login-aware name so "that's you" is recognised on the login screen too (the account
-		// hash stays -1 until logged in, so pre-login the match is by name).
+		// A player can't block themselves.
 		blockListService.setSelf(this::getAccountHash, this::getSelfName);
 
 		panel = new OSPartyPanel(partyService, config, this::getPlayerName, this,
 			this::getFriendsChatOwner, this::getCurrentWorld, itemManager, liveParty, runeWatchService,
-			this::getAccountType, killcountService, skillIconManager, this::hopTo, this::getMapRegions,
+			this::getAccountType, killcountService, skillIconManager, w -> { }, this::getMapRegions,
 			this::regionForWorld, this::getCoxLayout, configManager, gson,
 			worldPinger, this::worldAddressForNum, this::getFriendNames, favoritesService, blockListService,
 			this::getAccountHash, spriteManager, partyHistoryService, this::gameMessage);
@@ -413,11 +391,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Subscribe
 	public void onVarbitChanged(VarbitChanged event)
 	{
-		// The CoX entrance-stairs "reload" re-rolls the raid, flicking IN_RAID
-		// 1 -> 0 -> 1 within a single tick. Only the event stream sees that flick
-		// (the scanner's per-tick poll misses it), and it must wipe the solved
-		// layout so the fresh instance gets rescouted - same signal RuneLite's
-		// Raids plugin resets on.
+		// CoX stairs reload flicks IN_RAID 1->0->1 within one tick; only the event stream catches it.
 		if (event.getVarbitId() == net.runelite.api.Varbits.IN_RAID)
 		{
 			coxRaidScanner.onInRaidChanged(event.getValue());
@@ -427,11 +401,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Subscribe
 	public void onGameStateChanged(GameStateChanged event)
 	{
-		// The local player (and its name) is usually not yet available at the
-		// LOGGED_IN event, so capturing it here is unreliable; we instead read
-		// it each tick (see onGameTick) and only clear it on logout here.
-		// On a real logout (not a world hop), tell the party we've gone offline so
-		// our presence dot clears immediately instead of waiting to go stale.
+		// On a real logout (not a hop), tell the party we're offline so our dot clears now.
 		if (event.getGameState() == GameState.LOGIN_SCREEN && playerName != null
 			&& liveParty.isConnected())
 		{
@@ -447,7 +417,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			mapRegions = null;
 			accountType = null;
 			accountHash = -1L;
-			quickHopTarget = null;
 			promptQueue.clear();
 		}
 		// Re-arm the rejoin check on a real logout (not a world hop).
@@ -497,13 +466,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			friendNames = java.util.Collections.unmodifiableSet(names);
 		}
 
-		// Accumulate the CoX raid layout each tick as the player explores (a single
-		// scan can't see the whole raid), so it keeps filling in and updating.
+		// Accumulate the CoX layout each tick; a single scan can't see the whole raid.
 		coxRaidScanner.update();
 		coxLayout = coxRaidScanner.layout();
-
-		// Drive any in-progress world hop (needs the client thread).
-		processQuickHop();
 
 		// Show the next in-game applicant prompt if the chatbox is free.
 		drainApplicantPrompts();
@@ -535,8 +500,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Subscribe
 	public void onSpecialCounterUpdate(SpecialCounterUpdate event)
 	{
-		// Fired by RuneLite's Special Attack Counter for our own and party members'
-		// special attacks; the tracker turns the draining ones into a defence figure.
+		// From RuneLite's Special Attack Counter; the tracker turns draining specs into a defence figure.
 		defenceTracker.queue(event);
 	}
 
@@ -592,8 +556,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Subscribe
 	public void onMemberCommand(MemberCommand event)
 	{
-		// Check before handling: onMemberCommand makes us leave, after which we're no
-		// longer the local member.
+		// Check before handling: onMemberCommand makes us leave the party.
 		boolean kickedUs = event.getAction() == MemberCommand.Action.KICK
 			&& liveParty.isForLocalMember(event.getTargetMemberId());
 		liveParty.onMemberCommand(event);
@@ -615,10 +578,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		liveParty.onPing(event);
 	}
 
-	/**
-	 * Read the tile currently under the cursor (client thread) and broadcast a
-	 * ping there in the configured colour. Called from the AWT mouse listener.
-	 */
+	/** Broadcast a ping at the tile under the cursor (client thread). Called from the mouse listener. */
 	private void pingHoveredTile()
 	{
 		clientThread.invoke(() -> {
@@ -730,10 +690,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	}
 
 	/**
-	 * @return the currently logged in player's name, or {@code null} if not
-	 * logged in. Safe to call from the EDT. Callers use a null result as the
-	 * "logged out" signal (it gates hosting/applying), so this stays strictly the
-	 * in-game name; for pre-login identity use {@link #getSelfName()}.
+	 * @return the logged-in player's name, or {@code null} when logged out (the "logged out" signal).
+	 * Safe from the EDT; for pre-login identity use {@link #getSelfName()}.
 	 */
 	public String getPlayerName()
 	{
@@ -741,11 +699,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	}
 
 	/**
-	 * The local player's name for <em>identity</em> matching (isSelf, favourites, blocks), which we can
-	 * know before login: once in-game it's {@link #getPlayerName()}, otherwise the Jagex-launcher display
-	 * name of the character about to play (the one on the "Play Now" button), via RuneLite's
-	 * {@code getLauncherDisplayName()}. {@code null} only when logged out and not started from the Jagex
-	 * launcher. Unlike {@link #getPlayerName()} this is not a "logged in?" signal. Safe from the EDT.
+	 * Local player's name for identity matching (isSelf/favourites/blocks), known even pre-login via the
+	 * Jagex launcher display name. Unlike {@link #getPlayerName()} this is not a "logged in?" signal.
 	 */
 	public String getSelfName()
 	{
@@ -776,11 +731,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		return coxLayout;
 	}
 
-	/**
-	 * Resolve a world number to its geographic {@link WorldRegion} (for the flag
-	 * shown on a party ad), or null when the world list isn't loaded yet or the
-	 * world is unknown. Reads the cached world list, so it's safe from the EDT.
-	 */
+	/** Resolve a world number to its {@link WorldRegion} (party-ad flag), or null. Safe from the EDT. */
 	public WorldRegion regionForWorld(int worldNum)
 	{
 		if (worldNum <= 0)
@@ -796,11 +747,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		return world != null ? world.getRegion() : null;
 	}
 
-	/**
-	 * Resolve a world number to its server hostname (for TCP-ping latency). Returns
-	 * null when the world list isn't loaded yet or the world number is unknown.
-	 * Reads the cached world list, so it's safe from the EDT.
-	 */
+	/** Resolve a world number to its server hostname (for TCP-ping latency), or null. Safe from the EDT. */
 	public String worldAddressForNum(int worldNum)
 	{
 		if (worldNum <= 0)
@@ -832,85 +779,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	public long getAccountHash()
 	{
 		return accountHash;
-	}
-
-	/**
-	 * Hop the client to {@code worldNum} (a party member's world). Safe to call
-	 * from the EDT. At the login screen we can switch directly; while logged in the
-	 * actual hop is driven over game ticks (see {@link #processQuickHop()}), which
-	 * - following RuneLite's World Hopper - opens the world switcher first so
-	 * {@code hopToWorld} works from anywhere without the player opening it manually.
-	 */
-	public void hopTo(int worldNum)
-	{
-		if (worldNum <= 0 || client.getWorld() == worldNum)
-		{
-			return;
-		}
-
-		WorldResult worlds = worldService.getWorlds();
-		net.runelite.http.api.worlds.World target = worlds != null ? worlds.findWorld(worldNum) : null;
-		if (target == null)
-		{
-			gameMessage("Could not find world " + worldNum + " to hop to.");
-			return;
-		}
-
-		if (client.getGameState() == GameState.LOGIN_SCREEN)
-		{
-			clientThread.invoke(() -> client.changeWorld(toRsWorld(target)));
-			return;
-		}
-
-		// Queue it; the game-tick handler opens the switcher then hops.
-		quickHopAttempts = 0;
-		quickHopTarget = target;
-	}
-
-	/**
-	 * Progress a queued world hop. RuneLite's {@code hopToWorld} only works once the
-	 * world-switcher widget has been built, so we open it first and retry over a few
-	 * ticks until it exists, then hop. Runs on the client thread (from GameTick).
-	 */
-	private void processQuickHop()
-	{
-		net.runelite.http.api.worlds.World target = quickHopTarget;
-		if (target == null)
-		{
-			return;
-		}
-		if (client.getWorld() == target.getId() || client.getGameState() != GameState.LOGGED_IN)
-		{
-			quickHopTarget = null;
-			return;
-		}
-
-		if (client.getWidget(ComponentID.WORLD_SWITCHER_WORLD_LIST) == null)
-		{
-			// Switcher not built yet - open it and try again next tick.
-			client.openWorldHopper();
-			if (++quickHopAttempts >= QUICK_HOP_MAX_ATTEMPTS)
-			{
-				quickHopTarget = null;
-				gameMessage("Could not open the world switcher to hop to world " + target.getId() + ".");
-			}
-			return;
-		}
-
-		client.hopToWorld(toRsWorld(target));
-		quickHopTarget = null;
-	}
-
-	private World toRsWorld(net.runelite.http.api.worlds.World source)
-	{
-		World rsWorld = client.createWorld();
-		rsWorld.setActivity(source.getActivity());
-		rsWorld.setAddress(source.getAddress());
-		rsWorld.setId(source.getId());
-		rsWorld.setPlayerCount(source.getPlayers());
-		rsWorld.setLocation(source.getLocation());
-		rsWorld.setTypes(WorldUtil.toWorldTypes(source.getTypes()));
-		return rsWorld;
 	}
 
 	@Override
@@ -947,15 +815,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		gameMessage("Auto-declined " + applicant.getName() + " - on your block list.");
 	}
 
-	/**
-	 * A compact, information-dense one-liner about an applicant: combat level,
-	 * activity killcount (+ hard-mode), personal best, total level, account type
-	 * and a RuneWatch flag. Used in both the chat ping and the in-game prompt.
-	 */
+	/** A compact one-liner about an applicant (cb, KC, PB, total, account type, RuneWatch). */
 	private String applicantSummary(Applicant applicant, Activity activity)
 	{
-		// Blocked applicants: surface only the block status, not their stats. The full alert goes
-		// out as an in-game notification (see announceApplicant), which doesn't scroll away.
+		// Blocked applicants: surface only the block status, not their stats.
 		if (applicant.isBlocked())
 		{
 			return "on your block list";
@@ -1018,11 +881,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		return total;
 	}
 
-	/**
-	 * Host: show the next queued applicant as an in-game chatbox Accept/Decline
-	 * menu, one at a time and only when the chatbox is free. Runs on the client
-	 * thread (from GameTick).
-	 */
+	/** Host: show the next queued applicant as a chatbox Accept/Decline, one at a time. Client thread. */
 	private void drainApplicantPrompts()
 	{
 		if (!config.inGamePrompts())
@@ -1094,8 +953,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Override
 	public void announceResolved(Applicant applicant, Activity activity, boolean accepted)
 	{
-		// If this applicant was resolved elsewhere (e.g. the side panel) while their
-		// in-game prompt is still open, close it so it can't be actioned twice.
+		// If resolved elsewhere while the prompt is open, close it so it can't be actioned twice.
 		dismissPromptFor(applicant.getMemberId());
 		gameMessage((accepted ? "Accepted " : "Declined ") + applicant.getName()
 			+ " for your " + activity.getDisplayName() + " party.");
@@ -1136,10 +994,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 	}
 
-	/**
-	 * Post a game message to the in-game chatbox on the client thread. No-op
-	 * when not logged in (the chatbox only exists in-game).
-	 */
+	/** Post a game message to the chatbox (client thread). No-op when not logged in. */
 	private void gameMessage(String message)
 	{
 		if (!config.chatboxNotifications())

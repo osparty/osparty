@@ -28,18 +28,9 @@ import net.runelite.client.party.PartyService;
 import net.runelite.client.party.WSClient;
 
 /**
- * The plugin's view of the live RuneLite peer-to-peer party, plus a
- * host-authoritative user-management layer on top of it.
- *
- * <p>RuneLite's {@link PartyService} is a passphrase-keyed bus with no host or
- * access control. This class adds one: the creator hosts, holds the authoritative
- * admitted roster, and broadcasts it via {@link PartyStateMessage}. Applicants are
- * <em>pending</em> until the host admits them; kicks/declines are {@link MemberCommand}s
- * the target honours by leaving. Each member self-reports via {@link PlayerUpdate}.
- * Enforcement is cooperative — the same trust model as the rest of the party network.
- *
- * <p>Messages arrive on the websocket thread and UI reads on the EDT, so shared
- * state uses concurrent collections and listeners must marshal to the EDT.
+ * The plugin's view of the live RuneLite P2P party, plus a host-authoritative roster layer. The
+ * creator hosts and broadcasts the admitted roster via {@link PartyStateMessage}; enforcement is
+ * cooperative. Messages arrive off-EDT, so shared state is concurrent and listeners marshal to the EDT.
  */
 @Slf4j
 @Singleton
@@ -105,11 +96,7 @@ public class LiveParty
 	/** Excludes the host. memberId -> display name. */
 	private final Map<Long, String> admitted = new ConcurrentHashMap<>();
 
-	/**
-	 * Members we've kicked/declined who are still briefly in the relay room until
-	 * their client processes the command and leaves. Hidden from the roster so a
-	 * kicked member doesn't flash back as a "pending applicant" (and re-popup).
-	 */
+	/** Kicked/declined members still briefly in the relay room; hidden so they don't flash back as pending. */
 	private final Set<Long> leaving = ConcurrentHashMap.newKeySet();
 
 	private volatile PartyStateMessage lastState;
@@ -117,12 +104,7 @@ public class LiveParty
 	private volatile boolean stateDirty;
 	private volatile boolean localDirty;
 
-	/**
-	 * Ticks since we last broadcast our own snapshot. RuneLite's party relay does
-	 * not replay history, so a peer who joins between our broadcasts would never
-	 * see our gear/stats. We re-mark ourselves dirty on a slow cadence so every
-	 * member's data converges even if a single on-join rebroadcast is missed.
-	 */
+	/** Ticks since our last self-broadcast; we re-broadcast on a slow cadence since the relay has no replay. */
 	private int ticksSinceLocalBroadcast;
 	private static final int LOCAL_REBROADCAST_TICKS = 10; // ~6s at 0.6s/tick
 
@@ -205,11 +187,7 @@ public class LiveParty
 
 	// ---- connection lifecycle ------------------------------------------------
 
-	/**
-	 * Generate a fresh passphrase and deliver it on the EDT. RuneLite builds the
-	 * passphrase from item names and asserts it runs on the client thread, so we
-	 * hop there and marshal the result back for the (Swing) caller.
-	 */
+	/** Generate a fresh passphrase (RuneLite requires the client thread) and deliver it on the EDT. */
 	public void generatePassphrase(Consumer<String> onGenerated)
 	{
 		clientThread.invoke(() -> {
@@ -250,10 +228,7 @@ public class LiveParty
 		fire();
 	}
 
-	/**
-	 * Change the role we're filling and re-broadcast our self-report so the host
-	 * (and everyone) sees the new choice. No-op when unchanged.
-	 */
+	/** Change the role we're filling and re-broadcast. No-op when unchanged. */
 	public void setLocalRole(String role)
 	{
 		if (java.util.Objects.equals(role, localRole))
@@ -304,10 +279,7 @@ public class LiveParty
 		return localTeacher;
 	}
 
-	/**
-	 * Host edit: change the party's capacity. Updates the authoritative room size so admit
-	 * limits and the broadcast state reflect the new value. No-op when unchanged or not hosting.
-	 */
+	/** Host edit: change the party's capacity. No-op when unchanged or not hosting. */
 	public void setCapacity(int capacity)
 	{
 		if (!hosting || capacity == this.capacity)
@@ -320,10 +292,7 @@ public class LiveParty
 		fire();
 	}
 
-	/**
-	 * Host: record the provisioned Discord voice-channel invite URL and re-broadcast the party state so
-	 * every member learns it (and renders a "Join voice" button). No-op when not hosting or unchanged.
-	 */
+	/** Host: record the Discord voice-channel invite URL and re-broadcast. No-op when not hosting or unchanged. */
 	public void setDiscordInviteUrl(String url)
 	{
 		if (!hosting || java.util.Objects.equals(url, discordInviteUrl))
@@ -335,10 +304,7 @@ public class LiveParty
 		fire();
 	}
 
-	/**
-	 * The party's Discord voice-channel invite URL, or null if none. For the host this is the value we
-	 * set locally; for a member it's the value carried on the host's last {@link PartyStateMessage}.
-	 */
+	/** The party's Discord voice-channel invite URL, or null. Local state if host, else the host's last state. */
 	public String discordInviteUrl()
 	{
 		if (hosting)
@@ -355,11 +321,7 @@ public class LiveParty
 		NONE, LEARNER, TEACHER
 	}
 
-	/**
-	 * Learner/teacher markers for the admitted party members (host + members, not
-	 * pending applicants), keyed by normalised display name so the overlay can match
-	 * them to players in the scene. Members with no marking are omitted.
-	 */
+	/** Learner/teacher markers for admitted members, keyed by normalised name for scene matching. */
 	public Map<String, Marker> learnerMarkers()
 	{
 		Map<String, Marker> markers = new HashMap<>();
@@ -412,13 +374,9 @@ public class LiveParty
 	}
 
 	/**
-	 * Leave the current room in preparation for immediately joining another (see
-	 * {@link #joinParty}). Unlike {@link #leave()} this does NOT call
-	 * {@code changeParty(null)} — a follow-up {@code changeParty(passphrase)} parts the
-	 * old room and joins the new one on the same open socket. Closing here and reopening
-	 * in the same turn races RuneLite's WSClient close handshake: the old socket's
-	 * {@code onClosed} nulls the freshly-opened socket, so our applicant broadcast never
-	 * reaches the target host (the party still disbands, but no request arrives).
+	 * Leave the current room to immediately join another. Unlike {@link #leave()} this skips
+	 * {@code changeParty(null)}: closing and reopening in the same turn races WSClient's close
+	 * handshake, nulling the fresh socket so our applicant broadcast never reaches the new host.
 	 */
 	public void leaveForSwitch()
 	{
@@ -474,10 +432,8 @@ public class LiveParty
 	// ---- host transfer -------------------------------------------------------
 
 	/**
-	 * Take over as the party's host without leaving the room (used by the new host at the end of a
-	 * {@link HostTransferMessage} handshake). Adopts the admitted roster and settings from the last
-	 * host state, becomes the P2P authority, and marks the state dirty so the next tick broadcasts a
-	 * fresh {@link PartyStateMessage} with us as the host. Does not touch the socket/passphrase.
+	 * Take over as host without leaving the room (end of a {@link HostTransferMessage} handshake).
+	 * Adopts the last host state's roster/settings and marks dirty to rebroadcast as host.
 	 */
 	public void promoteToHost(String hostName)
 	{
@@ -547,12 +503,7 @@ public class LiveParty
 		partyService.send(message);
 	}
 
-	/**
-	 * Step down from hosting while staying in the room (used by the old host during a transfer). Drops
-	 * our host-authoritative state so we now accept the new host's {@link PartyStateMessage}. Unlike
-	 * {@link #leave()} this keeps the socket connection and does not broadcast a closing state, so the
-	 * party keeps running under the new host.
-	 */
+	/** Step down from hosting while staying in the room; drops host state so we accept the new host's. */
 	public void demoteToMember()
 	{
 		hosting = false;
@@ -609,19 +560,13 @@ public class LiveParty
 		fire();
 	}
 
-	/**
-	 * Host: ask a specific member to join our friends chat. Delivered as a
-	 * targeted message the member's client shows as a brief in-game popup.
-	 */
+	/** Host: ask a member to join our friends chat (a targeted in-game popup on their client). */
 	public void requestFriendsChat(long targetMemberId, String friendsChat)
 	{
 		sendJoinPrompt(targetMemberId, "FC", friendsChat);
 	}
 
-	/**
-	 * Host: send a member a join prompt. {@code kind} is "FC" (join the host's friends
-	 * chat — {@code friendsChat} required), "NOTICE_BOARD" (ToB) or "OBELISK" (ToA).
-	 */
+	/** Host: send a member a join prompt. {@code kind} is "FC", "NOTICE_BOARD" (ToB) or "OBELISK" (ToA). */
 	public void sendJoinPrompt(long targetMemberId, String kind, String friendsChat)
 	{
 		if (!hosting)
@@ -683,8 +628,7 @@ public class LiveParty
 		message.setStarter(readyCheckStarter);
 		partyService.send(message);
 
-		// Fire locally too: we don't receive our own broadcast, but the starter
-		// should also get the start notification/sound.
+		// Fire locally too: we don't receive our own broadcast.
 		Consumer<String> cb = onReadyCheckStarted;
 		if (cb != null)
 		{
@@ -807,10 +751,7 @@ public class LiveParty
 
 	// ---- map pings -----------------------------------------------------------
 
-	/**
-	 * Broadcast a tile ping to the party in {@code color}, labelled with our name.
-	 * We don't receive our own party messages, so the ping is also shown locally.
-	 */
+	/** Broadcast a tile ping in {@code color}, labelled with our name; also shown locally. */
 	public void sendPing(WorldPoint point, Color color)
 	{
 		if (!isConnected() || point == null)
@@ -877,10 +818,7 @@ public class LiveParty
 
 	// ---- per-tick flushing (must be called from the client thread) -----------
 
-	/**
-	 * Push any pending host state and our own live snapshot. Reads client item
-	 * containers, so call only on the client thread (e.g. from {@code GameTick}).
-	 */
+	/** Push pending host state and our own live snapshot. Client thread only (reads item containers). */
 	public void tick()
 	{
 		if (!isConnected())
@@ -890,15 +828,12 @@ public class LiveParty
 		pruneStaleMembers();
 		expireReadyCheck();
 		flushState();
-		// Live vitals (HP/prayer/spec/run) change often and aren't all covered by StatChanged
-		// (run energy and special attack fire no stat event), so detect changes here and
-		// re-broadcast so peers see a live figure.
+		// Vitals (run energy, spec) fire no StatChanged event; detect changes here and re-broadcast.
 		if (!localDirty && vitalsChanged())
 		{
 			localDirty = true;
 		}
-		// Periodically re-announce ourselves so a peer who joined after our last
-		// broadcast still converges on our gear/stats (the relay has no replay).
+		// Periodically re-announce ourselves so late-joining peers converge (the relay has no replay).
 		if (++ticksSinceLocalBroadcast >= LOCAL_REBROADCAST_TICKS)
 		{
 			localDirty = true;
@@ -919,13 +854,7 @@ public class LiveParty
 		}
 	}
 
-	/**
-	 * Host: drop members we haven't heard from in a while (e.g. they closed their
-	 * client without the relay reporting a clean part). This frees the slot and
-	 * removes the ghost so the player can rejoin fresh. We only hide them locally
-	 * and via the broadcast roster; if they do come back the next update un-hides
-	 * them (see {@link #onPlayerUpdate}).
-	 */
+	/** Host: drop members we haven't heard from in a while (freeing the slot); a later update un-hides them. */
 	private void pruneStaleMembers()
 	{
 		if (!hosting)
@@ -1015,10 +944,7 @@ public class LiveParty
 		localDirty = true;
 	}
 
-	/**
-	 * @return whether our live vitals differ from what we last broadcast, so peers should
-	 * be refreshed. Reads the client, so must run on the client thread (called from {@link #tick()}).
-	 */
+	/** @return whether our live vitals differ from the last broadcast. Client thread only. */
 	private boolean vitalsChanged()
 	{
 		PlayerUpdate self = playerData.get(localId());
@@ -1032,11 +958,7 @@ public class LiveParty
 			|| self.getRunEnergy() != client.getEnergy() / 100;
 	}
 
-	/**
-	 * Tell peers we've gone offline (e.g. logged out) by broadcasting a world-0
-	 * update, so our dot clears immediately rather than waiting to go stale. We'll
-	 * re-send full data once we're back in-game.
-	 */
+	/** Tell peers we've gone offline via a world-0 update so our dot clears immediately. */
 	public void broadcastOffline(String name)
 	{
 		PartyMember local = partyService.getLocalMember();
@@ -1087,17 +1009,11 @@ public class LiveParty
 		return update != null ? update.getAccountHash() : 0L;
 	}
 
-	/**
-	 * The live roster to advertise on the party ad: the host first, then admitted members
-	 * (sorted by id for a stable order so the heartbeat dedups), each with their accountHash.
-	 * Excludes pending applicants. Only meaningful while hosting.
-	 */
+	/** The live roster to advertise: host first, then admitted members sorted by id. Hosting only. */
 	public List<net.osparty.model.Member> rosterMembers()
 	{
-		// Our own PlayerUpdate may not have round-tripped yet right after the room opens, leaving
-		// accountHashFor(localId()) at 0. Fall back to the client's own hash so the heartbeat never
-		// advertises the host hash-less — that would strip block/favourite matching and Discord
-		// badges from the ad server-side until the sync lands.
+		// Our PlayerUpdate may not have round-tripped yet; fall back to the client's own hash so the
+		// ad never advertises the host hash-less (which would drop block/favourite/badge matching).
 		long hostHash = accountHashFor(localId());
 		if (hostHash == 0)
 		{
@@ -1119,16 +1035,9 @@ public class LiveParty
 	private static final String UNKNOWN_MEMBER_NAME = "<unknown>";
 
 	/**
-	 * The current confirmed roster — the host plus admitted members, excluding pending applicants —
-	 * as {@link net.osparty.model.Member} name+accountHash pairs, host first. Unlike
-	 * {@link #rosterMembers()} this works whether we host or joined, so party history can track live
-	 * joins and leaves either way. Empty until the room is connected and populated (the caller treats
-	 * an empty result as "nothing to record yet" rather than an empty party).
-	 *
-	 * <p>Members whose client hasn't synced yet are skipped: right after the room opens (and briefly
-	 * when {@code getLocalMember()} is still null during host bootstrap) a member can surface as
-	 * RuneLite's {@code "<unknown>"} placeholder with no accountHash. Recording it would log a phantom
-	 * join+leave in history; it gets recorded properly a tick later once its name resolves.
+	 * The confirmed roster (host + admitted, no pending) as name+accountHash pairs, host first. Works
+	 * whether we host or joined. Members that haven't synced ("<unknown>") are skipped to avoid logging
+	 * a phantom join+leave; they're recorded a tick later once their name resolves.
 	 */
 	public List<net.osparty.model.Member> currentMembers()
 	{
@@ -1316,9 +1225,7 @@ public class LiveParty
 				: admittedIds.contains(id) ? Status.MEMBER : Status.PENDING;
 			PlayerUpdate data = playerData.get(id);
 			String name = data != null && data.getName() != null ? data.getName() : member.getDisplayName();
-			// Online = us, or a peer we've heard from recently who reports being
-			// logged in (world > 0). A logout broadcasts world 0; a crash/close just
-			// goes stale. Either way the green dot clears.
+			// Online = us, or a peer heard from recently reporting world > 0 (logout sends world 0).
 			boolean online = id == localId || (isRecent(now, id) && data != null && data.getWorld() > 0);
 			out.add(new RosterMember(id, name, status, data, id == localId, online));
 		}
@@ -1333,13 +1240,7 @@ public class LiveParty
 		return seen != null && now - seen < ONLINE_TIMEOUT_MS;
 	}
 
-	/**
-	 * The roles still open given the host's full {@code requiredRoles} composition:
-	 * the required multiset minus the role each admitted member (host included) has
-	 * chosen. Applicants only ever pick a currently-needed role, so each admitted
-	 * member's role removes exactly one matching slot. Returns the input unchanged
-	 * when there's no composition.
-	 */
+	/** Roles still open: the required multiset minus each admitted member's chosen role. */
 	public List<String> neededRoles(List<String> requiredRoles)
 	{
 		net.osparty.model.Activity activity = net.osparty.model.Activity.fromId(currentActivityId);
@@ -1365,8 +1266,7 @@ public class LiveParty
 			}
 		}
 
-		// Flexible activities (Barbarian Assault) don't subtract from a fixed multiset —
-		// a role stays open until it hits its per-role cap, and any spare slot may double up.
+		// Flexible activities (Barbarian Assault): a role stays open until its per-role cap.
 		if (flexible)
 		{
 			return activity.flexibleNeededRoles(taken, capacity > 0 ? capacity : currentTeamSize);

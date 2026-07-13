@@ -72,12 +72,7 @@ import net.runelite.client.util.ImageUtil;
 import net.runelite.client.ui.FontManager;
 import net.runelite.http.api.worlds.WorldRegion;
 
-/**
- * "Search" tab: pick an activity, query the queue API for open parties, and
- * apply to one. A player can be in only one party at a time - applying leaves
- * the current party first (disbanding it if you were the host). Full parties
- * and your own party aren't appliable.
- */
+/** "Search" tab: browse open parties and apply to one (applying leaves your current party first). */
 class SearchPanel extends PartyCardPanel
 {
 
@@ -194,8 +189,7 @@ class SearchPanel extends PartyCardPanel
 
 	private List<Party> lastResults;
 	private String renderedSignature;
-	/** Rendered card (wrapped with its list gap) per party id, reused across refreshes so
-	 *  a push only touches the cards that actually changed instead of flickering them all. */
+	/** Rendered card per party id, reused across refreshes so a push only touches changed cards. */
 	private final Map<String, JComponent> cardsById = new HashMap<>();
 	/** The content signature each card was rendered from; a mismatch rebuilds just that card. */
 	private final Map<String, String> cardSignatures = new HashMap<>();
@@ -238,10 +232,7 @@ class SearchPanel extends PartyCardPanel
 		resultsPanel.setLayout(new BoxLayout(resultsPanel, BoxLayout.Y_AXIS));
 		resultsPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
-		// The whole tab scrolls as one: the filters/controls (north) plus the party list
-		// below them, in a single fixed-size viewport. Tracks the viewport width so cards
-		// never exceed it (otherwise a wide card pushes its Apply button off the edge), and
-		// doesn't track height so the column can grow past the viewport and scroll.
+		// The whole tab scrolls as one; tracks viewport width so cards never overflow their Apply button.
 		JPanel content = new ScrollableColumn(new BorderLayout(0, 8));
 		content.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		content.add(north, BorderLayout.NORTH);
@@ -262,9 +253,7 @@ class SearchPanel extends PartyCardPanel
 
 		updateActiveFiltersLabel();
 
-		// While the tab is visible: re-check whether we've moved near a different
-		// activity, and re-render to refresh the "searching Xm" age labels. The live
-		// socket pushes list changes, so this does no network I/O.
+		// While visible: re-check the nearby activity and refresh the "searching Xm" age labels (no network).
 		autoRefreshTimer = new Timer(10_000, e -> {
 			if (isShowing())
 			{
@@ -274,10 +263,7 @@ class SearchPanel extends PartyCardPanel
 		});
 		autoRefreshTimer.start();
 
-		// Subscribe to the live list only while the Search tab is visible. The socket
-		// itself is owned by the plugin (always open, also used for hosting), so this
-		// just toggles the list firehose with a cheap subscribe/unsubscribe — no
-		// connection churn — sparing the server from pushing to users not looking.
+		// Subscribe to the live list only while visible: a cheap subscribe/unsubscribe on the shared socket.
 		addAncestorListener(new AncestorListener()
 		{
 			@Override
@@ -306,8 +292,7 @@ class SearchPanel extends PartyCardPanel
 			maybeStartTimer();
 		});
 
-		// Keep the Apply/Join buttons in step with login state (cheap, no network),
-		// so logging in/out promptly enables or disables them.
+		// Keep the Apply/Join buttons in step with login state (cheap, no network).
 		new Timer(1_000, e -> {
 			if (isShowing())
 			{
@@ -317,11 +302,7 @@ class SearchPanel extends PartyCardPanel
 		}).start();
 	}
 
-	/**
-	 * Wraps every filter section (Activities, Roles, Search, Regions, Sort) in one
-	 * collapsible "Filters" disclosure so the results list dominates the tab. Default
-	 * collapsed; the header shows the active-filter count.
-	 */
+	/** Wraps every filter section in one collapsible "Filters" disclosure (collapsed by default). */
 	private JPanel buildFiltersSection()
 	{
 		JPanel panel = cappedRow(new BorderLayout(0, 4));
@@ -456,19 +437,13 @@ class SearchPanel extends PartyCardPanel
 		return new ImageIcon(grey);
 	}
 
-	/**
-	 * Style a collapsible section header like RuneLite's config sections: bold orange
-	 * title, a grey caret (set per state), and a separator line beneath. Hand cursor.
-	 */
+	/** Style a collapsible header like RuneLite's config sections (bold orange title, grey caret, separator). */
 	private static void styleCollapsibleHeader(JButton toggle)
 	{
 		styleCollapsibleHeader(toggle, false);
 	}
 
-	/**
-	 * @param sub when true this is a nested section under "Filters"; render it a step
-	 * smaller than the top-level "Filters" header so the hierarchy reads clearly.
-	 */
+	/** @param sub when true, a nested section under "Filters", rendered a step smaller than the top-level header. */
 	private static void styleCollapsibleHeader(JButton toggle, boolean sub)
 	{
 		toggle.setHorizontalAlignment(SwingConstants.LEFT);
@@ -486,10 +461,7 @@ class SearchPanel extends PartyCardPanel
 			BorderFactory.createEmptyBorder(3, 0, 4, 0)));
 	}
 
-	/**
-	 * The role multiselect (ToB/CoX): tick the roles you're willing to fill; none
-	 * ticked means no role constraint. Collapses to a single header row to save space.
-	 */
+	/** The role multiselect (ToB/CoX): tick roles you'll fill; none ticked means no constraint. */
 	private JPanel buildRoleFilter()
 	{
 		JPanel panel = cappedRow(new BorderLayout(0, 4));
@@ -500,8 +472,7 @@ class SearchPanel extends PartyCardPanel
 		roleToggle.addActionListener(e -> setRolesExpanded(!rolesExpanded));
 		panel.add(roleToggle, BorderLayout.NORTH);
 
-		// One tab per activity + difficulty so a CM pick can't be confused with a
-		// normal CoX one (or an HMT pick with a normal ToB one).
+		// One tab per activity + difficulty so a CM pick isn't confused with a normal CoX one.
 		roleTabs.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		roleTabs.addTab("ToB", buildRoleTab(Activity.THEATRE_OF_BLOOD, false));
 		roleTabs.addTab("HMT", buildRoleTab(Activity.THEATRE_OF_BLOOD, true));
@@ -573,13 +544,7 @@ class SearchPanel extends PartyCardPanel
 		return box;
 	}
 
-	/**
-	 * Whether a party passes the role filter. Non-role parties always pass. Each
-	 * activity's box is independent: with nothing ticked in that box, parties of
-	 * that activity pass. Otherwise the party must still need one of the ticked
-	 * roles - with "Fill / Any" meaning "I'll do any role", and a party's own Fill
-	 * slot accepting anyone.
-	 */
+	/** Whether a party passes the role filter: it must still need one of this activity's ticked roles. */
 	private boolean matchesRoleFilter(Party party, Activity activity)
 	{
 		if (activity == null || !activity.hasRoles())
@@ -604,8 +569,7 @@ class SearchPanel extends PartyCardPanel
 		{
 			return true; // no role info on the ad - don't over-filter
 		}
-		// The party's difficulty selects which wildcard/Fill applies (a CM party uses
-		// the CM Fill, an HMT searcher's "any" is the HMT one, etc.).
+		// The party's difficulty selects which wildcard/Fill applies (CM party uses the CM Fill, etc.).
 		Role any = activity.anyRole(party.isHardMode());
 		if (any != null && picked.contains(any))
 		{
@@ -626,10 +590,7 @@ class SearchPanel extends PartyCardPanel
 		return false;
 	}
 
-	/**
-	 * The primary search bar, pinned to the top of the tab (outside the collapsible
-	 * filters) so it's always visible. Empty-state prompt is painted by {@link #textField}.
-	 */
+	/** The primary search bar, pinned to the top of the tab (outside the collapsible filters). */
 	private JPanel buildSearchBar()
 	{
 		textField.setToolTipText("Filter by host, description or activity");
@@ -680,8 +641,7 @@ class SearchPanel extends PartyCardPanel
 		JPanel panel = cappedRow(new BorderLayout(0, 4));
 		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 
-		// Collapsible header for the secondary filters (the search text field itself is
-		// pinned at the top of the tab, see buildSearchBar()).
+		// Collapsible header for the secondary filters (the search field itself is pinned up top).
 		styleCollapsibleHeader(searchToggle, true);
 		searchToggle.addActionListener(e -> setSearchExpanded(!searchExpanded));
 		panel.add(searchToggle, BorderLayout.NORTH);
@@ -751,8 +711,7 @@ class SearchPanel extends PartyCardPanel
 		searchContent.setLayout(new BoxLayout(searchContent, BoxLayout.Y_AXIS));
 		searchContent.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		searchContent.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
-		// Labelled dropdown/field rows first, all with a fixed-width descriptor on the left
-		// so they line up; the two self-labelled checkboxes follow.
+		// Labelled dropdown/field rows first (fixed-width descriptors line up); checkboxes follow.
 		searchContent.add(labeledRow("Loot", lootFilter));
 		searchContent.add(labeledRow("Learner", learnerComboBox));
 		searchContent.add(labeledRow("Max ping", maxPingField));
@@ -809,12 +768,7 @@ class SearchPanel extends PartyCardPanel
 		searchToggle.setText("More filters");
 	}
 
-	/**
-	 * Collapsible region multi-select: a 2-column grid of flag checkboxes for each
-	 * known world region. All ticked by default (no filter). Deselecting a region
-	 * hides parties whose host world belongs to that region. Unchecked regions show
-	 * a dimmed flag so the on/off state is visually distinct.
-	 */
+	/** Collapsible region multi-select: a 2-column flag-checkbox grid; deselecting a region hides its parties. */
 	private JPanel buildRegionFilter()
 	{
 		JPanel panel = cappedRow(new BorderLayout(0, 4));
@@ -963,11 +917,7 @@ class SearchPanel extends PartyCardPanel
 		activityListPanel.repaint();
 	}
 
-	/**
-	 * If the player is standing near an activity, float it to the top of the list and
-	 * highlight it. No-op when the nearby activity hasn't changed. Does NOT auto-check
-	 * it — the user's explicit selection is never overridden (point 13).
-	 */
+	/** Float the nearby activity to the top and highlight it, but never auto-check it (point 13). */
 	private void applyRecommendation()
 	{
 		Activity near = Activity.nearby(mapRegionsSupplier.get());
@@ -1011,8 +961,7 @@ class SearchPanel extends PartyCardPanel
 		updateFiltersToggleText();
 		updateActivitiesToggleText();
 		reapplyFilters();
-		// Narrow/widen the server feed to match: scope to a single activity, else all. No-op on the
-		// socket when the scope is unchanged.
+		// Narrow/widen the server feed to match: scope to a single activity, else all.
 		if (subscription != null)
 		{
 			subscription.setActivity(scopeActivityId());
@@ -1073,7 +1022,6 @@ class SearchPanel extends PartyCardPanel
 	private void loadFilters()
 	{
 		// On the very first ever launch, start with no activities selected (all off).
-		// Persist the flag so subsequent launches restore the saved selection normally.
 		boolean firstRun = !Boolean.parseBoolean(get(KEY_FIRST_RUN));
 		if (firstRun)
 		{
@@ -1180,11 +1128,7 @@ class SearchPanel extends PartyCardPanel
 		return configManager.getConfiguration(OSPartyConfig.GROUP, key);
 	}
 
-	/**
-	 * Look up an invite code and apply to that party. Progress/validation messages go to
-	 * {@code status} so the caller can surface them in its own view (the Create tab hosts
-	 * the join-by-code field now, but the apply logic lives here with the rest of it).
-	 */
+	/** Look up an invite code and apply to that party; progress/validation goes to {@code status}. */
 	public void joinByCode(String code, Consumer<String> status)
 	{
 		String trimmed = code == null ? "" : code.trim();
@@ -1272,10 +1216,7 @@ class SearchPanel extends PartyCardPanel
 		renderCurrent();
 	}
 
-	/**
-	 * Subscribe to the live party list. The server pushes the full list on (re)connect and
-	 * after every change; we render it on the EDT. This is the only source of list data.
-	 */
+	/** Subscribe to the live party list (the server pushes the full list on connect and after every change). */
 	private void startSubscription()
 	{
 		if (subscription != null)
@@ -1336,11 +1277,7 @@ class SearchPanel extends PartyCardPanel
 	/** How long to wait for a reconnect to land before telling the user the server didn't answer. */
 	private static final int RECONNECT_TIMEOUT_MS = 8000;
 
-	/**
-	 * Kick off a reconnect and give the user definite feedback: on success the offline view
-	 * clears itself; if nothing has connected within {@link #RECONNECT_TIMEOUT_MS} we report
-	 * that the server didn't respond (rather than showing "Reconnecting…" forever).
-	 */
+	/** Reconnect with definite feedback: report failure after {@link #RECONNECT_TIMEOUT_MS} rather than hang. */
 	private void attemptReconnect()
 	{
 		if (subscription == null)
@@ -1365,11 +1302,7 @@ class SearchPanel extends PartyCardPanel
 		timeout.start();
 	}
 
-	/**
-	 * The activity to scope the live subscription to: the single selected activity's id, or
-	 * {@code null} (= all) when zero or several are selected, since the server scopes to one. Local
-	 * filtering still narrows the displayed list; this just shrinks the server's fan-out to us.
-	 */
+	/** Scope the live subscription to the single selected activity, or null (= all) when zero or several. */
 	private String scopeActivityId()
 	{
 		return selectedActivities.size() == 1 ? selectedActivities.iterator().next().getId() : null;
@@ -1385,10 +1318,7 @@ class SearchPanel extends PartyCardPanel
 		}
 	}
 
-	/**
-	 * A list pushed by the socket. Keep it as the latest result even when the tab is
-	 * hidden (so returning to it shows current data) but only repaint when visible.
-	 */
+	/** A list pushed by the socket: kept as the latest result even when hidden, repainted only when visible. */
 	private void acceptPushedParties(List<Party> parties)
 	{
 		lastResults = parties;
@@ -1442,8 +1372,7 @@ class SearchPanel extends PartyCardPanel
 		{
 			for (Party party : parties)
 			{
-				// Record current names for any favourited/blocked accounts we can see (name-change
-				// detection + hash backfill), regardless of whether the party ends up shown.
+				// Record current names for favourited/blocked accounts we see (name-change detection + hash backfill).
 				favoritesService.observeParty(party);
 				blockListService.observeParty(party);
 
@@ -1478,8 +1407,7 @@ class SearchPanel extends PartyCardPanel
 				{
 					continue; // "Hide learner raids" — hide learner parties
 				}
-				// Hide-ineligible filter (feature 5): skip parties the player can't join.
-				// A PENDING KC check is never treated as BELOW — don't over-filter.
+				// Hide-ineligible filter (feature 5): a PENDING KC check is never treated as BELOW.
 				if (hideIneligible)
 				{
 					if (!meetsIronmanRule(party))
@@ -1512,9 +1440,7 @@ class SearchPanel extends PartyCardPanel
 					}
 				}
 
-				// Max ping filter: skip parties whose world ping exceeds the threshold.
-				// Parties with no known ping yet are always shown (never over-filtered on
-				// unknown data); they will be re-evaluated when the ping result arrives.
+				// Max ping filter: skip parties over the threshold; parties with no known ping yet are always shown.
 				if (maxPing > 0 && worldNum != null && worldPinger != null)
 				{
 					Integer ping = worldPinger.getCachedPing(worldNum);
@@ -1576,9 +1502,8 @@ class SearchPanel extends PartyCardPanel
 		}
 		renderedSignature = signature;
 
-		// Anchor the viewport to the top-most visible card so list changes above it (new
-		// parties, removals, resorting) don't shift what the user is currently reading.
-		// At the very top we stay pinned instead, so new arrivals are immediately visible.
+		// Anchor the viewport to the top-most visible card so changes above it don't shift the read position;
+		// at the very top we stay pinned so new arrivals are immediately visible.
 		JViewport viewport = scroll.getViewport();
 		Point viewPos = viewport.getViewPosition();
 		String anchorId = null;
@@ -1621,10 +1546,8 @@ class SearchPanel extends PartyCardPanel
 			setStatus(visible.size() + " open " + (visible.size() == 1 ? "party" : "parties") + ".");
 		}
 
-		// Reconcile the card list in place instead of rebuilding it: drop cards whose party
-		// left, rebuild only cards whose own content changed, and move the rest into the new
-		// order. Untouched parties keep their live components, so a socket push neither
-		// flickers the panel nor disturbs the scroll position or an open role picker.
+		// Reconcile the card list in place: drop departed cards, rebuild only changed ones, reorder the rest,
+		// so a push doesn't flicker the panel or disturb the scroll position or an open role picker.
 		Set<String> visibleIds = new HashSet<>();
 		for (Party party : visible)
 		{
@@ -1661,8 +1584,7 @@ class SearchPanel extends PartyCardPanel
 				cardsById.put(id, card);
 				cardSignatures.put(id, cardSig);
 			}
-			// Keep actions on fresh data even when the card is reused (e.g. a rotated
-			// passphrase changes nothing rendered but matters when applying).
+			// Keep actions on fresh data even when the card is reused (e.g. a rotated passphrase).
 			partiesById.put(id, party);
 			if (index >= resultsPanel.getComponentCount() || resultsPanel.getComponent(index) != card)
 			{
@@ -1683,8 +1605,7 @@ class SearchPanel extends PartyCardPanel
 			JComponent anchorCard = cardsById.get(anchorId);
 			if (anchorCard != null && anchorCard.getParent() == resultsPanel)
 			{
-				// Lay the new list out synchronously so the anchor's final position is known,
-				// then put it back at the same on-screen offset — all before the next paint.
+				// Lay out synchronously so the anchor's final position is known, then restore its on-screen offset.
 				scroll.validate();
 				int top = SwingUtilities.convertPoint(resultsPanel, 0, anchorCard.getY(), viewport.getView()).y;
 				int maxY = Math.max(0, viewport.getView().getHeight() - viewport.getExtentSize().height);
@@ -1753,10 +1674,7 @@ class SearchPanel extends PartyCardPanel
 		return sb.toString();
 	}
 
-	/**
-	 * A stable signature of the visible parties so unchanged refreshes can no-op.
-	 * Includes each party's age in minutes so the "searching Xm" labels stay current.
-	 */
+	/** A stable signature of the visible parties (incl. age in minutes) so unchanged refreshes can no-op. */
 	private static String signatureOf(List<Party> parties)
 	{
 		long now = System.currentTimeMillis();
@@ -1787,18 +1705,13 @@ class SearchPanel extends PartyCardPanel
 			.toString();
 	}
 
-	/**
-	 * Everything {@link #buildPartyCard} renders for one party — the payload fields plus the
-	 * live decorations (ping, friend badge, favourite star, block state, host identity) — so
-	 * a refresh rebuilds a card only when that card's own content changed.
-	 */
+	/** Everything a card renders (payload + live decorations) so a refresh rebuilds it only when it changed. */
 	private String cardSignature(Party party)
 	{
 		StringBuilder sb = new StringBuilder(partyContentSignature(party, System.currentTimeMillis()));
 		sb.append('h').append(party.getHost() == null ? "" : party.getHost())
 			.append('t').append(party.getHostAccountType() == null ? "" : party.getHostAccountType());
-		// Host Discord-role badges (rendered in the card header) — without this, a badge change
-		// arriving in a members delta (or the config toggle flipping) wouldn't rebuild the card.
+		// Host Discord-role badges — without this, a badge change in a members delta wouldn't rebuild the card.
 		if (config == null || config.showDiscordBadges())
 		{
 			List<Member> sigMembers = party.getMembers();
@@ -1882,10 +1795,7 @@ class SearchPanel extends PartyCardPanel
 		return sb.toString();
 	}
 
-	/**
-	 * Signature of cached pings for the visible parties so that a ping arriving
-	 * via callback causes a re-render and updates the world label.
-	 */
+	/** Signature of cached pings so a ping arriving via callback re-renders the world label. */
 	private String pingSignatureOf(List<Party> parties)
 	{
 		if (worldPinger == null)
@@ -1970,10 +1880,7 @@ class SearchPanel extends PartyCardPanel
 		return sb.toString();
 	}
 
-	/**
-	 * Signature of which visible parties are currently favourited, so toggling a star
-	 * (here or on the Favorites tab) invalidates the cached render and rebuilds the icons.
-	 */
+	/** Signature of which visible parties are favourited, so toggling a star rebuilds the icons. */
 	private String favSignatureOf(List<Party> parties)
 	{
 		if (favoritesService == null)
@@ -2087,10 +1994,7 @@ class SearchPanel extends PartyCardPanel
 		statusLabel.setText(text);
 	}
 
-	/**
-	 * A scroll view that tracks the viewport width, so cards are constrained to the
-	 * panel width and their right-aligned buttons never get clipped off the edge.
-	 */
+	/** A scroll view that tracks the viewport width so cards' right-aligned buttons never clip off the edge. */
 	private static final class ScrollableColumn extends JPanel implements Scrollable
 	{
 		ScrollableColumn(LayoutManager layout)

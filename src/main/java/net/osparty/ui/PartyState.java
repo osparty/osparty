@@ -7,18 +7,8 @@ import java.util.List;
 import net.runelite.client.config.ConfigManager;
 
 /**
- * Shared, single-source-of-truth for the one party the player is currently in
- * — whether hosting it or joined as a member. A player can be in at most one
- * party at a time. UI panels register listeners and re-render when it changes.
- *
- * <p>Also holds the host credential (a secret key) for the party we host: the
- * server stores it in the party's session, and we send it on host-only mutations
- * (heartbeat/disband) so only the real host can change or close the ad. It's
- * persisted via {@link ConfigManager} so a hosted party survives a client restart
- * (see {@link #resumeHosting}); leaving/disbanding wipes it.
- *
- * <p>All mutation happens on the EDT (from Swing callbacks), so no
- * synchronisation is needed.
+ * Single source of truth for the one party the player is in (host or member). Also holds the
+ * persisted host credential sent on host-only mutations. EDT-only, so no synchronisation.
  */
 class PartyState
 {
@@ -66,8 +56,7 @@ class PartyState
 	void setAdvertiseLayout(boolean advertiseLayout)
 	{
 		this.advertiseLayout = advertiseLayout;
-		// Persisted alongside the host credential so resumeHosting() can restore it;
-		// without this, a client restart silently stopped the layout heartbeats.
+		// Persisted so resumeHosting() can restore it after a restart.
 		configManager.setConfiguration(OSPartyConfig.GROUP, KEY_ADVERTISE_LAYOUT, advertiseLayout);
 	}
 
@@ -98,8 +87,7 @@ class PartyState
 		currentParty = party;
 		host = true;
 		this.hostKey = loadHostKey(party.getId());
-		// Restore the layout-advertising choice too; only trust it when the saved
-		// credential actually belongs to this party (same guard as the host key).
+		// Restore the layout-advertising choice, but only when the saved key is for this party.
 		this.advertiseLayout = hostKey != null && Boolean.parseBoolean(
 			configManager.getConfiguration(OSPartyConfig.GROUP, KEY_ADVERTISE_LAYOUT));
 		fire();
@@ -123,11 +111,7 @@ class PartyState
 		fire();
 	}
 
-	/**
-	 * Step down from hosting the current party to being a member of it (after transferring the party to
-	 * another player). Keeps {@code currentParty} but drops the host role and credential, and clears the
-	 * persisted host key so a restart doesn't try to resume a party we no longer host.
-	 */
+	/** Step down from host to member after transferring the party; drops and unpersists the host key. */
 	void demoteToMember(Party party)
 	{
 		currentParty = party;

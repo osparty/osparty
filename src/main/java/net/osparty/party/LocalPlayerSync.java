@@ -130,12 +130,7 @@ final class LocalPlayerSync
 		return out;
 	}
 
-	/**
-	 * Populate the rune-pouch contents when the player is carrying a rune pouch. The rune
-	 * types/amounts live in client varbits (only the owner can read them), so we resolve the
-	 * rune-type index to an item id here via {@link EnumID#RUNEPOUCH_RUNE} and ship the item
-	 * ids + amounts for spectators to render directly.
-	 */
+	/** Populate rune-pouch contents (only the owner can read the varbits), resolved to item ids + amounts. */
 	private static void captureRunePouch(Client client, PlayerUpdate update)
 	{
 		ItemContainer inventory = client.getItemContainer(InventoryID.INVENTORY);

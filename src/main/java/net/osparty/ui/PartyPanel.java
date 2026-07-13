@@ -82,11 +82,7 @@ import net.runelite.client.util.AsyncBufferedImage;
 import net.runelite.client.util.ImageUtil;
 import net.runelite.client.util.LinkBrowser;
 
-/**
- * "Party" tab: the live party the player is in. The roster, statuses and each
- * member's gear/inventory/stats come from the peer-to-peer party
- * ({@link LiveParty}); the API only advertised the room.
- */
+/** "Party" tab: the live party the player is in; roster/gear/stats come from {@link LiveParty}. */
 class PartyPanel extends JPanel
 {
 	private static final int TAB_SKILLS = 0;
@@ -223,8 +219,7 @@ class PartyPanel extends JPanel
 		content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
 		content.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
-		// Track the viewport width so rows never exceed it (otherwise long rows clip on
-		// the right and the chevron disappears with HORIZONTAL_SCROLLBAR_NEVER).
+		// Track the viewport width so rows never clip and the chevron stays visible.
 		JPanel wrap = new ScrollableColumn(new BorderLayout());
 		wrap.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		wrap.add(content, BorderLayout.NORTH);
@@ -254,9 +249,6 @@ class PartyPanel extends JPanel
 			}
 		}));
 
-		// While we host an advertised party, ping the bulletin board so the backend
-		// doesn't reap our ad as stale (and report current occupancy). No-op when
-		// we're not hosting.
 		new Timer(30_000, e -> {
 			if (partyState.isHost() && partyState.getCurrentParty() != null)
 			{
@@ -266,8 +258,7 @@ class PartyPanel extends JPanel
 			}
 		}).start();
 
-		// The CoX layout fills in as the host explores the raid; push it promptly
-		// (rather than waiting for the 30s keep-alive) whenever it changes.
+		// Push the CoX layout promptly when it changes, not on the 30s keep-alive.
 		new Timer(3_000, e -> {
 			if (!partyState.isHost() || partyState.getCurrentParty() == null)
 			{
@@ -334,11 +325,7 @@ class PartyPanel extends JPanel
 		{
 			return null;
 		}
-		// Compute from the live roster for host and members alike: roster() carries every
-		// admitted member's role over P2P and neededRoles() subtracts the local member's own
-		// role too, so a non-host no longer sees their own role stuck in "Needs". (The host's
-		// advertised party.getNeededRoles() only refreshes on admit-count changes, so it went
-		// stale for members who picked a role after joining.)
+		// From the live roster (P2P), so a member who picked a role after joining isn't stuck in "Needs".
 		List<String> needed = liveParty.neededRoles(party.getRequiredRoles());
 		if (needed == null || needed.isEmpty())
 		{
@@ -372,8 +359,7 @@ class PartyPanel extends JPanel
 			lastReportedSize = -1;
 			lastReportedLayout = null;
 			hostApplicationHandler.setPendingApplicants(java.util.Collections.emptyList(), null);
-			// Clear any leftover action text so a new party doesn't open showing the last
-			// party's "Disbanding…/Left…" message (the stale "one step behind" status).
+			// Clear leftover status so a new party doesn't show the last one's message.
 			setStatus("");
 			content.revalidate();
 			content.repaint();
@@ -398,8 +384,7 @@ class PartyPanel extends JPanel
 		content.add(header);
 		content.add(Box.createVerticalStrut(4));
 
-		// A player who has applied but hasn't been admitted must not see the party's internals (roster,
-		// requirements, ready check, voice channel). Show only a waiting notice and a way to withdraw.
+		// Un-admitted applicants see only a waiting notice, not the party internals.
 		if (!host && !liveParty.isLocalAdmitted())
 		{
 			content.add(subLabel("Waiting for the host to accept you…"));
@@ -415,8 +400,7 @@ class PartyPanel extends JPanel
 		int admitted = roster == null ? 0
 			: (int) roster.stream().filter(m -> m.getStatus() != Status.PENDING).count();
 
-		// Push the live occupancy to the ad as soon as it changes, so search results
-		// reflect who's actually in the party (not just the host).
+		// Push live occupancy to the ad on change.
 		if (host && admitted > 0 && admitted != lastReportedSize)
 		{
 			lastReportedSize = admitted;
@@ -504,14 +488,12 @@ class PartyPanel extends JPanel
 		}
 		else
 		{
-			// "In the friends chat" means the host's own friends chat (owned by the
-			// host), identified by the host's name — not just any chat they're in.
+			// "In the friends chat" means the host's own FC, matched by host name.
 			String hostName = party.getHost();
 			boolean anyPending = false;
 			for (RosterMember member : roster)
 			{
-				// Real applicants (someone other than you who has actually synced)
-				// go in their own section below; a data-less ghost is ignored.
+				// Real synced applicants go in their own section below; ignore data-less ghosts.
 				if (member.getStatus() == Status.PENDING && !member.isLocal())
 				{
 					if (member.getData() != null)
@@ -640,8 +622,7 @@ class PartyPanel extends JPanel
 		JLabel dot = new JLabel(online ? StatusIcons.ONLINE : StatusIcons.OFFLINE);
 		dot.setToolTipText(online ? "Online" : "Offline");
 
-		// Host gets a gold crown next to the name (not "(host)" text); we never label
-		// ourselves "(you)" — we know who we are.
+		// Host gets a gold crown, not "(host)" text.
 		String tag = status == Status.PENDING ? " (pending)" : "";
 		JLabel name = new JLabel(member.getName() + tag);
 		name.setForeground(status == Status.HOST ? ColorScheme.BRAND_ORANGE
@@ -694,8 +675,7 @@ class PartyPanel extends JPanel
 		chevron.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 2));
 		chevron.addMouseListener(expandOnClick(member));
 
-		// Discord-role badges sit just left of the chevron. Badges are server-asserted on the
-		// party ad's members (never from P2P player sync), matched here by accountHash.
+		// Discord-role badges (server-asserted on the ad, matched by accountHash) sit left of the chevron.
 		JPanel east = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
 		east.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		for (DiscordBadge badge : DiscordBadge.fromWire(adBadges(party, member)))
@@ -755,8 +735,7 @@ class PartyPanel extends JPanel
 			metaRow.add(metaLabel);
 			anyMeta = true;
 		}
-		// The friends-chat presence check only matters for CoX, where the raid is formed via
-		// the host's FC; other activities use the in-game party/grouping, so hide it there.
+		// FC presence only matters for CoX (raid formed via host's FC); hidden elsewhere.
 		boolean showFc = hostName != null && data != null && activity == Activity.CHAMBERS_OF_XERIC;
 		if (showFc)
 		{
@@ -890,10 +869,8 @@ class PartyPanel extends JPanel
 	}
 
 	/**
-	 * The Discord-role badge strings the API asserted for this roster member on the party ad,
-	 * or {@code null} when badges are hidden, the member isn't on the ad, or they have none.
-	 * Matched by accountHash first, falling back to the display name for members whose hash
-	 * hasn't synced through the live room yet.
+	 * Discord-role badges the API asserted for this member on the ad (matched by accountHash,
+	 * then name), or {@code null} when hidden or none.
 	 */
 	private List<String> adBadges(Party party, RosterMember member)
 	{
@@ -983,24 +960,20 @@ class PartyPanel extends JPanel
 			any = true;
 		}
 
-		// Hop to the member's world (any viewer) when it differs from ours.
+		// Hopping is disabled: RuneLite no longer permits plugins to switch worlds.
 		PlayerUpdate data = member.getData();
 		int world = data != null ? data.getWorld() : 0;
 		int mine = currentWorld.getAsInt();
 		if (world > 0 && mine > 0 && mine != world)
 		{
 			JButton hop = smallButton("Hop to");
-			hop.setToolTipText("Hop to world " + world);
-			hop.addActionListener(e -> {
-				worldHopper.accept(world);
-				setStatus("Hopping to world " + world + "…");
-			});
+			hop.setToolTipText("disabled due to RL policy");
+			hop.setEnabled(false);
 			wrap.add(hop);
 			any = true;
 		}
 
-		// Per-activity "how to join the raid" prompt the host can send a member:
-		// CoX = join the host's friends chat; ToB = notice board; ToA = Grouping Obelisk.
+		// Per-activity join prompt: CoX = host's FC, ToB = notice board, ToA = Grouping Obelisk.
 		if (host && data != null && activity != null)
 		{
 			String kind = null;
@@ -1008,8 +981,7 @@ class PartyPanel extends JPanel
 			String tip = null;
 			if (activity == Activity.CHAMBERS_OF_XERIC)
 			{
-				// CoX coordinates via the host's friends chat: only when the host has one
-				// open and the member isn't already in it.
+				// Only when the host has an FC open and the member isn't already in it.
 				if (hostName != null && !sameRsn(data.getFriendsChatOwner(), hostName)
 					&& sameRsn(friendsChatOwnerSupplier.get(), hostName))
 				{
@@ -1065,13 +1037,8 @@ class PartyPanel extends JPanel
 	private static final Dimension ORB_ICON = new Dimension(14, 14);
 
 	/**
-	 * A compact, always-visible line of the member's live vitals (current HP, prayer,
-	 * special-attack energy and run energy), each behind its in-game orb icon. Returns
-	 * {@code null} until the member's first live snapshot arrives (no vitals yet).
-	 *
-	 * <p>Laid out as a fixed 4-column grid rather than a FlowLayout: the side panel is
-	 * narrow, and a FlowLayout would wrap the last cell (run energy) onto a second line
-	 * that the height-capped row then hid. The grid keeps all four on one line.
+	 * A compact vitals line (HP, prayer, spec, run energy) behind orb icons; {@code null} until
+	 * the first live snapshot. Fixed 4-column grid, not FlowLayout, so run energy never wraps.
 	 */
 	private JComponent buildVitalsRow(PlayerUpdate data)
 	{
@@ -1139,8 +1106,7 @@ class PartyPanel extends JPanel
 
 	private JComponent vitalCell(int spriteId, String value, String tip)
 	{
-		// BorderLayout (not FlowLayout): the value sits beside the icon and never wraps beneath
-		// it, so a full "100%" stays on the line instead of being hidden by the capped height.
+		// BorderLayout so the value sits beside the icon and never wraps beneath it.
 		JPanel cell = new JPanel(new BorderLayout(1, 0));
 		cell.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		JLabel icon = new JLabel();
@@ -1156,11 +1122,7 @@ class PartyPanel extends JPanel
 		return cell;
 	}
 
-	/**
-	 * Load an orb sprite scaled to fit {@link #ORB_ICON} (aspect preserved). Sprites are drawn
-	 * at their native size by {@code addSpriteTo}, which for the wider orbs (e.g. prayer)
-	 * overflowed the fixed-width label and slid under the adjacent number — scaling fixes that.
-	 */
+	/** Load an orb sprite scaled to fit {@link #ORB_ICON} so wider orbs don't overflow the label. */
 	private void loadOrbIcon(JLabel label, int spriteId)
 	{
 		if (spriteManager == null)
@@ -1461,12 +1423,7 @@ class PartyPanel extends JPanel
 	/** Pixel size of a rune icon painted over the pouch, matching RuneLite's overlay. */
 	private static final int RUNE_ICON = 11;
 
-	/**
-	 * An inventory slot for a rune pouch: the pouch icon with its runes overlaid on top,
-	 * mirroring RuneLite's Rune Pouch plugin (a list with amounts for &lt;4 runes, otherwise a
-	 * grid with per-rune fill bars). {@code runes} are resolved rune item ids, {@code amounts}
-	 * their parallel counts.
-	 */
+	/** A rune-pouch inventory slot: pouch icon with runes overlaid, like RuneLite's Rune Pouch plugin. */
 	private JComponent runePouchSlot(int pouchItemId, int[] runes, int[] amounts, String[] names)
 	{
 		AsyncBufferedImage pouchImg = itemManager.getImage(pouchItemId);
@@ -1594,10 +1551,7 @@ class PartyPanel extends JPanel
 		return itemSlot(itemId, 1);
 	}
 
-	/**
-	 * A single item cell. When {@code quantity > 1} the icon is drawn with its stack
-	 * count (as it appears in-game), so spectators can read dose/charge/stack sizes.
-	 */
+	/** A single item cell; draws the stack count when {@code quantity > 1}. */
 	private JLabel itemSlot(int itemId, int quantity)
 	{
 		JLabel slot = new JLabel();
@@ -1609,8 +1563,7 @@ class PartyPanel extends JPanel
 		slot.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		if (itemId > 0)
 		{
-			// Loads asynchronously and repaints the label once the icon is ready. The
-			// three-arg form stamps the stack-size number for quantities above one.
+			// Async load; three-arg form stamps the stack-size for quantities above one.
 			int q = Math.max(1, quantity);
 			itemManager.getImage(itemId, q, q > 1).addTo(slot);
 		}
@@ -1681,8 +1634,7 @@ class PartyPanel extends JPanel
 	private void kick(Activity activity, RosterMember member)
 	{
 		liveParty.kick(member.getMemberId());
-		// If this party has a Discord voice channel, also boot the kicked member out of it. The backend
-		// no-ops unless the member is Discord-linked and currently sitting in that channel.
+		// Also boot the kicked member from the Discord voice channel (backend no-ops if not applicable).
 		Party party = partyState.getCurrentParty();
 		if (partyState.isHost() && party != null && liveParty.discordInviteUrl() != null)
 		{
@@ -1767,8 +1719,7 @@ class PartyPanel extends JPanel
 		actions.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		actions.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-		// Host-only buttons stacked above the disband/leave action: edit, and — when there's someone to
-		// hand the party to — transfer host (the old host stays a member).
+		// Host-only buttons above disband/leave: edit, and transfer host when there's a candidate.
 		if (host)
 		{
 			JPanel hostButtons = new JPanel(new GridLayout(0, 1, 0, 4));
@@ -1815,10 +1766,7 @@ class PartyPanel extends JPanel
 		this.onEditParty = onEditParty;
 	}
 
-	/**
-	 * Confirm before destroying a party you host (point 23), with a "Don't ask me
-	 * again" option persisted to config. Leaving (non-host) is not gated.
-	 */
+	/** Confirm before disbanding a hosted party, with a persisted "Don't ask again" option. */
 	private void confirmDisband(Party party, JButton button)
 	{
 		if (config != null && config.skipDisbandConfirm())
@@ -1875,10 +1823,8 @@ class PartyPanel extends JPanel
 	}
 
 	/**
-	 * Ask the host which member to hand the party to, then kick off the transfer. With a single
-	 * candidate it's a straight confirm; otherwise a member picker. {@code hostStays} is true for the
-	 * dedicated "Transfer host" button (old host stays a member) and false for the disband path (old
-	 * host leaves).
+	 * Ask which member to hand the party to, then start the transfer. {@code hostStays} true keeps
+	 * the old host as a member (Transfer button), false makes them leave (disband path).
 	 */
 	private void promptTransferHost(boolean hostStays)
 	{
@@ -1922,8 +1868,7 @@ class PartyPanel extends JPanel
 	{
 		button.setEnabled(false);
 		setStatus("Disbanding party…");
-		// Remove the ad (fire-and-forget) and close the live room. Read the host key
-		// before clear() wipes it.
+		// Remove the ad and close the room; read the host key before clear() wipes it.
 		partyService.disbandParty(party.getId(), party.getHost(), partyState.getHostKey(), ignored -> { }, error -> { });
 		liveParty.leave();
 		partyState.clear();
@@ -1970,21 +1915,16 @@ class PartyPanel extends JPanel
 		return button;
 	}
 
-	/** A label followed by an OS-safe copy-to-clipboard button (point 27). */
 	/**
-	 * Discord voice-channel controls for the party info section. Once a channel exists (its invite URL
-	 * arrived on the host's {@link PartyStateMessage}, or the host set it locally) everyone sees a
-	 * "Join voice" button. Before that, only the host sees "Create voice channel", which asks the
-	 * backend bot to provision one. Returns null when there is nothing to show (a member with no
-	 * channel yet). The provisioned URL then rides the peer-to-peer party state to every member.
+	 * Discord voice controls: "Join voice" once a channel exists, else host-only "Create voice
+	 * channel"; {@code null} for a member with no channel yet.
 	 */
 	private JComponent buildVoiceRow(Party party, boolean host)
 	{
 		boolean linked = discordLinkedSupplier != null && discordLinkedSupplier.getAsBoolean();
 		String url = liveParty.discordInviteUrl();
 
-		// Voice requires a linked Discord account. Rather than hide the control, show an "Authorize with
-		// Discord" button that runs the OAuth flow first; once linked the panel refreshes to create/join.
+		// Voice needs a linked Discord account; show an Authorize button to run OAuth first.
 		if (url != null)
 		{
 			if (!linked)
@@ -2015,8 +1955,7 @@ class PartyPanel extends JPanel
 			setStatus("Creating Discord voice channel…");
 			partyService.createVoiceChannel(partyId, partyState.getHostKey(),
 				channelUrl -> SwingUtilities.invokeLater(() -> {
-					// Records it on our host state and re-broadcasts so members get a "Join voice" button;
-					// the listener then rebuilds this row to show ours too.
+					// Record and re-broadcast so members get a "Join voice" button.
 					liveParty.setDiscordInviteUrl(channelUrl);
 					setStatus("Voice channel created — members can now join.");
 				}),
@@ -2047,10 +1986,7 @@ class PartyPanel extends JPanel
 		return button;
 	}
 
-	/**
-	 * Ensure we have per-user access to the party's voice channel (covers joining/linking after it was
-	 * created), then open the invite. Falls back to just opening the invite if we can't request access.
-	 */
+	/** Request per-user voice access, then open the invite (falls back to just opening it). */
 	private void joinVoice(Party party, String url)
 	{
 		long accountHash = accountHashSupplier != null ? accountHashSupplier.getAsLong() : 0;
@@ -2091,8 +2027,7 @@ class PartyPanel extends JPanel
 
 	private JPanel copyRow(String labelText, String copyValue, String tooltip, String statusMsg, Color fg)
 	{
-		// BorderLayout so the copy button stays pinned at the right and a long passphrase
-		// truncates (with the full value in the tooltip) instead of pushing the button off.
+		// BorderLayout keeps the copy button pinned right; long values truncate, not push it off.
 		JPanel row = cappedPanel(new BorderLayout(4, 0));
 		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		row.setAlignmentX(Component.LEFT_ALIGNMENT);

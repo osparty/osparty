@@ -45,15 +45,7 @@ import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.util.ImageUtil;
 
-/**
- * The "History" tab: a capped, newest-first list of the parties the player has been in
- * (hosted or joined), backed by {@link PartyHistoryService}. Each row shows the activity,
- * whether it was hosted or joined, the host, and how long ago it was, and expands on click to
- * reveal the full roster with each member's join/leave times (members who left are kept, greyed).
- * A search box (activity / host / member names) and a hosted/joined role filter narrow the list;
- * a "Clear" button empties it. Re-rendered whenever the tab becomes visible, on a timer while shown,
- * and after a new party is recorded (via {@link #refresh()}).
- */
+/** The "History" tab: a capped, newest-first list of past parties (via {@link PartyHistoryService}), each row expandable to its roster. */
 class HistoryPanel extends JPanel
 {
 	/** How often to re-render while the tab is showing, so "x ago" times and live roster changes stay fresh. */
@@ -170,8 +162,7 @@ class HistoryPanel extends JPanel
 		listContent.setLayout(new BoxLayout(listContent, BoxLayout.Y_AXIS));
 		listContent.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
-		// Width-tracking view (see ScrollableColumn): rows otherwise clip under the vertical
-		// scrollbar, hiding the right-hand timestamps. NORTH keeps a short list top-anchored.
+		// Width-tracking view (see ScrollableColumn) so rows don't clip under the scrollbar.
 		JPanel column = new ScrollableColumn(new BorderLayout());
 		column.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		column.add(listContent, BorderLayout.NORTH);
@@ -194,8 +185,7 @@ class HistoryPanel extends JPanel
 		refreshTimer = new Timer(REFRESH_INTERVAL_MS, e -> refresh());
 		refreshTimer.setRepeats(true);
 
-		// Refresh whenever the panel actually becomes visible (reliable across the tab group's
-		// show/hide, unlike AncestorListener), and only tick the periodic refresh while it's on screen.
+		// Refresh when the panel becomes visible (reliable, unlike AncestorListener); tick only while shown.
 		addHierarchyListener(e ->
 		{
 			if ((e.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) == 0)
@@ -288,11 +278,7 @@ class HistoryPanel extends JPanel
 		return new ImageIcon(grey);
 	}
 
-	/**
-	 * One history row: a clickable header (activity, role, roster summary, when) that toggles a
-	 * detail panel listing every member with their join/leave times. Rows with no recorded roster
-	 * aren't expandable.
-	 */
+	/** One history row: a clickable header toggling a roster detail panel. No roster = not expandable. */
 	private JPanel buildRow(PartyHistoryEntry entry)
 	{
 		JPanel container = new JPanel();
@@ -369,8 +355,7 @@ class HistoryPanel extends JPanel
 		String key = keyOf(entry);
 		boolean open = expanded.contains(key);
 
-		// A caret on the left signals (and toggles) the collapsible roster detail below, matching
-		// the disclosure carets on the Friends and Search tabs.
+		// Left caret toggles the collapsible roster detail, matching the Friends/Search tabs.
 		JLabel chevron = new JLabel(open ? CARET_EXPANDED : CARET_COLLAPSED);
 		chevron.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 4));
 		header.add(chevron, BorderLayout.WEST);
@@ -419,8 +404,7 @@ class HistoryPanel extends JPanel
 			BorderFactory.createMatteBorder(1, 0, 0, 0, ColorScheme.MEDIUM_GRAY_COLOR),
 			BorderFactory.createEmptyBorder(4, 12, 6, 8)));
 
-		// Present members first so the current roster reads top-to-bottom, then the ones who left.
-		// Skip unidentified rows (blank / "<unknown>" placeholder) that older data may have captured.
+		// Present members first, then those who left; skip unidentified rows.
 		for (HistoryMember m : entry.getMembers())
 		{
 			if (m != null && m.isPresent() && isNamed(m))
@@ -456,8 +440,7 @@ class HistoryPanel extends JPanel
 		JLabel timeLabel = new JLabel(span);
 		timeLabel.setFont(FontManager.getRunescapeSmallFont());
 		timeLabel.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
-		// Fixed-width, right-aligned time column: the span varies per row ("- now" vs "- 13:45"),
-		// which would otherwise shift the favourite/block icons out of column alignment.
+		// Fixed-width time column so the varying span doesn't shift the action icons out of alignment.
 		timeLabel.setHorizontalAlignment(SwingConstants.RIGHT);
 		Dimension timeSize = new Dimension(
 			timeLabel.getFontMetrics(timeLabel.getFont()).stringWidth("00:00 - 00:00"),
@@ -485,13 +468,7 @@ class HistoryPanel extends JPanel
 		return line;
 	}
 
-	/**
-	 * A favourite + block toggle pair for {@code m}, reflecting current state (filled star / red ban
-	 * when set), or {@code null} for an unnamed row. For your own row the pair is still shown but
-	 * disabled (you can't favourite or block yourself), which also keeps the action column aligned
-	 * with every other row. Favouriting and blocking are mutually exclusive, so setting one clears the
-	 * other.
-	 */
+	/** Favourite + block toggle pair for {@code m} (disabled for your own row), or null if unnamed. */
 	private JComponent memberActions(HistoryMember m)
 	{
 		if (favoritesService == null || blockListService == null || !isNamed(m))
@@ -575,11 +552,7 @@ class HistoryPanel extends JPanel
 		return button;
 	}
 
-	/**
-	 * Whether {@code entry} passes the current filters: the role selector (hosted/joined/all) and a
-	 * case-insensitive substring {@code query} (already lower-cased) over the activity title, host name,
-	 * and every member name. An empty query matches everything within the selected role.
-	 */
+	/** Whether {@code entry} passes the role filter and the lower-cased substring {@code query}. */
 	private static boolean matches(PartyHistoryEntry entry, String query, String role)
 	{
 		if (ROLE_HOSTED.equals(role) && !entry.isHosted())
@@ -657,11 +630,7 @@ class HistoryPanel extends JPanel
 		return host == null || host.isEmpty() ? "party" : host;
 	}
 
-	/**
-	 * Comma-joined names of the members currently in the party (host first, blanks skipped), or
-	 * {@code null} when none were recorded. Members who have left are omitted from this summary line —
-	 * they still appear, greyed, in the expanded detail.
-	 */
+	/** Comma-joined names of the members currently present (host first), or null when none. */
 	private static String memberNames(PartyHistoryEntry entry)
 	{
 		List<HistoryMember> members = entry.getMembers();

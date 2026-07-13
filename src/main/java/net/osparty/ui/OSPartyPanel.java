@@ -59,25 +59,17 @@ import net.runelite.client.util.AsyncBufferedImage;
 import net.runelite.client.util.ImageUtil;
 import net.runelite.client.util.LinkBrowser;
 
-/**
- * Root side-panel. Hosts Search / Favorites always, plus Create when idle and Party
- * while in a party (hosting or joined). All tabs share a single {@link PartyState}
- * so the one-party-at-a-time rule and tab visibility stay in sync.
- */
+/** Root side-panel: tabs share one {@link PartyState} so the one-party-at-a-time rule stays in sync. */
 public class OSPartyPanel extends PluginPanel
 {
-	// Hard-coded: PluginHub's build doesn't bundle runelite-plugin.properties, so
-	// reading the version from the classpath there yields "?". Keep this in step
-	// with runelite-plugin.properties on each release.
+	// PluginHub's build omits runelite-plugin.properties; keep in step with it each release.
 	private static final String VERSION = "1.0.33";
 	private static final String GITHUB_URL = "https://github.com/osparty/osparty";
 	private static final String DISCORD_URL = "https://discord.gg/EtMRxTHXWJ";
 
-	/** Distinct green used for the Party tab's "a party is running" underline, so it reads apart
-	 *  from the orange {@link MaterialTab} selection underline. */
+	/** Green "party running" underline for the Party tab, distinct from the orange selection underline. */
 	private static final Color PARTY_ACTIVE_COLOR = new Color(0x4C, 0xAF, 0x50);
-	/** Bottom-underline border in {@link #PARTY_ACTIVE_COLOR}, matching the selected border's insets
-	 *  (5,10,4,10 + a 1px underline) so swapping it in never changes the tab's size. */
+	/** Party-active underline border; matches the selected border's insets so swapping never resizes the tab. */
 	private static final Border PARTY_ACTIVE_BORDER = BorderFactory.createCompoundBorder(
 		BorderFactory.createMatteBorder(0, 0, 1, 0, PARTY_ACTIVE_COLOR),
 		BorderFactory.createEmptyBorder(5, 10, 4, 10));
@@ -160,8 +152,7 @@ public class OSPartyPanel extends PluginPanel
 
 		setLayout(new BorderLayout());
 		setBackground(ColorScheme.DARK_GRAY_COLOR);
-		// super(false) skips PluginPanel's default border, so add our own breathing
-		// room — otherwise the tabs and content sit flush against the sidebar edges.
+		// super(false) skips PluginPanel's default border, so add our own padding.
 		setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
 		searchPanel = new SearchPanel(partyService, playerNameSupplier,
@@ -175,8 +166,7 @@ public class OSPartyPanel extends PluginPanel
 			config);
 		blockedPanel = new BlockedPanel(blockListService);
 
-		// Cross-notify: toggling a favourite in Search refreshes the Favorites tab and vice versa;
-		// toggling a block anywhere refreshes the Blocked tab (and the card lists that hide blocks).
+		// Cross-notify: a favourite/block toggle in one tab refreshes the others.
 		searchPanel.setOnFavoriteChanged(favoritesPanel::render);
 		favoritesPanel.setOnFavoriteChanged(searchPanel::renderCurrent);
 		searchPanel.setOnBlockChanged(() -> { favoritesPanel.render(); blockedPanel.render(); });
@@ -185,7 +175,6 @@ public class OSPartyPanel extends PluginPanel
 		createPanel = new CreatePanel(partyService, config, playerNameSupplier, partyState, liveParty,
 			accountTypeSupplier, accountHashSupplier, mapRegionsSupplier, coxLayoutSupplier, configManager, gson,
 			killcountService, worldSupplier);
-		// The Create tab's "Join existing" section reuses the Search tab's join-by-code apply flow.
 		createPanel.setJoinByCodeHandler(searchPanel::joinByCode);
 		partyPanel = new PartyPanel(partyService, playerNameSupplier,
 			hostApplicationHandler, partyState, itemManager, liveParty, runeWatchService, killcountService,
@@ -201,8 +190,7 @@ public class OSPartyPanel extends PluginPanel
 			blockedPanel.render();
 		});
 
-		// Host edit flow: the Party tab's "Edit party" button opens the create form in edit
-		// mode; saving returns to the Party (roster) tab.
+		// Host edit flow: "Edit party" opens the create form in edit mode; saving returns to the roster.
 		partyPanel.setOnEditParty(this::openEditParty);
 		createPanel.setOnEditDone(this::finishEditParty);
 
@@ -216,10 +204,7 @@ public class OSPartyPanel extends PluginPanel
 		createScroll.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
 		tabGroup = new MaterialTabGroup(display);
-		// Icon tabs (not text): four/five text labels overflow the narrow sidebar and drop the
-		// last tab. Each tab starts with a drawn bitmap fallback (TabIcons — always available,
-		// renders identically on every platform), then upgrades to the authentic OSRS interface
-		// sprite once SpriteManager loads it. Tooltips name each tab.
+		// Icon tabs (text labels overflow the sidebar): drawn fallback now, OSRS sprite once loaded.
 		searchTab = new MaterialTab(TabIcons.SEARCH, tabGroup, searchPanel);
 		searchTab.setToolTipText("Search");
 		createTab = new MaterialTab(TabIcons.PARTY, tabGroup, createScroll);
@@ -234,15 +219,12 @@ public class OSPartyPanel extends PluginPanel
 			public void unselect()
 			{
 				super.unselect();
-				// While a party is running, keep a distinct green underline on the Party tab even when
-				// another tab is selected — a persistent "you're in a party" marker that doesn't get
-				// confused with the orange underline of the currently-selected tab.
+				// Keep the green "in a party" underline even when another tab is selected.
 				if (partyState.isInParty())
 				{
 					setBorder(PARTY_ACTIVE_BORDER);
 				}
-				// MaterialTabGroup only swaps the content display on select; repaint the whole tab bar so
-				// the underline can't lag a frame behind the selection (leaving a stale/missing underline).
+				// Repaint the whole bar so the underline doesn't lag a frame behind the selection.
 				if (tabGroup != null)
 				{
 					tabGroup.repaint();
@@ -253,16 +235,13 @@ public class OSPartyPanel extends PluginPanel
 		historyTab = new MaterialTab(TabIcons.HISTORY, tabGroup, historyPanel);
 		historyTab.setToolTipText("History");
 
-		// Search / Favorites / Blocked upgrade to authentic OSRS interface sprites, and History to the
-		// in-game Recruitment Drive Hourglass item sprite. Party uses the bundled chat-channel PNG
-		// (TabIcons.PARTY) — OSRS has no square interface sprite that reads cleanly for it at tab size.
+		// Upgrade tabs to OSRS sprites; Party keeps its bundled PNG (no clean square sprite exists).
 		applyTabSprite(spriteManager, SpriteID.GE_SEARCH, searchTab::setIcon);
 		applyTabSprite(spriteManager, SpriteID.WORLD_SWITCHER_STAR_MEMBERS, favesTab::setIcon);
 		applyTabSprite(spriteManager, SpriteID.TAB_IGNORES, blockedTab::setIcon);
 		applyTabItem(itemManager, ItemID.HOURGLASS, historyTab::setIcon);
 
-		// Register every tab with the group (needed for select()), then lay out the
-		// idle bar. In-party swaps Create for Party (see rebuildTabs).
+		// Register all tabs (needed for select()); rebuildTabs lays out the idle bar.
 		tabGroup.addTab(searchTab);
 		tabGroup.addTab(createTab);
 		tabGroup.addTab(favesTab);
@@ -277,16 +256,14 @@ public class OSPartyPanel extends PluginPanel
 		add(buildFooter(), BorderLayout.SOUTH);
 
 		partyState.addListener(this::onPartyStateChanged);
-		// Live joins/leaves arrive off the EDT via LiveParty; marshal back before touching the
-		// history snapshot and Swing (mirrors PartyPanel's own liveParty listener).
+		// Live joins/leaves arrive off-EDT; marshal back before touching history/Swing.
 		liveParty.addListener(() -> SwingUtilities.invokeLater(this::syncHistoryRoster));
 	}
 
 
 	private JPanel buildFooter()
 	{
-		// Two rows: the community links (GitHub + Discord) centered on top, then a status row of
-		// online-count (left) | Discord link state (centre) | version (right).
+		// Row 1: community links. Row 2: online (left) | link state (centre) | version (right).
 		JPanel footer = new JPanel(new GridLayout(2, 1, 0, 2));
 		footer.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		footer.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
@@ -361,8 +338,7 @@ public class OSPartyPanel extends PluginPanel
 		footer.add(row2);
 		updateActiveUsers();
 
-		// The server pushes the live count over the socket; poll the cached value onto the
-		// footer (cheap, no network). Timer fires on the EDT so touching Swing is safe.
+		// Poll the cached online count onto the footer (no network); EDT timer, Swing-safe.
 		presenceTimer = new Timer(3000, e -> updateActiveUsers());
 		presenceTimer.start();
 
@@ -374,8 +350,7 @@ public class OSPartyPanel extends PluginPanel
 		int online = partyService.onlineUsers();
 		activeUsersLabel.setText(online < 0 ? "" : online + " online");
 
-		// Refresh the Discord link button only when the logged-in account changes (e.g. after login),
-		// so we're not firing a lookup every timer tick.
+		// Only re-query link status when the logged-in account changes, not every tick.
 		long hash = accountHashSupplier.getAsLong();
 		if (hash != lastLinkQueryHash)
 		{
@@ -422,8 +397,7 @@ public class OSPartyPanel extends PluginPanel
 		relink.addActionListener(a -> startDiscordLink());
 		JMenuItem unlink = new JMenuItem("Unlink");
 		unlink.addActionListener(a -> unlinkDiscord());
-		// Server-side privacy: unticking strips this account's badges from ads for everyone
-		// (unlike the client-side "Discord role badges" config toggle, which only hides them locally).
+		// Server-side privacy: unticking strips this account's badges from ads for everyone.
 		JCheckBoxMenuItem showBadges = new JCheckBoxMenuItem("Show my role badges to others", badgesVisible);
 		showBadges.setToolTipText("When unticked, other players won't see your Discord role badges on your parties.");
 		showBadges.addActionListener(a -> setBadgeVisibility(showBadges.isSelected()));
@@ -583,11 +557,7 @@ public class OSPartyPanel extends PluginPanel
 		searchPanel.dispose();
 	}
 
-	/**
-	 * Re-render every view that draws Discord-role badges. Called by the plugin when the
-	 * "Discord role badges" config toggle flips, so the change applies immediately instead
-	 * of waiting for the next feed event or roster change.
-	 */
+	/** Re-render every view that draws Discord-role badges (called when the config toggle flips). */
 	public void refreshDiscordBadgeViews()
 	{
 		searchPanel.reapplyFilters();
@@ -595,10 +565,7 @@ public class OSPartyPanel extends PluginPanel
 		partyPanel.refresh();
 	}
 
-	/**
-	 * Restore a party the player was hosting before a restart (looked up by RSN).
-	 * No-op if already in a party or the ad has no live-room passphrase.
-	 */
+	/** Restore a party the player was hosting before a restart. No-op if already in a party. */
 	public void resumeHostedParty(Party party)
 	{
 		if (partyState.isInParty() || party == null || party.getPassphrase() == null)
@@ -647,10 +614,8 @@ public class OSPartyPanel extends PluginPanel
 
 		if (inParty && !wasInParty)
 		{
-			// Entered a party. Only an ADMITTED player gets a history row: hosts (and resumed hosts)
-			// are admitted immediately; a joiner is still a pending applicant here, so their record is
-			// deferred to syncHistoryRoster() and only happens if the host actually lets them in — a
-			// rejected application never appears in history.
+			// Entered a party. Only admitted players get a history row; a joiner's record is deferred
+			// to syncHistoryRoster() until the host admits them.
 			Party party = partyState.getCurrentParty();
 			currentHistoryPartyId = party == null ? null : party.getId();
 			historyRecorded = false;
@@ -666,8 +631,7 @@ public class OSPartyPanel extends PluginPanel
 		{
 			// Any in-flight host transfer is moot once we're out of the party.
 			hostTransferHandler.reset();
-			// Left / disbanded / party ended: stamp the still-present members (host included) as gone,
-			// so the concluded row no longer shows anyone as in the party. currentParty is already null.
+			// Left/disbanded: stamp still-present members as gone so the row shows nobody in the party.
 			if (historyRecorded && historyService.closeParty(currentHistoryPartyId, System.currentTimeMillis()))
 			{
 				historyPanel.refresh();
@@ -681,12 +645,7 @@ public class OSPartyPanel extends PluginPanel
 		repaint();
 	}
 
-	/**
-	 * Keep the current party's history row in step with the live roster so members who join or leave
-	 * after we entered are reflected (the row is otherwise a frozen entry-time snapshot). Fires on
-	 * every live-party change; {@link PartyHistoryService#updateRoster} only rewrites the file — and
-	 * we only refresh the panel — when the membership actually changed, so presence pings are cheap.
-	 */
+	/** Keep the current party's history row in step with the live roster (join/leave after entry). */
 	private void syncHistoryRoster()
 	{
 		if (!partyState.isInParty())
@@ -698,9 +657,7 @@ public class OSPartyPanel extends PluginPanel
 		{
 			return;
 		}
-		// Deferred record for joiners (see onPartyStateChanged): the host just admitted us, so the
-		// party becomes history-worthy now. Fires on the liveParty listener, right when the host's
-		// state message lands.
+		// Deferred record for joiners: the host just admitted us, so record now (see onPartyStateChanged).
 		if (!historyRecorded && liveParty.isLocalAdmitted())
 		{
 			historyService.record(party, partyState.isHost());
@@ -720,11 +677,7 @@ public class OSPartyPanel extends PluginPanel
 		createTab.setToolTipText("Party");
 	}
 
-	/**
-	 * Fetch an OSRS interface sprite and hand it to {@code apply} (on the EDT-adjacent sprite
-	 * callback, matching the rest of the panel) once loaded, scaled to fit the tab. No-op when
-	 * SpriteManager is unavailable — the drawn fallback icon already set on the tab stays.
-	 */
+	/** Fetch an OSRS sprite and set it as a tab icon once loaded. No-op when SpriteManager is null. */
 	private static void applyTabSprite(SpriteManager spriteManager, int spriteId, java.util.function.Consumer<ImageIcon> apply)
 	{
 		if (spriteManager == null)
@@ -740,20 +693,13 @@ public class OSPartyPanel extends PluginPanel
 		});
 	}
 
-	/**
-	 * Centre a sprite into the shared tab-icon box (shrinking to fit, never upscaling) so every tab
-	 * button stays the same size once the async sprite upgrade lands.
-	 */
+	/** Centre a sprite into the shared tab-icon box so every tab button stays the same size. */
 	private static ImageIcon toTabIcon(BufferedImage img)
 	{
 		return TabIcons.boxed(img);
 	}
 
-	/**
-	 * Fetch an item's inventory sprite (async) and set it as a tab icon once loaded, trimmed and
-	 * boxed to the uniform tab size. Marshals onto the EDT since {@link AsyncBufferedImage#onLoaded}
-	 * fires on the client thread. No-op when ItemManager is unavailable — the drawn fallback stays.
-	 */
+	/** Fetch an item sprite (async) and set it as a tab icon once loaded. No-op when ItemManager is null. */
 	private static void applyTabItem(ItemManager itemManager, int itemId, java.util.function.Consumer<ImageIcon> apply)
 	{
 		if (itemManager == null)
@@ -822,10 +768,7 @@ public class OSPartyPanel extends PluginPanel
 		tabGroup.repaint();
 	}
 
-	/**
-	 * Rebuild the tab bar for idle vs in-party. Idle: Search | Create | Favorites | Blocked | History.
-	 * In-party: Search | Party | Favorites | Blocked | History (Create hidden — one party at a time).
-	 */
+	/** Rebuild the tab bar for idle (Create shown) vs in-party (Party shown, Create hidden). */
 	private void rebuildTabs(boolean inParty)
 	{
 		tabGroup.remove(searchTab);

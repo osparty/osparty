@@ -31,19 +31,9 @@ import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
 
 /**
- * The plugin's single, session-long WebSocket to the party API. It does double duty:
- *
- * <ul>
- *   <li><b>Search read</b> — when a listener is registered ({@link #setSearchListener})
- *       it subscribes to the live party list and re-emits the full list on every change.</li>
- *   <li><b>Host write</b> — {@link #host}/{@link #update}/{@link #unhost} advertise and
- *       mutate the host's ad; the open connection itself is the ad's keep-alive (the server
- *       refreshes its TTL while we're connected), so there's no periodic heartbeat.</li>
- * </ul>
- *
- * <p>Reconnects with jittered backoff. On each (re)connect it re-subscribes (if searching)
- * and, if hosting, sends {@code resume} to reclaim the ad by id+key — so a brief drop keeps
- * the same party. Opened/closed once per plugin lifetime ({@link #start}/{@link #stop}).
+ * The plugin's single, session-long WebSocket to the party API: search reads and host writes both
+ * run over it, and the open connection is the host ad's keep-alive. Reconnects with jittered backoff,
+ * re-subscribing and resuming the hosted ad on each (re)connect.
  */
 @Slf4j
 @Singleton
@@ -57,8 +47,7 @@ public class PartySocket extends WebSocketListener
 	private final String url;
 
 	private final Map<String, Party> parties = new LinkedHashMap<>();
-	// Recreated on each start(): stop() shuts it down for good, so a disable/re-enable cycle needs a
-	// fresh executor to schedule reconnects onto.
+	// Recreated on each start(): stop() shuts the executor down for good.
 	private volatile ScheduledExecutorService reconnects;
 
 	private static ScheduledExecutorService newReconnectExecutor()
@@ -79,8 +68,7 @@ public class PartySocket extends WebSocketListener
 	private final Map<String, Consumer<Party>> pendingByHost = new ConcurrentHashMap<>();
 	// Host createVoiceChannel requests awaiting a voiceChannel reply (or a matching error), keyed by party id.
 	private final Map<String, VoicePending> pendingVoiceChannel = new ConcurrentHashMap<>();
-	// Discord account-link: the in-flight startDiscordLink URL request (one at a time), and getDiscordLink
-	// status polls keyed by accountHash.
+	// Discord link: the in-flight startDiscordLink request, and getDiscordLink polls keyed by accountHash.
 	private volatile LinkUrlPending pendingLinkUrl;
 	private final Map<Long, Consumer<DiscordLinkStatus>> pendingLinkStatus = new ConcurrentHashMap<>();
 	// Member requestVoiceAccess calls awaiting a voiceAccess ack (or matching error), keyed by party id.
@@ -103,8 +91,7 @@ public class PartySocket extends WebSocketListener
 	@Inject
 	PartySocket(OkHttpClient httpClient, Gson gson)
 	{
-		// A WebSocket must not inherit the REST read timeout; the ping keeps it alive
-		// through OkHttp and any proxy in between.
+		// A WebSocket must not inherit the REST read timeout; the ping keeps it alive.
 		this.client = httpClient.newBuilder()
 			.pingInterval(Duration.ofSeconds(20))
 			.readTimeout(Duration.ZERO)
@@ -201,10 +188,7 @@ public class PartySocket extends WebSocketListener
 		setSearchListener(listener, null);
 	}
 
-	/**
-	 * Register the live-list listener, scoping the server feed to a single activity ({@code null} =
-	 * all). Scoping cuts the server's fan-out to just the matching ads.
-	 */
+	/** Register the live-list listener, scoping the feed to one activity ({@code null} = all). */
 	public void setSearchListener(Consumer<List<Party>> listener, String activity)
 	{
 		subscribeActivity = blankToNull(activity);
@@ -216,10 +200,7 @@ public class PartySocket extends WebSocketListener
 		listener.accept(snapshot());
 	}
 
-	/**
-	 * Re-scope the live feed to a different activity ({@code null} = all) without re-registering the
-	 * listener. The server replies with a fresh snapshot for the new scope.
-	 */
+	/** Re-scope the live feed to a different activity ({@code null} = all); server sends a fresh snapshot. */
 	public void setSearchActivity(String activity)
 	{
 		String next = blankToNull(activity);
@@ -296,9 +277,8 @@ public class PartySocket extends WebSocketListener
 	}
 
 	/**
-	 * Push a host-initiated edit to the hosted ad. Unlike {@link #update}, this is a one-off
-	 * user action so it always sends (no dedup), and it resets {@code lastSentPatch} so the
-	 * next keep-alive heartbeat re-sends its live fields against the new baseline.
+	 * Push a host-initiated edit to the hosted ad. Unlike {@link #update} it always sends (no dedup) and
+	 * resets {@code lastSentPatch} so the next heartbeat re-sends live fields against the new baseline.
 	 */
 	public void edit(String id, String key, Object patch)
 	{
@@ -327,12 +307,9 @@ public class PartySocket extends WebSocketListener
 	}
 
 	/**
-	 * Host action: hand the ad to a new host in place, re-keying the credential to {@code newKey} so the
-	 * previous host's key stops working. Authorised by our current owner session (or {@code oldKey}).
-	 * {@code onSuccess} fires on the server's {@code transferred} ack; {@code onError} if the socket is
-	 * down or the server rejects it. We keep our local hosting state until the ack: only once the re-key
-	 * actually succeeds does the caller {@link #clearHosting} the ad it gave away, so a failed transfer
-	 * leaves us keeping the ad alive as before. Callbacks run on the socket reader thread.
+	 * Host action: hand the ad to a new host in place, re-keying the credential to {@code newKey}.
+	 * {@code onSuccess} fires on the {@code transferred} ack; we keep hosting state until then, so a
+	 * failed transfer leaves us keeping the ad alive as before.
 	 */
 	public void transferHost(String id, String oldKey, String newHost, String newKey,
 		Consumer<Party> onSuccess, Consumer<Throwable> onError)
@@ -347,9 +324,8 @@ public class PartySocket extends WebSocketListener
 	}
 
 	/**
-	 * Drop our local hosting state for {@code id} WITHOUT disbanding the ad (unlike {@link #unhost}).
-	 * Used by the old host after a transfer: the ad lives on under the new host, but we must stop
-	 * resuming/keeping it alive.
+	 * Drop local hosting state for {@code id} WITHOUT disbanding it (unlike {@link #unhost}); used by the
+	 * old host after a transfer so we stop resuming/keeping the ad alive.
 	 */
 	public void clearHosting(String id)
 	{
@@ -388,10 +364,8 @@ public class PartySocket extends WebSocketListener
 	}
 
 	/**
-	 * Host action: ask the backend's Discord bot to provision a voice channel for the hosted party.
-	 * {@code onUrl} receives the invite URL to share with members; {@code onError} fires if the socket
-	 * is down or the server reports failure. Idempotent server-side, so a retry just echoes the URL.
-	 * Callbacks run on the socket reader thread — marshal to the EDT in the UI.
+	 * Host action: ask the backend bot to provision a voice channel. {@code onUrl} gets the invite URL,
+	 * {@code onError} on failure. Idempotent. Callbacks run on the socket reader thread.
 	 */
 	public void createVoiceChannel(String id, String key, Consumer<String> onUrl, Consumer<Throwable> onError)
 	{
@@ -406,10 +380,7 @@ public class PartySocket extends WebSocketListener
 
 	// --- Discord account linking ---
 
-	/**
-	 * Begin an OAuth2 Discord link for {@code accountHash}: {@code onUrl} receives the authorize URL to
-	 * open in a browser, {@code onError} fires if the socket is down or linking is disabled server-side.
-	 */
+	/** Begin an OAuth2 Discord link for {@code accountHash}: {@code onUrl} gets the authorize URL, else {@code onError}. */
 	public void startDiscordLink(long accountHash, Consumer<String> onUrl, Consumer<Throwable> onError)
 	{
 		if (!connected)
@@ -443,10 +414,7 @@ public class PartySocket extends WebSocketListener
 		send(gson.toJson(new AccountHashFrame("unlinkDiscord", accountHash)));
 	}
 
-	/**
-	 * Badge privacy: hide (or re-show) {@code accountHash}'s Discord-role badges on party ads for
-	 * everyone. The server acks with the refreshed link status, delivered to {@code onResult}.
-	 */
+	/** Badge privacy: hide/re-show {@code accountHash}'s Discord-role badges; {@code onResult} gets refreshed status. */
 	public void setBadgeVisibility(long accountHash, boolean visible, Consumer<DiscordLinkStatus> onResult)
 	{
 		if (!connected)
@@ -475,9 +443,8 @@ public class PartySocket extends WebSocketListener
 	}
 
 	/**
-	 * Member self-service: ask the backend to grant our per-user access to the party's voice channel
-	 * before we open the invite (covers joining/linking after the channel was made). {@code onGranted}
-	 * fires on the ack; {@code onError} if the socket is down or access is refused.
+	 * Member self-service: grant our per-user access to the party's voice channel before opening the
+	 * invite. {@code onGranted} fires on the ack; {@code onError} if refused or offline.
 	 */
 	public void requestVoiceAccess(String id, long accountHash, Runnable onGranted, Consumer<Throwable> onError)
 	{
@@ -626,11 +593,7 @@ public class PartySocket extends WebSocketListener
 		scheduleReconnect();
 	}
 
-	/**
-	 * Apply a whole tick's changes from a {@code batch} frame: full {@code created} parties are
-	 * upserted, {@code updated} deltas are merged into the party we already hold, and {@code removed}
-	 * ids are dropped — all under one lock, then a single re-emit of the list.
-	 */
+	/** Apply a {@code batch} frame's created/updated/removed changes under one lock, then a single re-emit. */
 	private void applyBatch(Frame frame)
 	{
 		boolean changed = false;
@@ -710,8 +673,7 @@ public class PartySocket extends WebSocketListener
 
 	private void handleError(String id, String detail)
 	{
-		// An error carrying an id may be the rejection of a pending voice-channel request; route it there
-		// first so its onError fires (rather than being mistaken for a host rejection or just logged).
+		// An id'd error may reject a pending voice/access/transfer request; route it there first.
 		if (id != null)
 		{
 			VoicePending voice = pendingVoiceChannel.remove(id);
@@ -733,8 +695,7 @@ public class PartySocket extends WebSocketListener
 				return;
 			}
 		}
-		// Link errors (e.g. "linking disabled", "missing accountHash") carry no id; if a link URL
-		// request is in flight, route the failure to it rather than mistaking it for a host rejection.
+		// Link errors carry no id; route to an in-flight link request before a host rejection.
 		LinkUrlPending link = pendingLinkUrl;
 		if (link != null)
 		{
@@ -947,8 +908,7 @@ public class PartySocket extends WebSocketListener
 		String detail;
 		// "voiceChannel"/"discordLinkUrl" frame: an invite or OAuth authorize URL.
 		String url;
-		// "discordLink" frame: the linked Discord username + the echoed accountHash the status is for,
-		// plus the account's badge-privacy preference (null on older servers = visible).
+		// "discordLink" frame: linked username, echoed accountHash, and badge-privacy pref (null = visible).
 		String username;
 		Long accountHash;
 		Boolean badgesVisible;

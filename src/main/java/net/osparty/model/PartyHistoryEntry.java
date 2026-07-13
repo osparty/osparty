@@ -20,7 +20,6 @@ public class PartyHistoryEntry
 	/** The advertised party id, used to de-duplicate a party across restarts. May be {@code null}. */
 	private String partyId;
 
-	/** Activity id (see {@link net.osparty.model.Activity#getId()}). */
 	private String activity;
 
 	/** The party host's name (the player's own name when {@link #hosted}). */

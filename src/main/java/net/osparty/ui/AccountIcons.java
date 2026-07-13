@@ -5,10 +5,7 @@ import javax.swing.ImageIcon;
 import net.runelite.api.vars.AccountType;
 import net.runelite.client.util.ImageUtil;
 
-/**
- * The in-game account-type badges (ironman variants), bundled as PNGs so we can
- * show the real icon next to a player's name instead of a text tag.
- */
+/** In-game account-type badges (ironman variants), bundled as PNGs. */
 final class AccountIcons
 {
 	/** Upper bound on either dimension; sources are already ~10x13, so they render near-native. */
@@ -33,9 +30,7 @@ final class AccountIcons
 			{
 				return null;
 			}
-			// Scale to fit within MAX_SIZE while preserving the source aspect ratio — a fixed
-			// square resize stretched these portrait (10x13) badges wide and oversized them
-			// versus the host crown. Sources are already small, so this is usually near-native.
+			// Scale to fit MAX_SIZE preserving aspect ratio (a square resize stretched these portrait badges).
 			double scale = Math.min(1.0,
 				Math.min((double) MAX_SIZE / img.getWidth(), (double) MAX_SIZE / img.getHeight()));
 			if (scale >= 1.0)

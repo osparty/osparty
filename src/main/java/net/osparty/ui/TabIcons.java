@@ -10,14 +10,8 @@ import javax.swing.ImageIcon;
 import net.runelite.client.util.ImageUtil;
 
 /**
- * Icons for the side-panel's tab bar (Search / Party / Favorites / History / Edit),
- * drawn at load time with {@link Graphics2D} rather than shipped as assets or taken
- * from OS fonts/emoji. Drawing them ourselves keeps them crisp at this size and, more
- * importantly, makes them render identically on every platform — unlike glyph fonts,
- * whose coverage varies by OS. This mirrors {@link StatusIcons}.
- *
- * <p>Using icon tabs instead of text tabs keeps all tabs visible in the narrow sidebar
- * (four/five text labels overflow and drop the last tab).
+ * Tab-bar icons drawn at load time with {@link Graphics2D} (not assets/fonts) so they render
+ * identically on every platform. Mirrors {@link StatusIcons}.
  */
 final class TabIcons
 {
@@ -30,14 +24,8 @@ final class TabIcons
 	static final ImageIcon BLOCK = boxed(block());
 
 	/**
-	 * Shared canvas size (px) every tab icon is centred into, so all tabs end up the same size
-	 * regardless of the source glyph's dimensions (drawn 16px, the 17×18 party PNG, and OSRS
-	 * sprites of varying sizes). {@link MaterialTab} sizes itself to its icon plus fixed border
-	 * padding, so a uniform icon box gives uniform tab backgrounds.
-	 *
-	 * <p>Kept at 16 (the smallest of the source glyphs): larger and the extra per-tab width tips
-	 * the five-tab in-party bar over the narrow sidebar width, so {@link java.awt.FlowLayout} wraps
-	 * the last tab (History) onto a hidden second row.
+	 * Shared canvas size (px) every tab icon is centred into, so all tabs render the same size.
+	 * Kept at 16: larger tips the five-tab in-party bar over the sidebar width, wrapping a tab off-screen.
 	 */
 	static final int BOX = 16;
 
@@ -45,11 +33,9 @@ final class TabIcons
 	private static final int SIZE = 16;
 	/** Neutral light grey for the transient fallbacks shown only until a sprite loads. */
 	private static final Color INK = new Color(0xC8, 0xC8, 0xC8);
-	/** OSRS interface gold, for the permanently-drawn tabs (Party/History) so they sit next to the
-	 *  yellow Friends smiley and gold star without clashing. */
+	/** OSRS interface gold for the permanently-drawn tabs (Party/History). */
 	private static final Color GOLD = new Color(0xEC, 0xC1, 0x3B);
-	/** Shading tones for the hourglass (History) so it reads as a game item, not line-art:
-	 *  a darker outline and near-black sand. */
+	/** Shading tones for the hourglass (History): darker outline and near-black sand. */
 	private static final Color RIM = new Color(0x7A, 0x5A, 0x12);
 	private static final Color HAND = new Color(0x3A, 0x2A, 0x10);
 
@@ -57,11 +43,7 @@ final class TabIcons
 	{
 	}
 
-	/**
-	 * Centre a glyph into the shared {@link #BOX}×{@link #BOX} transparent canvas (shrinking it to
-	 * fit first if it's larger), so every tab icon reports the same dimensions and the tab buttons
-	 * all render at the same size. Also used for the async OSRS sprite upgrades.
-	 */
+	/** Centre a glyph into the shared {@link #BOX}×{@link #BOX} canvas so every tab icon is the same size. */
 	static ImageIcon boxed(BufferedImage img)
 	{
 		double scale = Math.min(1.0, Math.min((double) BOX / img.getWidth(), (double) BOX / img.getHeight()));
@@ -76,11 +58,7 @@ final class TabIcons
 		return new ImageIcon(canvas);
 	}
 
-	/**
-	 * Like {@link #boxed}, but first crops fully-transparent margins so a sparse source fills the tab
-	 * box instead of shrinking to a dot. Used for {@link net.runelite.client.game.ItemManager} item
-	 * sprites, which sit in a 36×32 frame with lots of empty space around the item.
-	 */
+	/** Like {@link #boxed}, but crops transparent margins first so a sparse item sprite fills the box. */
 	static ImageIcon boxedTrimmed(BufferedImage img)
 	{
 		int minX = img.getWidth(), minY = img.getHeight(), maxX = -1, maxY = -1;
@@ -143,8 +121,7 @@ final class TabIcons
 		Graphics2D g = img.createGraphics();
 		hints(g);
 		g.setColor(GOLD);
-		// Two shoulder domes (a front pair and a raised middle figure behind) plus three heads,
-		// so the silhouette reads as a small crowd rather than one wide figure.
+		// Two shoulder domes plus three heads so the silhouette reads as a small crowd.
 		g.fillArc(4, 8, 8, 9, 0, 180);    // centre/back figure's shoulders, raised
 		g.fillArc(0, 11, 7, 8, 0, 180);   // left figure
 		g.fillArc(9, 11, 7, 8, 0, 180);   // right figure
@@ -175,8 +152,7 @@ final class TabIcons
 		return img;
 	}
 
-	/** A gold hourglass — the "time / history" symbol. Shaded (gold caps + bulbs, dark outline and
-	 *  sand) so it reads as a game item next to the detailed OSRS sprites, not flat line-art. */
+	/** A gold shaded hourglass — the "time / history" symbol. */
 	private static BufferedImage history()
 	{
 		BufferedImage img = base();

@@ -5,12 +5,7 @@ import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 import net.runelite.client.party.messages.PartyMemberMessage;
 
-/**
- * A party ready-check signal. Anyone can {@link Type#START} one; each member
- * then broadcasts {@link Type#READY} when they ready up. The starter counts as
- * ready by virtue of starting it. All members share one active check, keyed by
- * {@link #checkId}.
- */
+/** A party ready-check signal: anyone {@link Type#START}s, each member {@link Type#READY}s, keyed by {@link #checkId}. */
 @Data
 @NoArgsConstructor
 @EqualsAndHashCode(callSuper = true)
@@ -23,8 +18,7 @@ public class ReadyCheckMessage extends PartyMemberMessage
 		READY,
 	}
 
-	// NB: not named "type" - RuneLite's party serialization reserves a "type" field
-	// as its message-class discriminator, and a collision throws at send time.
+	// Not "type": RuneLite's party serialization reserves that field as its class discriminator.
 	private Type kind;
 	private long checkId;
 
