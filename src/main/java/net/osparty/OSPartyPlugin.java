@@ -15,6 +15,7 @@ import net.osparty.party.PartyStateMessage;
 import net.osparty.party.PingMessage;
 import net.osparty.party.PlayerUpdate;
 import net.osparty.party.ReadyCheckMessage;
+import net.osparty.party.SpecDrainMessage;
 import net.osparty.ui.OSPartyPanel;
 import net.osparty.ui.ApplicantOverlay;
 import net.osparty.ui.FcRequestOverlay;
@@ -41,8 +42,11 @@ import net.runelite.api.Skill;
 import net.runelite.api.Tile;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.CommandExecuted;
+import net.runelite.api.events.FakeXpDrop;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
+import net.runelite.api.events.HitsplatApplied;
+import net.runelite.api.events.NpcDespawned;
 import net.runelite.api.events.VarbitChanged;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.StatChanged;
@@ -69,9 +73,7 @@ import net.runelite.client.party.events.UserJoin;
 import net.runelite.client.party.events.UserPart;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
-import net.runelite.client.plugins.PluginInstantiationException;
 import net.runelite.client.plugins.PluginManager;
-import net.runelite.client.plugins.specialcounter.SpecialCounterUpdate;
 import net.runelite.client.task.Schedule;
 import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
@@ -138,6 +140,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 	@Inject
 	private DefenceTracker defenceTracker;
+
+	@Inject
+	private SpecialAttackTracker specTracker;
 
 	@Inject
 	private CoxRaidScanner coxRaidScanner;
@@ -295,12 +300,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			ImageUtil.resizeImage(ImageUtil.loadImageResource(getClass(), "/net/osparty/icons/learner.png"), 12, 12),
 			ImageUtil.resizeImage(ImageUtil.loadImageResource(getClass(), "/net/osparty/icons/teacher.png"), 12, 12));
 		overlayManager.add(playerMarkerOverlay);
-		// The defence tracker reads RuneLite's Special Attack Counter events, which
-		// only fire while that plugin is running, so make sure it's enabled.
-		enablePluginByName("Special Attack Counter");
-		// We hop to a party member's world by firing World Hopper's ::hop command
-		// (see hopTo), so that plugin must be running to receive it.
-		enablePluginByName("World Hopper");
 
 		// Hotkey + click to ping a tile for the party.
 		keyManager.registerKeyListener(pingHotkeyListener);
@@ -382,6 +381,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			defenceBox = null;
 		}
 		defenceTracker.reset();
+		specTracker.reset();
 		if (worldPinger != null)
 		{
 			worldPinger.shutdown();
@@ -422,6 +422,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			coxRaidScanner.onInRaidChanged(event.getValue());
 		}
+		specTracker.onVarbitChanged(event);
 	}
 
 	@Subscribe
@@ -507,7 +508,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// Push pending host state / our own live snapshot (client thread).
 		liveParty.tick();
 
-		// Apply this tick's defence-draining specs and clear dead targets.
+		// Resolve this tick's local special attack, then apply all queued drains
+		// (local and party members') and clear dead targets.
+		specTracker.onGameTick();
 		defenceTracker.onGameTick();
 		updateDefenceInfoBox();
 	}
@@ -529,35 +532,29 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	}
 
 	@Subscribe
-	public void onSpecialCounterUpdate(SpecialCounterUpdate event)
+	public void onHitsplatApplied(HitsplatApplied event)
 	{
-		// Fired by RuneLite's Special Attack Counter for our own and party members'
-		// special attacks; the tracker turns the draining ones into a defence figure.
-		defenceTracker.queue(event);
+		specTracker.onHitsplatApplied(event);
 	}
 
-	/** Enable a sibling RuneLite plugin by display name (used for a hard dependency). */
-	private void enablePluginByName(String name)
+	@Subscribe
+	public void onFakeXpDrop(FakeXpDrop event)
 	{
-		try
-		{
-			for (Plugin plugin : pluginManager.getPlugins())
-			{
-				if (name.equals(plugin.getName()))
-				{
-					if (!pluginManager.isPluginEnabled(plugin))
-					{
-						pluginManager.setPluginEnabled(plugin, true);
-						pluginManager.startPlugin(plugin);
-					}
-					return;
-				}
-			}
-		}
-		catch (PluginInstantiationException e)
-		{
-			log.warn("OSParty: could not enable '{}' plugin", name, e);
-		}
+		specTracker.onFakeXpDrop(event);
+	}
+
+	@Subscribe
+	public void onNpcDespawned(NpcDespawned event)
+	{
+		specTracker.onNpcDespawned(event);
+	}
+
+	@Subscribe
+	public void onSpecDrainMessage(SpecDrainMessage event)
+	{
+		// A party member landed a defence-draining special attack; fold it into the
+		// tracker so our defence figure reflects the whole party's draining.
+		specTracker.onSpecDrain(event);
 	}
 
 	@Subscribe
@@ -571,6 +568,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	public void onStatChanged(StatChanged event)
 	{
 		liveParty.markLocalDirty();
+		specTracker.onStatChanged(event);
 	}
 
 	@Subscribe
@@ -830,14 +828,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		return accountHash;
 	}
 
-	/**
-	 * Hop the client to {@code worldNum} (a party member's world). Safe to call
-	 * from the EDT. At the login screen we can switch worlds directly; while logged
-	 * in we delegate the hop to RuneLite's World Hopper plugin by firing its
-	 * {@code ::hop} command, rather than calling {@code client.hopToWorld} ourselves
-	 * (that method is no longer permitted for plugin-hub plugins). World Hopper is
-	 * enabled on startup (see {@link #startUp()}) so its command handler is present.
-	 */
+
 	public void hopTo(int worldNum)
 	{
 		if (worldNum <= 0 || client.getWorld() == worldNum)
@@ -859,10 +850,29 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			return;
 		}
 
+		if (!isPluginEnabled("World Hopper"))
+		{
+			gameMessage("Enable RuneLite's World Hopper plugin to hop to a party member's world.");
+			return;
+		}
+
 		// Fire World Hopper's ::hop command; it validates the world, opens the
 		// switcher and performs the hop the same way a manual ::hop would.
 		clientThread.invoke(() ->
 			eventBus.post(new CommandExecuted("hop", new String[]{Integer.toString(worldNum)})));
+	}
+
+	/** @return true if a RuneLite plugin with this display name is present and running. */
+	private boolean isPluginEnabled(String name)
+	{
+		for (Plugin plugin : pluginManager.getPlugins())
+		{
+			if (name.equals(plugin.getName()))
+			{
+				return pluginManager.isPluginEnabled(plugin);
+			}
+		}
+		return false;
 	}
 
 	private World toRsWorld(net.runelite.http.api.worlds.World source)

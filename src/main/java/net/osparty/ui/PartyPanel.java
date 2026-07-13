@@ -382,9 +382,9 @@ class PartyPanel extends JPanel
 
 		boolean host = partyState.isHost();
 		Activity activity = Activity.fromId(party.getActivity());
-		String activityName = activity != null
+		String activityName = (activity != null
 			? activity.displayName(party.isHardMode(), party.getInvocation())
-			: party.getActivity();
+			: party.getActivity()) + PartyCardPanel.coxScaleSuffix(party);
 
 		JLabel header = new JLabel(host
 			? "Your " + activityName + " party"

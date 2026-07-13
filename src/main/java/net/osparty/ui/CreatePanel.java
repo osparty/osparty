@@ -109,6 +109,9 @@ class CreatePanel extends JPanel implements Scrollable
 	private JPanel hardModeRow;
 	private final JSpinner invocationSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 600, 5));
 	private JPanel invocationRow;
+	/** Chambers of Xeric team-size scaling, e.g. "3+4"; free text (host-defined format). */
+	private final JTextField coxScaleField = new JTextField();
+	private JPanel coxScaleRow;
 	private final JButton createButton = new JButton("Create party");
 	private final JLabel statusLabel = new JLabel();
 
@@ -264,6 +267,38 @@ class CreatePanel extends JPanel implements Scrollable
 		invocationRow = field("Invocation level", invocationSpinner);
 		invocationRow.setVisible(false);
 		add(invocationRow);
+
+		// Chambers of Xeric only: the team-size scaling the raid is run at, e.g. a 3-man
+		// scaled to 4 is written "3+4". Free text (the host's own notation), constrained to
+		// digits and '+' so it stays a compact scale string.
+		coxScaleField.setToolTipText("Team-size scaling, e.g. 3+4");
+		((AbstractDocument) coxScaleField.getDocument()).setDocumentFilter(new DocumentFilter()
+		{
+			private boolean allowed(String text)
+			{
+				return text.chars().allMatch(c -> (c >= '0' && c <= '9') || c == '+');
+			}
+
+			@Override
+			public void insertString(FilterBypass fb, int offset, String string,
+				javax.swing.text.AttributeSet attr) throws javax.swing.text.BadLocationException
+			{
+				replace(fb, offset, 0, string, attr);
+			}
+
+			@Override
+			public void replace(FilterBypass fb, int offset, int length, String text,
+				javax.swing.text.AttributeSet attr) throws javax.swing.text.BadLocationException
+			{
+				if (text == null || (allowed(text) && fb.getDocument().getLength() - length + text.length() <= 7))
+				{
+					super.replace(fb, offset, length, text, attr);
+				}
+			}
+		});
+		coxScaleRow = field("Scale (e.g. 3+4)", coxScaleField);
+		coxScaleRow.setVisible(false);
+		add(coxScaleRow);
 
 		// Learner-raid tagging (raids only): ticking either Learner or Teacher marks
 		// the ad as a learner raid; neither leaves it a normal raid.
@@ -664,6 +699,13 @@ class CreatePanel extends JPanel implements Scrollable
 			invocationSpinner.setValue(0);
 		}
 
+		// Team-size scaling is a Chambers of Xeric concept only.
+		coxScaleRow.setVisible(isCox);
+		if (!isCox)
+		{
+			coxScaleField.setText("");
+		}
+
 		// Learner-raid tagging only applies to the three raids.
 		boolean isRaid = activity.isRaid();
 		learnerRow.setVisible(isRaid);
@@ -683,7 +725,7 @@ class CreatePanel extends JPanel implements Scrollable
 
 		// Hide a section header when none of its rows apply to this activity.
 		boolean anyDifficulty = includeLayoutRow.isVisible() || hardModeRow.isVisible()
-			|| invocationRow.isVisible() || learnerRow.isVisible();
+			|| invocationRow.isVisible() || coxScaleRow.isVisible() || learnerRow.isVisible();
 		difficultyHeader.setVisible(anyDifficulty);
 		rolesHeader.setVisible(hasRoles);
 
@@ -1005,6 +1047,8 @@ class CreatePanel extends JPanel implements Scrollable
 		// Raid difficulty: CM/HMT toggle (CoX/ToB) or invocation level (ToA).
 		boolean hardMode = activity.hasHardMode() && !activity.usesInvocation() && hardModeCheck.isSelected();
 		int invocation = activity.usesInvocation() ? (Integer) invocationSpinner.getValue() : 0;
+		// Chambers of Xeric team-size scaling (e.g. "3+4"); empty for other activities.
+		String coxScale = "cox".equals(activityId) ? coxScaleField.getText().trim() : "";
 
 		// Learner-raid tagging (raids only): either flag marks the ad as a learner raid.
 		boolean learner = activity.isRaid() && learnerCheck.isSelected();
@@ -1038,8 +1082,8 @@ class CreatePanel extends JPanel implements Scrollable
 		liveParty.generatePassphrase(passphrase -> {
 			PartyRequest request = new PartyRequest(
 				activityId, player, hostAccountHash, advertisedDescription, capacity, world, minKc, minHardKc,
-				passphrase, privateParty, lootRule, ironmanOnly, hostAccountType, hardMode, invocation, requiredRoles,
-				hostRole, learner, teacher);
+				passphrase, privateParty, lootRule, ironmanOnly, hostAccountType, hardMode, invocation, coxScale,
+				requiredRoles, hostRole, learner, teacher);
 
 			partyService.createParty(request, hostKey,
 				party -> SwingUtilities.invokeLater(
@@ -1252,6 +1296,7 @@ class CreatePanel extends JPanel implements Scrollable
 		preset.setIncludeLayout(partyState.isAdvertiseLayout());
 		preset.setHardMode(party.isHardMode());
 		preset.setInvocation(party.getInvocation());
+		preset.setCoxScale(party.getCoxScale());
 		preset.setLearner(party.isLearner());
 		preset.setTeacher(party.isTeacher());
 		preset.setRequiredRoles(party.getRequiredRoles());
@@ -1306,6 +1351,7 @@ class CreatePanel extends JPanel implements Scrollable
 		boolean advertiseLayout = includeLayoutCheck.isSelected() && "cox".equals(activity.getId());
 		boolean hardMode = activity.hasHardMode() && !activity.usesInvocation() && hardModeCheck.isSelected();
 		int invocation = activity.usesInvocation() ? (Integer) invocationSpinner.getValue() : 0;
+		String coxScale = "cox".equals(activity.getId()) ? coxScaleField.getText().trim() : "";
 		boolean learner = activity.isRaid() && learnerCheck.isSelected();
 		boolean teacher = activity.isRaid() && teacherCheck.isSelected();
 
@@ -1319,7 +1365,7 @@ class CreatePanel extends JPanel implements Scrollable
 		saveLastPreset(captureForm(null));
 
 		PartyEditRequest edit = new PartyEditRequest(description, capacity, world, minKc, minHardKc, lootRule,
-			privateParty, ironmanOnly, invocation, hardMode, selection.requiredRoles, selection.hostRole,
+			privateParty, ironmanOnly, invocation, hardMode, coxScale, selection.requiredRoles, selection.hostRole,
 			learner, teacher);
 
 		createButton.setEnabled(false);
@@ -1349,6 +1395,7 @@ class CreatePanel extends JPanel implements Scrollable
 		party.setIronmanOnly(edit.isIronmanOnly());
 		party.setInvocation(edit.getInvocation());
 		party.setHardMode(edit.isHardMode());
+		party.setCoxScale(edit.getCoxScale());
 		party.setRequiredRoles(edit.getRequiredRoles());
 		party.setHostRole(edit.getHostRole());
 		party.setLearner(edit.isLearner());
@@ -1544,6 +1591,7 @@ class CreatePanel extends JPanel implements Scrollable
 		preset.setIncludeLayout(includeLayoutCheck.isSelected());
 		preset.setHardMode(hardModeCheck.isSelected());
 		preset.setInvocation((Integer) invocationSpinner.getValue());
+		preset.setCoxScale(coxScaleField.getText().trim());
 		preset.setLearner(learnerCheck.isSelected());
 		preset.setTeacher(teacherCheck.isSelected());
 		if (activity != null && activity.hasRoles())
@@ -1587,6 +1635,7 @@ class CreatePanel extends JPanel implements Scrollable
 		includeLayoutCheck.setSelected(preset.isIncludeLayout());
 		hardModeCheck.setSelected(preset.isHardMode());
 		invocationSpinner.setValue(Math.max(0, Math.min(600, preset.getInvocation())));
+		coxScaleField.setText(preset.getCoxScale() != null ? preset.getCoxScale() : "");
 		learnerCheck.setSelected(preset.isLearner());
 		teacherCheck.setSelected(preset.isTeacher());
 		applyActivityBounds(); // refresh row visibility (and rebuild role controls)

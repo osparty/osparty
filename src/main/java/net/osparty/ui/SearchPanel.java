@@ -1777,6 +1777,7 @@ class SearchPanel extends PartyCardPanel
 			.append('L').append(party.getLayout() == null ? "" : party.getLayout())
 			.append('R').append(neededRolesOf(party) == null ? "" : neededRolesOf(party))
 			.append('d').append(party.isHardMode() ? "h" : "").append(party.getInvocation())
+			.append('c').append(party.getCoxScale() == null ? "" : party.getCoxScale())
 			// Host-editable card content, so an edit invalidates the cached render.
 			.append('K').append(party.getMinKillCount()).append('/').append(party.getMinHardModeKillCount())
 			.append('o').append(party.getLootRule() == null ? "" : party.getLootRule())

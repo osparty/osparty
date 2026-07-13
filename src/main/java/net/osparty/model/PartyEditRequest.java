@@ -26,6 +26,8 @@ public class PartyEditRequest
 	private boolean ironmanOnly;
 	private int invocation;
 	private boolean hardMode;
+	/** Chambers of Xeric team-size scaling (e.g. "3+4"); empty to clear it or when not a CoX ad. */
+	private String coxScale;
 
 	/** A multiset of role ids; null when the activity has no roles. */
 	private List<String> requiredRoles;
