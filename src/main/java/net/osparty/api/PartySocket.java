@@ -75,6 +75,13 @@ public class PartySocket extends WebSocketListener
 	private final Map<String, VoicePending> pendingVoiceAccess = new ConcurrentHashMap<>();
 	// Host transferHost calls awaiting a transferred ack (or matching error), keyed by party id.
 	private final Map<String, VoicePending> pendingTransfer = new ConcurrentHashMap<>();
+	// Outbound invites awaiting an inviteAck, keyed by the normalised target name.
+	private final Map<String, Consumer<Boolean>> pendingInvite = new ConcurrentHashMap<>();
+	// Where inbound "invited" pushes are delivered (the plugin registers this at startup).
+	private volatile Consumer<PartyInvite> inviteListener;
+	// Our own identity, resent on each (re)connect so the server can route invites to us.
+	private volatile long identityHash;
+	private volatile String identityName;
 	private volatile boolean started;
 	private volatile boolean closed;
 	private volatile boolean connected;
@@ -457,6 +464,44 @@ public class PartySocket extends WebSocketListener
 		send(gson.toJson(new VoiceAccessFrame(id, accountHash)));
 	}
 
+	// --- Invites ---
+
+	/**
+	 * Register our OSRS identity so the server can route incoming invites to this connection. Remembered
+	 * and re-sent on every reconnect. Safe to call repeatedly (e.g. once per login).
+	 */
+	public void identify(long accountHash, String name)
+	{
+		identityHash = accountHash;
+		identityName = name;
+		if (connected)
+		{
+			send(gson.toJson(new IdentifyFrame(accountHash, name)));
+		}
+	}
+
+	/** Where inbound invites are delivered; replaces any previous listener. */
+	public void setInviteListener(Consumer<PartyInvite> listener)
+	{
+		this.inviteListener = listener;
+	}
+
+	/**
+	 * Invite an online friend to a party we're in. {@code onResult} gets true if the invite reached the
+	 * friend's client, false if they weren't online in OSParty (or we're offline).
+	 */
+	public void invite(String partyId, String fromName, long fromAccountHash, String target,
+		Consumer<Boolean> onResult)
+	{
+		if (partyId == null || target == null || !connected)
+		{
+			onResult.accept(false);
+			return;
+		}
+		pendingInvite.put(normalizeName(target), onResult);
+		send(gson.toJson(new InviteFrame(partyId, fromName, fromAccountHash, target)));
+	}
+
 	// --- WebSocket callbacks ---
 
 	@Override
@@ -472,6 +517,10 @@ public class PartySocket extends WebSocketListener
 		if (id != null)
 		{
 			send(resumeFrame(id, hostingKey));
+		}
+		if (identityHash != 0 || identityName != null)
+		{
+			send(gson.toJson(new IdentifyFrame(identityHash, identityName)));
 		}
 	}
 
@@ -557,6 +606,12 @@ public class PartySocket extends WebSocketListener
 				break;
 			case "presence":
 				onlineUsers = frame.online;
+				break;
+			case "invited":
+				handleInvited(frame.party, frame.from);
+				break;
+			case "inviteAck":
+				completeInviteAck(frame.id, frame.delivered);
 				break;
 			default:
 				break;
@@ -771,6 +826,34 @@ public class PartySocket extends WebSocketListener
 		}
 	}
 
+	private void handleInvited(Party party, String from)
+	{
+		Consumer<PartyInvite> listener = inviteListener;
+		if (listener != null && party != null)
+		{
+			listener.accept(new PartyInvite(party, from));
+		}
+	}
+
+	private void completeInviteAck(String target, Boolean delivered)
+	{
+		if (target == null)
+		{
+			return;
+		}
+		Consumer<Boolean> callback = pendingInvite.remove(normalizeName(target));
+		if (callback != null)
+		{
+			callback.accept(delivered != null && delivered);
+		}
+	}
+
+	/** Normalise an OSRS name the same way the server does: strip the nbsp Jagex uses, trim, lowercase. */
+	private static String normalizeName(String name)
+	{
+		return name == null ? null : name.replace('\u00A0', ' ').trim().toLowerCase();
+	}
+
 	private void completeLinkStatus(Long accountHash, String discordId, String username, Boolean badgesVisible)
 	{
 		if (accountHash == null)
@@ -918,6 +1001,10 @@ public class PartySocket extends WebSocketListener
 		String[] removed;
 		// "presence" frame: the global count of connected plugin clients.
 		int online;
+		// "invited" frame: who sent the invite (host name when the sender didn't identify).
+		String from;
+		// "inviteAck" frame: whether the invite reached the target's client.
+		Boolean delivered;
 	}
 
 	// Outbound frame shapes (Gson omits null fields, so a patch carries only what's set).
@@ -1075,6 +1162,38 @@ public class PartySocket extends WebSocketListener
 		{
 			this.id = id;
 			this.accountHash = accountHash;
+		}
+	}
+
+	/** Outbound identity registration so the server can route invites to this connection. */
+	private static final class IdentifyFrame
+	{
+		final String type = "identify";
+		final long accountHash;
+		final String name;
+
+		IdentifyFrame(long accountHash, String name)
+		{
+			this.accountHash = accountHash;
+			this.name = name;
+		}
+	}
+
+	/** Outbound invite of {@code target} to a party we're in; {@code name} is our own (sender) name. */
+	private static final class InviteFrame
+	{
+		final String type = "invite";
+		final String id;
+		final String name;
+		final long accountHash;
+		final String target;
+
+		InviteFrame(String id, String name, long accountHash, String target)
+		{
+			this.id = id;
+			this.name = name;
+			this.accountHash = accountHash;
+			this.target = target;
 		}
 	}
 

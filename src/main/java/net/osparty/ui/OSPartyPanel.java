@@ -90,6 +90,10 @@ public class OSPartyPanel extends PluginPanel
 	private final PartyState partyState;
 	private final LiveParty liveParty;
 	private final PartyService partyService;
+	/** The backend party we're in (host or member), mirrored for off-EDT reads (invite menu); null when none. */
+	private volatile Party contextParty;
+	/** Run when the side panel is opened (used to stop the sidebar invite blink). */
+	private volatile Runnable onActivated;
 	private final HostTransferHandler hostTransferHandler;
 	private final LongSupplier accountHashSupplier;
 	private final JLabel activeUsersLabel = new JLabel();
@@ -557,6 +561,29 @@ public class OSPartyPanel extends PluginPanel
 		searchPanel.dispose();
 	}
 
+	/** The backend party we're currently in (host or member), or null. Safe to read off the EDT. */
+	public Party currentBackendParty()
+	{
+		return contextParty;
+	}
+
+	/** Register a callback invoked when the side panel is opened (used to clear the invite blink). */
+	public void setOnActivated(Runnable onActivated)
+	{
+		this.onActivated = onActivated;
+	}
+
+	@Override
+	public void onActivate()
+	{
+		super.onActivate();
+		Runnable callback = onActivated;
+		if (callback != null)
+		{
+			callback.run();
+		}
+	}
+
 	/** Re-render every view that draws Discord-role badges (called when the config toggle flips). */
 	public void refreshDiscordBadgeViews()
 	{
@@ -586,6 +613,8 @@ public class OSPartyPanel extends PluginPanel
 	private void onPartyStateChanged()
 	{
 		boolean inParty = partyState.isInParty();
+		// Mirror the current backend party so the in-game invite menu (client thread) can read it safely.
+		contextParty = partyState.getCurrentParty();
 
 		// The party ended while editing — drop edit mode (and its tab layout) first.
 		if (!inParty && editing)

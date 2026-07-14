@@ -104,6 +104,22 @@ public interface PartyService
 	 */
 	void requestVoiceAccess(String partyId, long accountHash, Runnable onGranted, Consumer<Throwable> onError);
 
+	/**
+	 * Register our OSRS identity so the backend can route incoming invites to us. Remembered and re-sent
+	 * across reconnects; safe to call repeatedly (e.g. once per login).
+	 */
+	void identify(long accountHash, String name);
+
+	/**
+	 * Invite an online friend to a party we're in. {@code onDelivered} gets true if the invite reached the
+	 * friend's client, false if they weren't online in OSParty (or we're offline). May fire off the EDT.
+	 */
+	void inviteFriend(String partyId, String fromName, long fromAccountHash, String targetName,
+		Consumer<Boolean> onDelivered);
+
+	/** Register where inbound invites are delivered; replaces any previous listener. May fire off the EDT. */
+	void setInviteListener(Consumer<PartyInvite> listener);
+
 	/** @return the server-reported number of connected plugin users, or {@code -1} if not yet known. */
 	int onlineUsers();
 }

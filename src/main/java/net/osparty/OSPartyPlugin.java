@@ -24,8 +24,12 @@ import net.osparty.ui.PlayerMarkerOverlay;
 import net.osparty.ui.ReadyCheckOverlay;
 import net.osparty.ui.TilePingOverlay;
 import com.google.inject.Provides;
+import java.awt.BasicStroke;
 import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.event.MouseEvent;
+import java.awt.image.BufferedImage;
 import java.time.temporal.ChronoUnit;
 import java.util.Set;
 import com.google.gson.Gson;
@@ -36,12 +40,16 @@ import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.FriendsChatManager;
 import net.runelite.api.GameState;
+import net.runelite.api.MenuAction;
 import net.runelite.api.Player;
 import net.runelite.api.Skill;
 import net.runelite.api.Tile;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
+import net.runelite.api.events.MenuEntryAdded;
+import net.runelite.api.gameval.InterfaceID;
+import net.runelite.api.widgets.WidgetUtil;
 import net.runelite.api.events.VarbitChanged;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.StatChanged;
@@ -75,6 +83,9 @@ import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.ui.overlay.infobox.InfoBoxManager;
 import net.runelite.client.util.ColorUtil;
 import net.runelite.client.util.ImageUtil;
+import net.runelite.client.util.Text;
+import net.osparty.api.PartyInvite;
+import net.osparty.enums.InviteDisplay;
 
 @Slf4j
 @PluginDescriptor(
@@ -153,8 +164,19 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Inject
 	private net.osparty.api.PartySocket partySocket;
 
+	private static final String INVITE_OPTION = "Invite to party";
+
 	private OSPartyPanel panel;
 	private NavigationButton navButton;
+	/** Red-dotted variant of the sidebar button, shown alternately with {@link #navButton} to blink on invite. */
+	private NavigationButton navButtonAlert;
+	/** Drives the sidebar invite blink on the EDT; null when not blinking. EDT-only. */
+	private javax.swing.Timer navBlinkTimer;
+	/** Whether the alert (red-dot) button is currently the one shown. EDT-only. */
+	private boolean navAlertShown;
+	/** Last identity we registered with the server, so onGameTick only re-sends on change. Client-thread only. */
+	private long identifiedHash;
+	private String identifiedName;
 	private ApplicantOverlay applicantOverlay;
 	private FcRequestOverlay fcRequestOverlay;
 	private ReadyCheckOverlay readyCheckOverlay;
@@ -323,14 +345,23 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			worldPinger, this::worldAddressForNum, this::getFriendNames, favoritesService, blockListService,
 			this::getAccountHash, spriteManager, partyHistoryService, this::gameMessage);
 
+		BufferedImage icon = ImageUtil.loadImageResource(getClass(), "panel_icon.png");
 		navButton = NavigationButton.builder()
 			.tooltip("OSParty")
-			.icon(ImageUtil.loadImageResource(getClass(), "panel_icon.png"))
+			.icon(icon)
+			.priority(7)
+			.panel(panel)
+			.build();
+		navButtonAlert = NavigationButton.builder()
+			.tooltip("OSParty — party invite received")
+			.icon(withInviteBadge(icon))
 			.priority(7)
 			.panel(panel)
 			.build();
 
 		clientToolbar.addNavigation(navButton);
+		panel.setOnActivated(this::stopNavBlink);
+		apiClient.setInviteListener(this::onPartyInvite);
 		log.info("OSParty started (API {})", PartyApiClient.apiBaseUrl());
 	}
 
@@ -347,7 +378,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			panel.dispose();
 		}
 		partySocket.stop();
+		stopNavBlink();
 		clientToolbar.removeNavigation(navButton);
+		if (navButtonAlert != null)
+		{
+			clientToolbar.removeNavigation(navButtonAlert);
+		}
 		overlayManager.remove(applicantOverlay);
 		overlayManager.remove(fcRequestOverlay);
 		overlayManager.remove(readyCheckOverlay);
@@ -446,6 +482,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		mapRegions = client.getMapRegions();
 		accountType = client.getAccountType();
 		accountHash = client.getAccountHash();
+
+		// Register our identity so friends can route party invites to us (only re-sent on change).
+		maybeIdentify();
 
 		FriendsChatManager fcm = client.getFriendsChatManager();
 		friendsChatOwner = fcm != null ? fcm.getOwner() : null;
@@ -992,6 +1031,185 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			log.warn("OSParty: failed to play sound '{}'", resource, e);
 		}
+	}
+
+	/**
+	 * Add an "Invite to party" option to the right-click menu of a friend in the in-game friends list, but
+	 * only while we're in a party and that friend isn't already in it.
+	 */
+	@Subscribe
+	public void onMenuEntryAdded(MenuEntryAdded event)
+	{
+		// Anchor on the friend row's "Message" option, scoped to the friends-list interface.
+		if (!"Message".equals(event.getOption())
+			|| WidgetUtil.componentToInterface(event.getActionParam1()) != InterfaceID.FRIENDS)
+		{
+			return;
+		}
+		OSPartyPanel currentPanel = panel;
+		if (currentPanel == null)
+		{
+			return;
+		}
+		Party party = currentPanel.currentBackendParty();
+		if (party == null || party.getId() == null)
+		{
+			return; // not hosting or in a party — nothing to invite to
+		}
+		String friend = Text.removeTags(event.getTarget());
+		String normalized = normalizeName(friend);
+		if (normalized.isEmpty() || normalized.equals(normalizeName(playerName)))
+		{
+			return; // unresolved name, or it's us
+		}
+		// Don't offer to invite someone already in the party.
+		for (net.osparty.model.Member member : liveParty.currentMembers())
+		{
+			if (normalized.equals(normalizeName(member.getName())))
+			{
+				return;
+			}
+		}
+		String partyId = party.getId();
+		client.createMenuEntry(-1)
+			.setOption(INVITE_OPTION)
+			.setTarget(event.getTarget())
+			.setType(MenuAction.RUNELITE)
+			.onClick(e -> sendInvite(partyId, friend));
+	}
+
+	/** Send a party invite to {@code friend} and report the outcome in the chatbox. */
+	private void sendInvite(String partyId, String friend)
+	{
+		String myName = playerName;
+		long myHash = accountHash;
+		apiClient.inviteFriend(partyId, myName, myHash, friend, delivered ->
+			postChat(delivered
+				? "Invited " + friend + " to the party."
+				: friend + " isn't online in OSParty."));
+	}
+
+	/** Register our OSRS identity with the server so invites can reach us; only re-sent when it changes. */
+	private void maybeIdentify()
+	{
+		long hash = accountHash;
+		String name = playerName;
+		if (name == null || hash == -1L || hash == 0L)
+		{
+			return;
+		}
+		if (hash == identifiedHash && name.equals(identifiedName))
+		{
+			return;
+		}
+		identifiedHash = hash;
+		identifiedName = name;
+		apiClient.identify(hash, name);
+	}
+
+	/** Handle an incoming party invite: surface it per the {@link InviteDisplay} config. May run off the EDT. */
+	private void onPartyInvite(PartyInvite invite)
+	{
+		InviteDisplay mode = config.inviteDisplay();
+		Party party = invite.getParty();
+		if (mode == null || mode == InviteDisplay.DISABLED || party == null)
+		{
+			return;
+		}
+		String from = invite.getFromName() != null ? invite.getFromName() : party.getHost();
+		if (from == null)
+		{
+			from = "A friend";
+		}
+		if (mode.showsInGame())
+		{
+			net.osparty.model.Activity activity = net.osparty.model.Activity.fromId(party.getActivity());
+			String label = activity != null ? activity.toString() + " " : "";
+			postChat(from + " invited you to their " + label + "party. Open OSParty to join.");
+		}
+		if (mode.blinksSidebar())
+		{
+			startNavBlink();
+		}
+	}
+
+	/** Begin blinking the OSParty sidebar button to signal a pending invite. Idempotent. */
+	private void startNavBlink()
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			if (navButtonAlert == null || navBlinkTimer != null)
+			{
+				return;
+			}
+			navBlinkTimer = new javax.swing.Timer(600, e -> showNavButton(!navAlertShown));
+			navBlinkTimer.setInitialDelay(0);
+			navBlinkTimer.start();
+		});
+	}
+
+	/** Stop the sidebar blink and restore the normal button. Safe to call when not blinking. */
+	private void stopNavBlink()
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			if (navBlinkTimer != null)
+			{
+				navBlinkTimer.stop();
+				navBlinkTimer = null;
+			}
+			if (navAlertShown)
+			{
+				showNavButton(false);
+			}
+		});
+	}
+
+	/** Swap which sidebar button is registered (normal vs. red-dot alert). EDT only. */
+	private void showNavButton(boolean alert)
+	{
+		if (navButton == null || navButtonAlert == null)
+		{
+			return;
+		}
+		clientToolbar.removeNavigation(alert ? navButton : navButtonAlert);
+		clientToolbar.addNavigation(alert ? navButtonAlert : navButton);
+		navAlertShown = alert;
+	}
+
+	/** @return a copy of {@code base} with a small red notification dot in the top-right corner. */
+	private static BufferedImage withInviteBadge(BufferedImage base)
+	{
+		BufferedImage badged = new BufferedImage(base.getWidth(), base.getHeight(), BufferedImage.TYPE_INT_ARGB);
+		Graphics2D g = badged.createGraphics();
+		g.drawImage(base, 0, 0, null);
+		g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+		int diameter = Math.max(6, base.getWidth() / 3);
+		int x = base.getWidth() - diameter;
+		g.setColor(new Color(0xE5, 0x39, 0x35));
+		g.fillOval(x, 0, diameter, diameter);
+		g.setColor(Color.WHITE);
+		g.setStroke(new BasicStroke(1f));
+		g.drawOval(x, 0, diameter - 1, diameter - 1);
+		g.dispose();
+		return badged;
+	}
+
+	/** Normalise an OSRS name for identity matching: strip the nbsp Jagex uses, trim, lowercase. */
+	private static String normalizeName(String name)
+	{
+		return name == null ? "" : name.replace('\u00A0', ' ').trim().toLowerCase();
+	}
+
+	/** Post an OSParty chat line regardless of the general chatbox-notifications toggle. Client thread. */
+	private void postChat(String message)
+	{
+		if (client.getGameState() != GameState.LOGGED_IN)
+		{
+			return;
+		}
+		String formatted = ColorUtil.wrapWithColorTag("[OSParty]", Color.ORANGE) + " " + message;
+		clientThread.invoke(() -> client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", formatted, null));
 	}
 
 	/** Post a game message to the chatbox (client thread). No-op when not logged in. */

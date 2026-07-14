@@ -191,6 +191,25 @@ public class PartyApiClient implements PartyService
 	}
 
 	@Override
+	public void identify(long accountHash, String name)
+	{
+		partySocket.identify(accountHash, name);
+	}
+
+	@Override
+	public void inviteFriend(String partyId, String fromName, long fromAccountHash, String targetName,
+		Consumer<Boolean> onDelivered)
+	{
+		partySocket.invite(partyId, fromName, fromAccountHash, targetName, onDelivered);
+	}
+
+	@Override
+	public void setInviteListener(Consumer<PartyInvite> listener)
+	{
+		partySocket.setInviteListener(listener);
+	}
+
+	@Override
 	public int onlineUsers()
 	{
 		return partySocket.onlineUsers();
