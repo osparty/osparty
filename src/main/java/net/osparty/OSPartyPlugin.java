@@ -176,12 +176,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private boolean navAlertShown;
 	/** Whether the OSParty side panel is currently open; gates the flash so it never closes the open panel. */
 	private volatile boolean panelActive;
-	/** Received invites awaiting an in-game Accept/Decline prompt (drained on the client thread each tick). */
+	/** Received invites awaiting an in-game chatbox Accept/Decline prompt (drained on the client thread). */
 	private final java.util.concurrent.ConcurrentLinkedDeque<PartyInvite> invitePromptQueue =
 		new java.util.concurrent.ConcurrentLinkedDeque<>();
-	/** Sidebar-only invites: the accept prompt is deferred until the player opens the panel. */
-	private final java.util.concurrent.ConcurrentLinkedQueue<PartyInvite> deferredInvites =
-		new java.util.concurrent.ConcurrentLinkedQueue<>();
+	/** Unresolved invites (by backend party id), shared by the chatbox prompt and the sidebar banner. */
+	private final java.util.Map<String, PartyInvite> activeInvites = new java.util.concurrent.ConcurrentHashMap<>();
+	/** Backend party id of the invite the chatbox prompt is currently showing; null when none. Client-thread. */
+	private String openInviteId;
 	/** Last identity we registered with the server, so onGameTick only re-sends on change. Client-thread only. */
 	private long identifiedHash;
 	private String identifiedName;
@@ -370,6 +371,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		clientToolbar.addNavigation(navButton);
 		panel.setOnActivated(this::onPanelActivated);
 		panel.setOnDeactivated(this::onPanelDeactivated);
+		panel.setInviteHandlers(invite -> resolveInvite(invite, true), invite -> resolveInvite(invite, false));
 		apiClient.setInviteListener(this::onPartyInvite);
 		log.info("OSParty started (API {})", PartyApiClient.apiBaseUrl());
 	}
@@ -1139,20 +1141,76 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			return;
 		}
+		activeInvites.put(party.getId(), invite);
 		if (mode.showsInGame())
 		{
-			// Queue an in-game Accept/Decline prompt (mirrors the host's applicant prompt); shown next tick.
+			// In-game chatbox Accept/Decline prompt (mirrors the host's applicant prompt); shown next tick.
 			invitePromptQueue.add(invite);
+		}
+		if (mode.showsSidebar())
+		{
+			// Accept/Decline banner in the side panel, plus a blink to draw the eye to the sidebar.
+			SwingUtilities.invokeLater(() ->
+			{
+				if (panel != null)
+				{
+					panel.addInvite(invite);
+				}
+				flashInviteButton();
+			});
+		}
+	}
+
+	/** Resolve an invite (Accept or Decline) from either surface; dismisses both and joins on accept. */
+	private void resolveInvite(PartyInvite invite, boolean accept)
+	{
+		Party party = invite.getParty();
+		String key = party == null ? null : party.getId();
+		boolean firstResolution = key != null && activeInvites.remove(key) != null;
+		// Dismiss both surfaces regardless of which one the player used (idempotent).
+		SwingUtilities.invokeLater(() ->
+		{
+			if (panel != null)
+			{
+				panel.removeInvite(key);
+			}
+			stopInviteFlash();
+		});
+		dismissInvitePrompt(key);
+		if (!firstResolution)
+		{
+			return; // already handled via the other surface
+		}
+		if (accept)
+		{
+			acceptInvite(invite);
 		}
 		else
 		{
-			// Sidebar-only: hold the accept prompt until the player opens the panel via the blinking button.
-			deferredInvites.add(invite);
+			postChat("Declined " + inviterName(invite) + "'s party invite.");
 		}
-		if (mode.blinksSidebar())
+	}
+
+	/** Close the chatbox invite prompt if it's the one for {@code key}. */
+	private void dismissInvitePrompt(String key)
+	{
+		if (key == null)
 		{
-			SwingUtilities.invokeLater(this::flashInviteButton);
+			return;
 		}
+		clientThread.invoke(() ->
+		{
+			if (key.equals(openInviteId))
+			{
+				chatboxPanelManager.close();
+			}
+		});
+	}
+
+	private static String inviterName(PartyInvite invite)
+	{
+		String from = invite.getFromName() != null ? invite.getFromName() : invite.getParty().getHost();
+		return from != null ? from : "A friend";
 	}
 
 	/** Show the next queued invite as an in-game Accept/Decline prompt if the chatbox is free. Client thread. */
@@ -1173,26 +1231,34 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private void openInvitePrompt(PartyInvite invite)
 	{
 		Party party = invite.getParty();
-		String fromName = invite.getFromName() != null ? invite.getFromName() : party.getHost();
-		final String inviter = fromName != null ? fromName : "A friend";
+		String key = party.getId();
+		if (key == null || !activeInvites.containsKey(key))
+		{
+			return; // resolved via the sidebar banner before we got to it
+		}
 		Activity activity = Activity.fromId(party.getActivity());
 		String label = activity != null ? activity.getDisplayName() + " party" : "their party";
 
 		promptOpen = true;
-		chatboxPanelManager.openTextMenuInput(inviter + " invites you to " + label)
+		openInviteId = key;
+		chatboxPanelManager.openTextMenuInput(inviterName(invite) + " invites you to " + label)
 			.option("Accept", () ->
 			{
 				promptOpen = false;
-				SwingUtilities.invokeLater(this::stopInviteFlash);
-				acceptInvite(invite);
+				openInviteId = null;
+				resolveInvite(invite, true);
 			})
 			.option("Decline", () ->
 			{
 				promptOpen = false;
-				SwingUtilities.invokeLater(this::stopInviteFlash);
-				postChat("Declined " + inviter + "'s party invite.");
+				openInviteId = null;
+				resolveInvite(invite, false);
 			})
-			.onClose(() -> promptOpen = false)
+			.onClose(() ->
+			{
+				promptOpen = false;
+				openInviteId = null;
+			})
 			.build();
 	}
 
@@ -1251,12 +1317,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			navBlinkTimer.stop();
 			navBlinkTimer = null;
-		}
-		// Sidebar-only invites waited for the panel to open; surface their accept prompts now.
-		PartyInvite deferred;
-		while ((deferred = deferredInvites.poll()) != null)
-		{
-			invitePromptQueue.add(deferred);
 		}
 	}
 

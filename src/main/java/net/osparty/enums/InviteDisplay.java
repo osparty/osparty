@@ -24,7 +24,7 @@ public enum InviteDisplay
 		this.label = label;
 	}
 
-	public boolean blinksSidebar()
+	public boolean showsSidebar()
 	{
 		return this == BOTH || this == SIDEBAR_ONLY;
 	}

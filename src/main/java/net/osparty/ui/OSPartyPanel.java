@@ -96,6 +96,11 @@ public class OSPartyPanel extends PluginPanel
 	private volatile Runnable onActivated;
 	/** Run when the side panel is closed (used to restore the normal sidebar icon). */
 	private volatile Runnable onDeactivated;
+	/** Stacked invite banners shown at the top of the panel; keyed by backend party id. EDT only. */
+	private JPanel invitePanel;
+	private final java.util.Map<String, JPanel> inviteBanners = new java.util.HashMap<>();
+	private Consumer<net.osparty.api.PartyInvite> onInviteAccept;
+	private Consumer<net.osparty.api.PartyInvite> onInviteDecline;
 	private final HostTransferHandler hostTransferHandler;
 	private final LongSupplier accountHashSupplier;
 	private final JLabel activeUsersLabel = new JLabel();
@@ -257,7 +262,16 @@ public class OSPartyPanel extends PluginPanel
 		rebuildTabs(false);
 		tabGroup.select(searchTab);
 
-		add(tabGroup, BorderLayout.NORTH);
+		invitePanel = new JPanel();
+		invitePanel.setLayout(new javax.swing.BoxLayout(invitePanel, javax.swing.BoxLayout.Y_AXIS));
+		invitePanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+
+		JPanel north = new JPanel(new BorderLayout());
+		north.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		north.add(invitePanel, BorderLayout.NORTH);
+		north.add(tabGroup, BorderLayout.CENTER);
+
+		add(north, BorderLayout.NORTH);
 		add(display, BorderLayout.CENTER);
 		add(buildFooter(), BorderLayout.SOUTH);
 
@@ -607,6 +621,92 @@ public class OSPartyPanel extends PluginPanel
 	public void joinByInviteCode(String code, java.util.function.Consumer<String> status)
 	{
 		searchPanel.joinByCode(code, status, true);
+	}
+
+	/** Register what the sidebar invite banner's Accept/Decline buttons do. */
+	public void setInviteHandlers(Consumer<net.osparty.api.PartyInvite> onAccept,
+		Consumer<net.osparty.api.PartyInvite> onDecline)
+	{
+		this.onInviteAccept = onAccept;
+		this.onInviteDecline = onDecline;
+	}
+
+	/** Show an Accept/Decline invite banner at the top of the panel. Idempotent per party. EDT only. */
+	public void addInvite(net.osparty.api.PartyInvite invite)
+	{
+		Party party = invite.getParty();
+		if (party == null || party.getId() == null || inviteBanners.containsKey(party.getId()))
+		{
+			return;
+		}
+		JPanel banner = buildInviteBanner(invite);
+		inviteBanners.put(party.getId(), banner);
+		invitePanel.add(banner);
+		invitePanel.revalidate();
+		invitePanel.repaint();
+	}
+
+	/** Remove the invite banner for a party (once accepted/declined elsewhere). EDT only. */
+	public void removeInvite(String partyId)
+	{
+		JPanel banner = partyId == null ? null : inviteBanners.remove(partyId);
+		if (banner != null)
+		{
+			invitePanel.remove(banner);
+			invitePanel.revalidate();
+			invitePanel.repaint();
+		}
+	}
+
+	private JPanel buildInviteBanner(net.osparty.api.PartyInvite invite)
+	{
+		Party party = invite.getParty();
+		String from = invite.getFromName() != null ? invite.getFromName() : party.getHost();
+		if (from == null)
+		{
+			from = "A friend";
+		}
+		net.osparty.model.Activity activity = net.osparty.model.Activity.fromId(party.getActivity());
+		String label = activity != null ? activity.getDisplayName() : "a party";
+
+		JPanel banner = new JPanel(new BorderLayout(0, 4));
+		banner.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		banner.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(0, 0, 1, 0, ColorScheme.MEDIUM_GRAY_COLOR),
+			BorderFactory.createEmptyBorder(6, 8, 6, 8)));
+
+		JLabel text = new JLabel("<html><body style='width:170px'><b>" + from + "</b> invites you to "
+			+ label + "</body></html>");
+		text.setForeground(Color.WHITE);
+		text.setFont(FontManager.getRunescapeSmallFont());
+		banner.add(text, BorderLayout.NORTH);
+
+		JPanel buttons = new JPanel(new GridLayout(1, 2, 4, 0));
+		buttons.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		JButton accept = new JButton("Accept");
+		accept.setFocusPainted(false);
+		accept.addActionListener(e ->
+		{
+			Consumer<net.osparty.api.PartyInvite> handler = onInviteAccept;
+			if (handler != null)
+			{
+				handler.accept(invite);
+			}
+		});
+		JButton decline = new JButton("Decline");
+		decline.setFocusPainted(false);
+		decline.addActionListener(e ->
+		{
+			Consumer<net.osparty.api.PartyInvite> handler = onInviteDecline;
+			if (handler != null)
+			{
+				handler.accept(invite);
+			}
+		});
+		buttons.add(accept);
+		buttons.add(decline);
+		banner.add(buttons, BorderLayout.SOUTH);
+		return banner;
 	}
 
 	/** Re-render every view that draws Discord-role badges (called when the config toggle flips). */
