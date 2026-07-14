@@ -968,15 +968,18 @@ class PartyPanel extends JPanel
 			any = true;
 		}
 
-		// Hopping is disabled: RuneLite no longer permits plugins to switch worlds.
+		// Hop to the member's world (any viewer) when it differs from ours.
 		PlayerUpdate data = member.getData();
 		int world = data != null ? data.getWorld() : 0;
 		int mine = currentWorld.getAsInt();
 		if (world > 0 && mine > 0 && mine != world)
 		{
 			JButton hop = smallButton("Hop to");
-			hop.setToolTipText("disabled due to RL policy");
-			hop.setEnabled(false);
+			hop.setToolTipText("Hop to world " + world);
+			hop.addActionListener(e -> {
+				worldHopper.accept(world);
+				setStatus("Hopping to world " + world + "…");
+			});
 			wrap.add(hop);
 			any = true;
 		}
