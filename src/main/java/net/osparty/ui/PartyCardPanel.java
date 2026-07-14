@@ -1025,8 +1025,17 @@ abstract class PartyCardPanel extends JPanel
 	static String coxScaleOf(Party party)
 	{
 		String scale = party.getCoxScale();
-		return scale != null && !scale.trim().isEmpty() && "cox".equals(party.getActivity())
-			? scale.trim() : "";
+		if (scale == null || scale.trim().isEmpty() || !"cox".equals(party.getActivity()))
+		{
+			return "";
+		}
+		scale = scale.trim();
+		// A bare scaling like "4" is shown combined with the party size, e.g. a 3-man → "3+4".
+		if (!scale.contains("+") && party.getCapacity() > 0)
+		{
+			return party.getCapacity() + "+" + scale;
+		}
+		return scale;
 	}
 
 	/** A title suffix like " (3+4)" for a CoX ad's scale, or "" when none. */

@@ -1647,6 +1647,11 @@ class SearchPanel extends PartyCardPanel
 		{
 			return true;
 		}
+		// The CoX team-size scaling as shown on the card, e.g. "3+4" (so "4", "3" and "3+4" all match).
+		if (contains(coxScaleOf(party), lowerQuery))
+		{
+			return true;
+		}
 		return activity != null && contains(activity.getDisplayName(), lowerQuery);
 	}
 
