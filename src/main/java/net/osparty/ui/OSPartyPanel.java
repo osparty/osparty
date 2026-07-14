@@ -94,6 +94,8 @@ public class OSPartyPanel extends PluginPanel
 	private volatile Party contextParty;
 	/** Run when the side panel is opened (used to stop the sidebar invite blink). */
 	private volatile Runnable onActivated;
+	/** Run when the side panel is closed (used to restore the normal sidebar icon). */
+	private volatile Runnable onDeactivated;
 	private final HostTransferHandler hostTransferHandler;
 	private final LongSupplier accountHashSupplier;
 	private final JLabel activeUsersLabel = new JLabel();
@@ -573,6 +575,12 @@ public class OSPartyPanel extends PluginPanel
 		this.onActivated = onActivated;
 	}
 
+	/** Register a callback invoked when the side panel is closed. */
+	public void setOnDeactivated(Runnable onDeactivated)
+	{
+		this.onDeactivated = onDeactivated;
+	}
+
 	@Override
 	public void onActivate()
 	{
@@ -582,6 +590,23 @@ public class OSPartyPanel extends PluginPanel
 		{
 			callback.run();
 		}
+	}
+
+	@Override
+	public void onDeactivate()
+	{
+		super.onDeactivate();
+		Runnable callback = onDeactivated;
+		if (callback != null)
+		{
+			callback.run();
+		}
+	}
+
+	/** Accept a party invite by joining via its invite code, reusing the Search panel's join-by-code flow. */
+	public void joinByInviteCode(String code, java.util.function.Consumer<String> status)
+	{
+		searchPanel.joinByCode(code, status);
 	}
 
 	/** Re-render every view that draws Discord-role badges (called when the config toggle flips). */

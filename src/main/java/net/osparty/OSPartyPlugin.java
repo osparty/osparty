@@ -174,6 +174,14 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private javax.swing.Timer navBlinkTimer;
 	/** Whether the alert (red-dot) button is currently the one shown. EDT-only. */
 	private boolean navAlertShown;
+	/** Whether the OSParty side panel is currently open; gates the flash so it never closes the open panel. */
+	private volatile boolean panelActive;
+	/** Received invites awaiting an in-game Accept/Decline prompt (drained on the client thread each tick). */
+	private final java.util.concurrent.ConcurrentLinkedDeque<PartyInvite> invitePromptQueue =
+		new java.util.concurrent.ConcurrentLinkedDeque<>();
+	/** Sidebar-only invites: the accept prompt is deferred until the player opens the panel. */
+	private final java.util.concurrent.ConcurrentLinkedQueue<PartyInvite> deferredInvites =
+		new java.util.concurrent.ConcurrentLinkedQueue<>();
 	/** Last identity we registered with the server, so onGameTick only re-sends on change. Client-thread only. */
 	private long identifiedHash;
 	private String identifiedName;
@@ -360,7 +368,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			.build();
 
 		clientToolbar.addNavigation(navButton);
-		panel.setOnActivated(this::stopNavBlink);
+		panel.setOnActivated(this::onPanelActivated);
+		panel.setOnDeactivated(this::onPanelDeactivated);
 		apiClient.setInviteListener(this::onPartyInvite);
 		log.info("OSParty started (API {})", PartyApiClient.apiBaseUrl());
 	}
@@ -378,7 +387,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			panel.dispose();
 		}
 		partySocket.stop();
-		stopNavBlink();
+		if (navBlinkTimer != null)
+		{
+			navBlinkTimer.stop();
+			navBlinkTimer = null;
+		}
 		clientToolbar.removeNavigation(navButton);
 		if (navButtonAlert != null)
 		{
@@ -511,6 +524,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		// Show the next in-game applicant prompt if the chatbox is free.
 		drainApplicantPrompts();
+
+		// Show the next in-game invite prompt if the chatbox is free.
+		drainInvitePrompts();
 
 		// Push pending host state / our own live snapshot (client thread).
 		liveParty.tick();
@@ -1116,53 +1132,135 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			return;
 		}
-		String from = invite.getFromName() != null ? invite.getFromName() : party.getHost();
-		if (from == null)
-		{
-			from = "A friend";
-		}
 		if (mode.showsInGame())
 		{
-			net.osparty.model.Activity activity = net.osparty.model.Activity.fromId(party.getActivity());
-			String label = activity != null ? activity.toString() + " " : "";
-			postChat(from + " invited you to their " + label + "party. Open OSParty to join.");
+			// Queue an in-game Accept/Decline prompt (mirrors the host's applicant prompt); shown next tick.
+			invitePromptQueue.add(invite);
+		}
+		else
+		{
+			// Sidebar-only: hold the accept prompt until the player opens the panel via the blinking button.
+			deferredInvites.add(invite);
 		}
 		if (mode.blinksSidebar())
 		{
-			startNavBlink();
+			SwingUtilities.invokeLater(this::flashInviteButton);
 		}
 	}
 
-	/** Begin blinking the OSParty sidebar button to signal a pending invite. Idempotent. */
-	private void startNavBlink()
+	/** Show the next queued invite as an in-game Accept/Decline prompt if the chatbox is free. Client thread. */
+	private void drainInvitePrompts()
 	{
-		SwingUtilities.invokeLater(() ->
+		if (invitePromptQueue.isEmpty() || promptOpen || chatboxPanelManager.getCurrentInput() != null)
 		{
-			if (navButtonAlert == null || navBlinkTimer != null)
-			{
-				return;
-			}
-			navBlinkTimer = new javax.swing.Timer(600, e -> showNavButton(!navAlertShown));
-			navBlinkTimer.setInitialDelay(0);
-			navBlinkTimer.start();
-		});
+			return;
+		}
+		PartyInvite next = invitePromptQueue.poll();
+		if (next != null)
+		{
+			openInvitePrompt(next);
+		}
 	}
 
-	/** Stop the sidebar blink and restore the normal button. Safe to call when not blinking. */
-	private void stopNavBlink()
+	/** Open the chatbox Accept/Decline prompt for a received invite; Accept joins via the invite code. */
+	private void openInvitePrompt(PartyInvite invite)
 	{
-		SwingUtilities.invokeLater(() ->
+		Party party = invite.getParty();
+		String fromName = invite.getFromName() != null ? invite.getFromName() : party.getHost();
+		final String inviter = fromName != null ? fromName : "A friend";
+		Activity activity = Activity.fromId(party.getActivity());
+		String label = activity != null ? activity.getDisplayName() + " party" : "their party";
+
+		promptOpen = true;
+		chatboxPanelManager.openTextMenuInput(inviter + " invites you to " + label)
+			.option("Accept", () ->
+			{
+				promptOpen = false;
+				SwingUtilities.invokeLater(this::stopInviteFlash);
+				acceptInvite(invite);
+			})
+			.option("Decline", () ->
+			{
+				promptOpen = false;
+				SwingUtilities.invokeLater(this::stopInviteFlash);
+				postChat("Declined " + inviter + "'s party invite.");
+			})
+			.onClose(() -> promptOpen = false)
+			.build();
+	}
+
+	/** Accept an invite: join the party by its invite code, reusing the standard join flow. */
+	private void acceptInvite(PartyInvite invite)
+	{
+		Party party = invite.getParty();
+		String code = party.getInviteCode();
+		OSPartyPanel currentPanel = panel;
+		if (code == null || code.isEmpty() || currentPanel == null)
 		{
-			if (navBlinkTimer != null)
+			postChat("Couldn't join that party - the invite is missing its code.");
+			return;
+		}
+		SwingUtilities.invokeLater(() -> currentPanel.joinByInviteCode(code, this::postChat));
+	}
+
+	/** Flash the OSParty sidebar button until the panel is opened. No-op if the panel is already open. EDT only. */
+	private void flashInviteButton()
+	{
+		if (navButtonAlert == null || panelActive || navBlinkTimer != null)
+		{
+			return;
+		}
+		navBlinkTimer = new javax.swing.Timer(600, e ->
+		{
+			// Never swap while our panel is open — removing the selected button would force it closed.
+			if (!panelActive)
 			{
-				navBlinkTimer.stop();
-				navBlinkTimer = null;
-			}
-			if (navAlertShown)
-			{
-				showNavButton(false);
+				showNavButton(!navAlertShown);
 			}
 		});
+		navBlinkTimer.setInitialDelay(0);
+		navBlinkTimer.start();
+	}
+
+	/** Stop flashing and restore the normal button when it's safe (panel not open). EDT only. */
+	private void stopInviteFlash()
+	{
+		if (navBlinkTimer != null)
+		{
+			navBlinkTimer.stop();
+			navBlinkTimer = null;
+		}
+		if (navAlertShown && !panelActive)
+		{
+			showNavButton(false);
+		}
+	}
+
+	/** Panel opened: stop flashing. We leave the icon as-is (swapping now would close the open panel). EDT. */
+	private void onPanelActivated()
+	{
+		panelActive = true;
+		if (navBlinkTimer != null)
+		{
+			navBlinkTimer.stop();
+			navBlinkTimer = null;
+		}
+		// Sidebar-only invites waited for the panel to open; surface their accept prompts now.
+		PartyInvite deferred;
+		while ((deferred = deferredInvites.poll()) != null)
+		{
+			invitePromptQueue.add(deferred);
+		}
+	}
+
+	/** Panel closed: now safe to restore the normal icon if the alert one is still showing. EDT. */
+	private void onPanelDeactivated()
+	{
+		panelActive = false;
+		if (navAlertShown)
+		{
+			showNavButton(false);
+		}
 	}
 
 	/** Swap which sidebar button is registered (normal vs. red-dot alert). EDT only. */
