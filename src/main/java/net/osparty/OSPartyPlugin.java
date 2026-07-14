@@ -181,6 +181,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		new java.util.concurrent.ConcurrentLinkedDeque<>();
 	/** Unresolved invites (by backend party id), shared by the chatbox prompt and the sidebar banner. */
 	private final java.util.Map<String, PartyInvite> activeInvites = new java.util.concurrent.ConcurrentHashMap<>();
+	/** Per-friend send cooldown: normalised name -> last invite epoch ms. */
+	private static final long INVITE_COOLDOWN_MS = 30_000;
+	private final java.util.Map<String, Long> lastInviteAt = new java.util.concurrent.ConcurrentHashMap<>();
 	/** Backend party id of the invite the chatbox prompt is currently showing; null when none. Client-thread. */
 	private String openInviteId;
 	/** Last identity we registered with the server, so onGameTick only re-sends on change. Client-thread only. */
@@ -323,6 +326,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// Ready-check notifications: chat pings and an optional all-ready sound.
 		liveParty.setOnReadyCheckStarted(starter -> {
 			gameMessage(starter + " started a ready check - ready up in the OSParty panel.");
+			desktopNotify(starter + " started a ready check.");
 			if (config.readyCheckSound())
 			{
 				playResourceSound("/net/osparty/sounds/readycheck.wav");
@@ -332,6 +336,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			Activity activity = Activity.fromId(liveParty.currentActivityId());
 			String name = activity != null ? activity.getDisplayName() : "the activity";
 			gameMessage("Everyone is ready for " + name + "!");
+			desktopNotify("Everyone is ready for " + name + "!");
 			playReadySound();
 		});
 		liveParty.setOnReadyExpired(() -> gameMessage("Ready check expired."));
@@ -697,6 +702,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			fcRequestOverlay.show(host, title, detail, config.fcRequestDurationSecs() * 1000L);
 			gameMessage(host + " — " + detail);
+			desktopNotify(host + " — " + detail);
 			if (config.friendsChatRequestSound())
 			{
 				playResourceSound("/net/osparty/sounds/friendschatsound.wav");
@@ -852,6 +858,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			// Persistent in-game notification for a blocked applicant, since the chat line scrolls away.
 			notifier.notify(applicant.getName() + " is on your block list — applied to your "
 				+ activity.getDisplayName() + " party.");
+		}
+		else
+		{
+			desktopNotify(applicant.getName() + " applied to your " + activity.getDisplayName() + " party.");
 		}
 
 		gameMessage(applicant.getName() + " applied to your " + activity.getDisplayName()
@@ -1087,6 +1097,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			return; // unresolved name, or it's us
 		}
+		if (!isFriendOnline(normalized))
+		{
+			return; // offline friends can't receive an invite
+		}
 		// Don't offer to invite someone already in the party.
 		for (net.osparty.model.Member member : liveParty.currentMembers())
 		{
@@ -1103,15 +1117,53 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			.onClick(e -> sendInvite(partyId, friend));
 	}
 
-	/** Send a party invite to {@code friend} and report the outcome in the chatbox. */
+	/** Send a party invite to {@code friend} and report the outcome in the chatbox. Rate-limited per friend. */
 	private void sendInvite(String partyId, String friend)
 	{
+		String normalized = normalizeName(friend);
+		long now = System.currentTimeMillis();
+		Long last = lastInviteAt.get(normalized);
+		if (last != null && now - last < INVITE_COOLDOWN_MS)
+		{
+			long seconds = (INVITE_COOLDOWN_MS - (now - last) + 999) / 1000;
+			postChat("You can invite " + friend + " again in " + seconds + "s.");
+			return;
+		}
+		lastInviteAt.put(normalized, now);
 		String myName = playerName;
 		long myHash = accountHash;
 		apiClient.inviteFriend(partyId, myName, myHash, friend, delivered ->
-			postChat(delivered
-				? "Invited " + friend + " to the party."
-				: friend + " isn't online in OSParty."));
+		{
+			if (delivered)
+			{
+				postChat("Invited " + friend + " to the party.");
+			}
+			else
+			{
+				// Not delivered — drop the cooldown so they can retry the moment the friend is back.
+				lastInviteAt.remove(normalized);
+				postChat(friend + " isn't online in OSParty.");
+			}
+		});
+	}
+
+	/** @return whether the OSRS friend named {@code normalizedName} is currently online (world &gt; 0). */
+	private boolean isFriendOnline(String normalizedName)
+	{
+		net.runelite.api.NameableContainer<net.runelite.api.Friend> friends = client.getFriendContainer();
+		if (friends == null)
+		{
+			return false;
+		}
+		for (net.runelite.api.Friend friend : friends.getMembers())
+		{
+			if (friend != null && friend.getName() != null
+				&& normalizedName.equals(normalizeName(friend.getName())))
+			{
+				return friend.getWorld() > 0;
+			}
+		}
+		return false;
 	}
 
 	/** Register our OSRS identity with the server so invites can reach us; only re-sent when it changes. */
@@ -1142,6 +1194,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			return;
 		}
 		activeInvites.put(party.getId(), invite);
+		desktopNotify(inviterName(invite) + " invited you to their party.");
 		if (mode.showsInGame())
 		{
 			// In-game chatbox Accept/Decline prompt (mirrors the host's applicant prompt); shown next tick.
@@ -1364,6 +1417,15 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private static String normalizeName(String name)
 	{
 		return name == null ? "" : name.replace('\u00A0', ' ').trim().toLowerCase();
+	}
+
+	/** Send a desktop notification for an OSParty event, when the user has opted in. */
+	private void desktopNotify(String message)
+	{
+		if (config.desktopNotifications())
+		{
+			notifier.notify(message);
+		}
 	}
 
 	/** Post an OSParty chat line regardless of the general chatbox-notifications toggle. Client thread. */

@@ -149,6 +149,19 @@ public interface OSPartyConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "desktopNotifications",
+		name = "Desktop notifications",
+		description = "Also send a desktop notification for OSParty events (party invites, friends-chat "
+			+ "requests, new applicants, ready checks). Off by default.",
+		position = 6,
+		section = GENERAL
+	)
+	default boolean desktopNotifications()
+	{
+		return false;
+	}
+
+	@ConfigItem(
 		keyName = "receiveFriendsChatRequests",
 		name = "Friends-chat join requests",
 		description = "Allow party hosts to ask you (via an on-screen popup) to join their friends chat. Turn off to ignore these requests.",
