@@ -15,6 +15,7 @@ import net.osparty.party.PartyStateMessage;
 import net.osparty.party.PingMessage;
 import net.osparty.party.PlayerUpdate;
 import net.osparty.party.ReadyCheckMessage;
+import net.osparty.party.SpecDrainMessage;
 import net.osparty.ui.OSPartyPanel;
 import net.osparty.ui.ApplicantOverlay;
 import net.osparty.ui.FcRequestOverlay;
@@ -45,8 +46,12 @@ import net.runelite.api.Player;
 import net.runelite.api.Skill;
 import net.runelite.api.Tile;
 import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.events.CommandExecuted;
+import net.runelite.api.events.FakeXpDrop;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
+import net.runelite.api.events.HitsplatApplied;
+import net.runelite.api.events.NpcDespawned;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.WidgetUtil;
@@ -56,12 +61,14 @@ import net.runelite.api.events.StatChanged;
 import net.runelite.api.vars.AccountType;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.api.World;
 import net.runelite.client.audio.AudioPlayer;
+import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.input.KeyManager;
 import net.runelite.client.input.MouseAdapter;
 import net.runelite.client.input.MouseManager;
-import net.runelite.client.util.HotkeyListener;
+import net.runelite.client.util.*;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.SkillIconManager;
 import net.runelite.client.game.chatbox.ChatboxPanelManager;
@@ -73,17 +80,12 @@ import net.runelite.client.party.events.UserJoin;
 import net.runelite.client.party.events.UserPart;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
-import net.runelite.client.plugins.PluginInstantiationException;
 import net.runelite.client.plugins.PluginManager;
-import net.runelite.client.plugins.specialcounter.SpecialCounterUpdate;
 import net.runelite.client.task.Schedule;
 import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.ui.overlay.infobox.InfoBoxManager;
-import net.runelite.client.util.ColorUtil;
-import net.runelite.client.util.ImageUtil;
-import net.runelite.client.util.Text;
 import net.osparty.api.PartyInvite;
 import net.osparty.enums.InviteDisplay;
 
@@ -147,6 +149,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private DefenceTracker defenceTracker;
 
 	@Inject
+	private SpecialAttackTracker specTracker;
+
+	@Inject
 	private CoxRaidScanner coxRaidScanner;
 
 	@Inject
@@ -163,6 +168,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 	@Inject
 	private net.osparty.api.PartySocket partySocket;
+
+	@Inject
+	private EventBus eventBus;
 
 	private static final String INVITE_OPTION = "Invite to party";
 
@@ -269,7 +277,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	/** Snapshot of the local player's friends list, updated each game tick. */
 	private volatile Set<String> friendNames = java.util.Collections.emptySet();
 
-
 	/** Applicants awaiting an in-game Accept/Decline prompt (host only). */
 	private final java.util.Deque<PendingPrompt> promptQueue = new java.util.ArrayDeque<>();
 	/** True while one of our chatbox prompts is open, so we show them one at a time. */
@@ -317,8 +324,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			ImageUtil.resizeImage(ImageUtil.loadImageResource(getClass(), "/net/osparty/icons/learner.png"), 12, 12),
 			ImageUtil.resizeImage(ImageUtil.loadImageResource(getClass(), "/net/osparty/icons/teacher.png"), 12, 12));
 		overlayManager.add(playerMarkerOverlay);
-		// Special Attack Counter must run for the defence tracker to receive its events.
-		enablePluginByName("Special Attack Counter");
 
 		keyManager.registerKeyListener(pingHotkeyListener);
 		mouseManager.registerMouseListener(pingMouseListener);
@@ -416,6 +421,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			defenceBox = null;
 		}
 		defenceTracker.reset();
+		specTracker.reset();
 		if (worldPinger != null)
 		{
 			worldPinger.shutdown();
@@ -452,6 +458,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			coxRaidScanner.onInRaidChanged(event.getValue());
 		}
+		specTracker.onVarbitChanged(event);
 	}
 
 	@Subscribe
@@ -538,7 +545,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// Push pending host state / our own live snapshot (client thread).
 		liveParty.tick();
 
-		// Apply this tick's defence-draining specs and clear dead targets.
+		// Resolve this tick's local special attack, then apply all queued drains
+		// (local and party members') and clear dead targets.
+		specTracker.onGameTick();
 		defenceTracker.onGameTick();
 		updateDefenceInfoBox();
 	}
@@ -560,34 +569,29 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	}
 
 	@Subscribe
-	public void onSpecialCounterUpdate(SpecialCounterUpdate event)
+	public void onHitsplatApplied(HitsplatApplied event)
 	{
-		// From RuneLite's Special Attack Counter; the tracker turns draining specs into a defence figure.
-		defenceTracker.queue(event);
+		specTracker.onHitsplatApplied(event);
 	}
 
-	/** Enable a sibling RuneLite plugin by display name (used for a hard dependency). */
-	private void enablePluginByName(String name)
+	@Subscribe
+	public void onFakeXpDrop(FakeXpDrop event)
 	{
-		try
-		{
-			for (Plugin plugin : pluginManager.getPlugins())
-			{
-				if (name.equals(plugin.getName()))
-				{
-					if (!pluginManager.isPluginEnabled(plugin))
-					{
-						pluginManager.setPluginEnabled(plugin, true);
-						pluginManager.startPlugin(plugin);
-					}
-					return;
-				}
-			}
-		}
-		catch (PluginInstantiationException e)
-		{
-			log.warn("OSParty: could not enable '{}' plugin", name, e);
-		}
+		specTracker.onFakeXpDrop(event);
+	}
+
+	@Subscribe
+	public void onNpcDespawned(NpcDespawned event)
+	{
+		specTracker.onNpcDespawned(event);
+	}
+
+	@Subscribe
+	public void onSpecDrainMessage(SpecDrainMessage event)
+	{
+		// A party member landed a defence-draining special attack; fold it into the
+		// tracker so our defence figure reflects the whole party's draining.
+		specTracker.onSpecDrain(event);
 	}
 
 	@Subscribe
@@ -601,6 +605,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	public void onStatChanged(StatChanged event)
 	{
 		liveParty.markLocalDirty();
+		specTracker.onStatChanged(event);
 	}
 
 	@Subscribe
@@ -842,6 +847,65 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	public long getAccountHash()
 	{
 		return accountHash;
+	}
+
+
+	public void hopTo(int worldNum)
+	{
+		if (worldNum <= 0 || client.getWorld() == worldNum)
+		{
+			return;
+		}
+
+		WorldResult worlds = worldService.getWorlds();
+		net.runelite.http.api.worlds.World target = worlds != null ? worlds.findWorld(worldNum) : null;
+		if (target == null)
+		{
+			gameMessage("Could not find world " + worldNum + " to hop to.");
+			return;
+		}
+
+		if (client.getGameState() == GameState.LOGIN_SCREEN)
+		{
+			clientThread.invoke(() -> client.changeWorld(toRsWorld(target)));
+			return;
+		}
+
+		if (!isPluginEnabled("World Hopper"))
+		{
+			gameMessage("Enable RuneLite's World Hopper plugin to hop to a party member's world.");
+			return;
+		}
+
+		// Fire World Hopper's ::hop command; it validates the world, opens the
+		// switcher and performs the hop the same way a manual ::hop would.
+		clientThread.invoke(() ->
+			eventBus.post(new CommandExecuted("hop", new String[]{Integer.toString(worldNum)})));
+	}
+
+	/** @return true if a RuneLite plugin with this display name is present and running. */
+	private boolean isPluginEnabled(String name)
+	{
+		for (Plugin plugin : pluginManager.getPlugins())
+		{
+			if (name.equals(plugin.getName()))
+			{
+				return pluginManager.isPluginEnabled(plugin);
+			}
+		}
+		return false;
+	}
+
+	private World toRsWorld(net.runelite.http.api.worlds.World source)
+	{
+		World rsWorld = client.createWorld();
+		rsWorld.setActivity(source.getActivity());
+		rsWorld.setAddress(source.getAddress());
+		rsWorld.setId(source.getId());
+		rsWorld.setPlayerCount(source.getPlayers());
+		rsWorld.setLocation(source.getLocation());
+		rsWorld.setTypes(WorldUtil.toWorldTypes(source.getTypes()));
+		return rsWorld;
 	}
 
 	@Override

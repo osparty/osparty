@@ -148,6 +148,7 @@ public class LiveParty
 		wsClient.registerMessage(ReadyCheckMessage.class);
 		wsClient.registerMessage(PingMessage.class);
 		wsClient.registerMessage(HostTransferMessage.class);
+		wsClient.registerMessage(SpecDrainMessage.class);
 	}
 
 	public void unregister()
@@ -159,6 +160,7 @@ public class LiveParty
 		wsClient.unregisterMessage(ReadyCheckMessage.class);
 		wsClient.unregisterMessage(PingMessage.class);
 		wsClient.unregisterMessage(HostTransferMessage.class);
+		wsClient.unregisterMessage(SpecDrainMessage.class);
 		reset();
 	}
 
@@ -1287,12 +1289,42 @@ public class LiveParty
 			return activity.flexibleNeededRoles(taken, capacity > 0 ? capacity : currentTeamSize);
 		}
 
+		// A composition may advertise flexible "Fill / Any" slots (Chambers of Xeric / CM). An
+		// applicant can take one with whatever concrete role they picked, so a taken role that
+		// matches no exact slot consumes an open Fill slot instead of leaking past the comp
+		// (which would leave the Fill stuck in "Needs" and let the room over-admit).
+		String fillId = fillRoleId(activity, requiredRoles);
 		List<String> remaining = new ArrayList<>(requiredRoles);
 		for (String role : taken)
 		{
-			remaining.remove(role);
+			if (!remaining.remove(role) && fillId != null)
+			{
+				remaining.remove(fillId);
+			}
 		}
 		return remaining;
+	}
+
+	/**
+	 * The "Fill / Any" wildcard role id this composition advertises (whichever mode's Fill
+	 * appears in {@code requiredRoles}), or null when the composition has no Fill slot — e.g.
+	 * Theatre of Blood, whose comp is exact. Lets a concrete-role pick consume a Fill slot.
+	 */
+	private static String fillRoleId(net.osparty.model.Activity activity, List<String> requiredRoles)
+	{
+		if (activity == null)
+		{
+			return null;
+		}
+		for (boolean hardMode : new boolean[]{false, true})
+		{
+			net.osparty.model.Role fill = activity.fillRole(hardMode);
+			if (fill != null && requiredRoles.contains(fill.getId()))
+			{
+				return fill.getId();
+			}
+		}
+		return null;
 	}
 
 	private long localId()

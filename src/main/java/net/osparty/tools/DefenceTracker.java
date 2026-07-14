@@ -6,18 +6,17 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.Value;
 import net.osparty.enums.BossDefence;
+import net.osparty.enums.SpecWeapon;
 import net.runelite.api.Client;
 import net.runelite.api.NPC;
 import net.runelite.api.Varbits;
-import net.runelite.client.plugins.specialcounter.SpecialCounterUpdate;
-import net.runelite.client.plugins.specialcounter.SpecialWeapon;
 
 /**
  * Tracks the live defence level of the monster a party is draining with
- * defence-lowering special attacks. It consumes {@link SpecialCounterUpdate}
- * events from RuneLite's Special Attack Counter plugin, which already aggregates
- * the local player's <em>and</em> party members' qualifying specs — so the
- * computed defence reflects the whole party's draining, not just our own.
+ * defence-lowering special attacks. Drains are supplied by
+ * {@link SpecialAttackTracker} for both the local player and party members (via
+ * the party bus), so the computed defence reflects the whole party's draining,
+ * not just our own.
  *
  * <p>The drain formulas and base-defence data are ported from the community
  * Party Defence Tracker plugin. Raid (CoX) party-size scaling is applied; the
@@ -37,7 +36,7 @@ public class DefenceTracker
 	private double bossStartDef;
 	private double minDef;
 
-	private final List<SpecialCounterUpdate> pending = new ArrayList<>();
+	private final List<Drain> pending = new ArrayList<>();
 
 	@Value
 	public static class DefenceState
@@ -48,6 +47,16 @@ public class DefenceTracker
 		long base;
 	}
 
+	/** One defence-draining special attack landed on an NPC, from any party member. */
+	@Value
+	private static class Drain
+	{
+		SpecWeapon weapon;
+		int npcIndex;
+		int hit;
+		int world;
+	}
+
 	@Inject
 	private DefenceTracker(Client client)
 	{
@@ -55,28 +64,29 @@ public class DefenceTracker
 	}
 
 	/**
-	 * Queue a special-counter update for processing on the next tick. Elder maul
-	 * applies its large reduction before other weapons landing the same tick, so
-	 * it's ordered first (mirrors the reference plugin).
+	 * Queue a defence-draining special attack for processing on the next tick.
+	 * Elder maul applies its large reduction before other weapons landing the same
+	 * tick, so it's ordered first (mirrors the reference plugin).
 	 */
-	public void queue(SpecialCounterUpdate event)
+	public void queue(SpecWeapon weapon, int npcIndex, int hit, int world)
 	{
-		if (event.getWeapon() == SpecialWeapon.ELDER_MAUL)
+		Drain drain = new Drain(weapon, npcIndex, hit, world);
+		if (weapon == SpecWeapon.ELDER_MAUL)
 		{
-			pending.add(0, event);
+			pending.add(0, drain);
 		}
 		else
 		{
-			pending.add(event);
+			pending.add(drain);
 		}
 	}
 
 	/** Client thread. */
 	public void onGameTick()
 	{
-		for (SpecialCounterUpdate event : pending)
+		for (Drain drain : pending)
 		{
-			process(event);
+			process(drain);
 		}
 		pending.clear();
 
@@ -90,9 +100,9 @@ public class DefenceTracker
 		}
 	}
 
-	private void process(SpecialCounterUpdate event)
+	private void process(Drain drain)
 	{
-		int index = event.getNpcIndex();
+		int index = drain.getNpcIndex();
 		NPC npc = npcByIndex(index);
 		if (npc == null || npc.getName() == null)
 		{
@@ -107,9 +117,9 @@ public class DefenceTracker
 		{
 			setBoss(name, index);
 		}
-		if (event.getWorld() == client.getWorld())
+		if (drain.getWorld() == client.getWorld())
 		{
-			calculateDefence(event.getWeapon(), event.getHit());
+			calculateDefence(drain.getWeapon(), drain.getHit());
 		}
 	}
 
@@ -130,7 +140,7 @@ public class DefenceTracker
 		bossStartDef = bossDef;
 	}
 
-	private void calculateDefence(SpecialWeapon weapon, int hit)
+	private void calculateDefence(SpecWeapon weapon, int hit)
 	{
 		double base = BossDefence.baseDefenceOf(bossName);
 		switch (weapon)
