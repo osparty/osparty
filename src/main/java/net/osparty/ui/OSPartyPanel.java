@@ -606,7 +606,7 @@ public class OSPartyPanel extends PluginPanel
 	/** Accept a party invite by joining via its invite code, reusing the Search panel's join-by-code flow. */
 	public void joinByInviteCode(String code, java.util.function.Consumer<String> status)
 	{
-		searchPanel.joinByCode(code, status);
+		searchPanel.joinByCode(code, status, true);
 	}
 
 	/** Re-render every view that draws Discord-role badges (called when the config toggle flips). */

@@ -79,6 +79,8 @@ public class LiveParty
 
 	private volatile String localRole;
 	private volatile boolean localLearner;
+	/** True while we're an invited joiner awaiting the host's (automatic) admission. */
+	private volatile boolean localInvited;
 	private volatile boolean localTeacher;
 
 	private final Map<Long, PlayerUpdate> playerData = new ConcurrentHashMap<>();
@@ -218,11 +220,22 @@ public class LiveParty
 	/** Join an advertised room as an applicant (pending until the host admits). */
 	public void joinParty(String passphrase, String activityId, int teamSize, String role, boolean learner)
 	{
+		joinParty(passphrase, activityId, teamSize, role, learner, false);
+	}
+
+	/**
+	 * Join an advertised room. When {@code invited} is true we broadcast that we were invited, so the host
+	 * auto-admits us instead of prompting for approval.
+	 */
+	public void joinParty(String passphrase, String activityId, int teamSize, String role, boolean learner,
+		boolean invited)
+	{
 		reset();
 		this.currentActivityId = activityId;
 		this.currentTeamSize = teamSize;
 		this.localRole = role;
 		this.localLearner = learner;
+		this.localInvited = invited;
 		localDirty = true;
 		partyService.changeParty(passphrase);
 		fire();
@@ -409,6 +422,7 @@ public class LiveParty
 		localRole = null;
 		localLearner = false;
 		localTeacher = false;
+		localInvited = false;
 		lastState = null;
 		stateDirty = false;
 		localDirty = false;
@@ -849,6 +863,7 @@ public class LiveParty
 				update.setRole(localRole);
 				update.setLearner(localLearner);
 				update.setTeacher(localTeacher);
+				update.setInvited(localInvited);
 				broadcastLocal(update);
 			}
 		}

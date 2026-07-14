@@ -569,6 +569,14 @@ class PartyPanel extends JPanel
 				applicant.setBlocked(true); // WARN: show it, flagged
 			}
 
+			// Invited players skip host approval: auto-admit them (unless blocked or the party is full).
+			if (!blocked && member.getData().isInvited()
+				&& liveParty.admit(member.getMemberId(), member.getName()))
+			{
+				hostApplicationHandler.announceInvitedAdmitted(applicant, activity);
+				continue;
+			}
+
 			fillKillcount(applicant, activity);
 			pending.add(applicant);
 

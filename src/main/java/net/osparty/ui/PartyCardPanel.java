@@ -490,6 +490,12 @@ abstract class PartyCardPanel extends JPanel
 
 	protected void doApply(Party party, String role, boolean learner)
 	{
+		doApply(party, role, learner, false);
+	}
+
+	/** {@code invited} joiners are auto-admitted by the host instead of waiting for approval. */
+	protected void doApply(Party party, String role, boolean learner, boolean invited)
+	{
 		String passphrase = party.getPassphrase();
 		if (passphrase == null || passphrase.isEmpty())
 		{
@@ -499,7 +505,7 @@ abstract class PartyCardPanel extends JPanel
 			updateAllButtons();
 			return;
 		}
-		liveParty.joinParty(passphrase, party.getActivity(), party.getCapacity(), role, learner);
+		liveParty.joinParty(passphrase, party.getActivity(), party.getCapacity(), role, learner, invited);
 		partyState.setMember(party);
 		String roleSuffix = role != null ? " as " + Role.displayNameOf(role) : "";
 		String learnerSuffix = learner ? " (learner)" : "";

@@ -19,4 +19,7 @@ public interface HostApplicationHandler
 
 	/** A block-listed applicant was auto-declined; post a chat line so the host knows. */
 	void announceAutoDeclinedBlocked(Applicant applicant, Activity activity);
+
+	/** An invited player was auto-admitted (no approval needed); post a chat line so the host knows. */
+	void announceInvitedAdmitted(Applicant applicant, Activity activity);
 }

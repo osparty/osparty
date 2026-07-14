@@ -870,6 +870,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		gameMessage("Auto-declined " + applicant.getName() + " - on your block list.");
 	}
 
+	@Override
+	public void announceInvitedAdmitted(Applicant applicant, Activity activity)
+	{
+		gameMessage(applicant.getName() + " accepted your invite and joined your "
+			+ activity.getDisplayName() + " party.");
+	}
+
 	/** A compact one-liner about an applicant (cb, KC, PB, total, account type, RuneWatch). */
 	private String applicantSummary(Applicant applicant, Activity activity)
 	{
