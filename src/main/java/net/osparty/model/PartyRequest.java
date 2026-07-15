@@ -30,6 +30,8 @@ public class PartyRequest
 	private String hostAccountType;
 	private boolean hardMode;
 	private int invocation;
+	/** Chambers of Xeric team-size scaling (e.g. "3+4"); empty when unset or not a CoX ad. */
+	private String coxScale;
 
 	/** A multiset of role ids. */
 	private List<String> requiredRoles;

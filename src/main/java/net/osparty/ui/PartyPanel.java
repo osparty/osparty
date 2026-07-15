@@ -368,9 +368,9 @@ class PartyPanel extends JPanel
 
 		boolean host = partyState.isHost();
 		Activity activity = Activity.fromId(party.getActivity());
-		String activityName = activity != null
+		String activityName = (activity != null
 			? activity.displayName(party.isHardMode(), party.getInvocation())
-			: party.getActivity();
+			: party.getActivity()) + PartyCardPanel.coxScaleSuffix(party);
 
 		JLabel header = new JLabel(host
 			? "Your " + activityName + " party"
@@ -567,6 +567,14 @@ class PartyPanel extends JPanel
 					continue; // don't surface an auto-declined applicant
 				}
 				applicant.setBlocked(true); // WARN: show it, flagged
+			}
+
+			// Invited players skip host approval: auto-admit them (unless blocked or the party is full).
+			if (!blocked && member.getData().isInvited()
+				&& liveParty.admit(member.getMemberId(), member.getName()))
+			{
+				hostApplicationHandler.announceInvitedAdmitted(applicant, activity);
+				continue;
 			}
 
 			fillKillcount(applicant, activity);
@@ -960,15 +968,18 @@ class PartyPanel extends JPanel
 			any = true;
 		}
 
-		// Hopping is disabled: RuneLite no longer permits plugins to switch worlds.
+		// Hop to the member's world (any viewer) when it differs from ours.
 		PlayerUpdate data = member.getData();
 		int world = data != null ? data.getWorld() : 0;
 		int mine = currentWorld.getAsInt();
 		if (world > 0 && mine > 0 && mine != world)
 		{
 			JButton hop = smallButton("Hop to");
-			hop.setToolTipText("disabled due to RL policy");
-			hop.setEnabled(false);
+			hop.setToolTipText("Hop to world " + world);
+			hop.addActionListener(e -> {
+				worldHopper.accept(world);
+				setStatus("Hopping to world " + world + "…");
+			});
 			wrap.add(hop);
 			any = true;
 		}

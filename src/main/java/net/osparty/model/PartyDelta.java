@@ -29,6 +29,7 @@ public class PartyDelta
 	private Integer minHardModeKillCount;
 	private Integer invocation;
 	private Boolean hardMode;
+	private String coxScale;
 
 	public String getId()
 	{
@@ -97,6 +98,10 @@ public class PartyDelta
 		if (hardMode != null)
 		{
 			p.setHardMode(hardMode);
+		}
+		if (coxScale != null)
+		{
+			p.setCoxScale(coxScale);
 		}
 	}
 }

@@ -80,6 +80,9 @@ public class PlayerUpdate extends PartyMemberMessage
 	/** Marked as the teacher for this raid (the host of a teaching raid). */
 	private boolean teacher;
 
+	/** True when we joined via a party invite; the host auto-admits us instead of prompting for approval. */
+	private boolean invited;
+
 	/** Seconds; {@code -1} when unknown. */
 	private double pbSeconds = -1;
 

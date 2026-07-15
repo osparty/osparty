@@ -21,6 +21,8 @@ public class Party
 	private String layout;
 	private boolean hardMode;
 	private int invocation;
+	/** Chambers of Xeric team-size scaling as the host advertises it (e.g. "3+4"); null/empty when unset. */
+	private String coxScale;
 	private long createdAt;
 
 	/**

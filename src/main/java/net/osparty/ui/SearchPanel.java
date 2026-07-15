@@ -1131,6 +1131,15 @@ class SearchPanel extends PartyCardPanel
 	/** Look up an invite code and apply to that party; progress/validation goes to {@code status}. */
 	public void joinByCode(String code, Consumer<String> status)
 	{
+		joinByCode(code, status, false);
+	}
+
+	/**
+	 * Look up an invite code and apply to that party. When {@code invited} is true (accepting a party
+	 * invite) we join as an invited player so the host auto-admits us instead of prompting.
+	 */
+	public void joinByCode(String code, Consumer<String> status, boolean invited)
+	{
 		String trimmed = code == null ? "" : code.trim();
 		if (trimmed.isEmpty())
 		{
@@ -1144,11 +1153,11 @@ class SearchPanel extends PartyCardPanel
 		}
 		status.accept("Looking up code " + trimmed + "...");
 		partyService.getPartyByCode(trimmed,
-			party -> SwingUtilities.invokeLater(() -> joinFetched(party, status)),
+			party -> SwingUtilities.invokeLater(() -> joinFetched(party, status, invited)),
 			error -> SwingUtilities.invokeLater(() -> status.accept("No party found for code " + trimmed + ".")));
 	}
 
-	private void joinFetched(Party party, Consumer<String> status)
+	private void joinFetched(Party party, Consumer<String> status, boolean invited)
 	{
 		if (party == null)
 		{
@@ -1183,7 +1192,7 @@ class SearchPanel extends PartyCardPanel
 		}
 
 		final String chosenRole = role;
-		leaveCurrentThen(() -> doApply(party, chosenRole));
+		leaveCurrentThen(() -> doApply(party, chosenRole, false, invited));
 	}
 
 	private LootRule lootFilterValue()
@@ -1638,6 +1647,11 @@ class SearchPanel extends PartyCardPanel
 		{
 			return true;
 		}
+		// The CoX team-size scaling as shown on the card, e.g. "3+4" (so "4", "3" and "3+4" all match).
+		if (contains(coxScaleOf(party), lowerQuery))
+		{
+			return true;
+		}
 		return activity != null && contains(activity.getDisplayName(), lowerQuery);
 	}
 
@@ -1695,6 +1709,7 @@ class SearchPanel extends PartyCardPanel
 			.append('L').append(party.getLayout() == null ? "" : party.getLayout())
 			.append('R').append(neededRolesOf(party) == null ? "" : neededRolesOf(party))
 			.append('d').append(party.isHardMode() ? "h" : "").append(party.getInvocation())
+			.append('c').append(party.getCoxScale() == null ? "" : party.getCoxScale())
 			// Host-editable card content, so an edit invalidates the cached render.
 			.append('K').append(party.getMinKillCount()).append('/').append(party.getMinHardModeKillCount())
 			.append('o').append(party.getLootRule() == null ? "" : party.getLootRule())

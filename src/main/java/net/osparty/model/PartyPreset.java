@@ -25,6 +25,8 @@ public class PartyPreset
 	private boolean includeLayout;
 	private boolean hardMode;
 	private int invocation;
+	/** Chambers of Xeric team-size scaling (e.g. "3+4"). */
+	private String coxScale;
 	private List<String> requiredRoles;
 	private String hostRole;
 	private boolean learner;

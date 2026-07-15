@@ -136,6 +136,32 @@ public interface OSPartyConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "inviteDisplay",
+		name = "Friend invites",
+		description = "How to surface a party invite from a friend: blink the OSParty sidebar button, post an "
+			+ "in-game chat line, both, or ignore invites entirely.",
+		position = 5,
+		section = GENERAL
+	)
+	default net.osparty.enums.InviteDisplay inviteDisplay()
+	{
+		return net.osparty.enums.InviteDisplay.BOTH;
+	}
+
+	@ConfigItem(
+		keyName = "desktopNotifications",
+		name = "Desktop notifications",
+		description = "Also send a desktop notification for OSParty events (party invites, friends-chat "
+			+ "requests, new applicants, ready checks). Off by default.",
+		position = 6,
+		section = GENERAL
+	)
+	default boolean desktopNotifications()
+	{
+		return false;
+	}
+
+	@ConfigItem(
 		keyName = "receiveFriendsChatRequests",
 		name = "Friends-chat join requests",
 		description = "Allow party hosts to ask you (via an on-screen popup) to join their friends chat. Turn off to ignore these requests.",

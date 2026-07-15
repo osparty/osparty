@@ -363,6 +363,15 @@ abstract class PartyCardPanel extends JPanel
 			}
 			return options;
 		}
+		// An open "Fill / Any" slot (Chambers of Xeric / CM) means the host welcomes any role,
+		// so let the applicant apply with the concrete role they want rather than only "Fill /
+		// Any" — offer the activity's full role set (which still includes Fill/Any for someone
+		// who genuinely doesn't mind). ToB has no Fill slot, so it stays constrained above.
+		Role fill = activity.fillRole(party.isHardMode());
+		if (fill != null && options.contains(fill))
+		{
+			return new ArrayList<>(activity.roles(party.isHardMode()));
+		}
 		if (options.isEmpty())
 		{
 			options.addAll(activity.roles(party.isHardMode()));
@@ -490,6 +499,12 @@ abstract class PartyCardPanel extends JPanel
 
 	protected void doApply(Party party, String role, boolean learner)
 	{
+		doApply(party, role, learner, false);
+	}
+
+	/** {@code invited} joiners are auto-admitted by the host instead of waiting for approval. */
+	protected void doApply(Party party, String role, boolean learner, boolean invited)
+	{
 		String passphrase = party.getPassphrase();
 		if (passphrase == null || passphrase.isEmpty())
 		{
@@ -499,7 +514,7 @@ abstract class PartyCardPanel extends JPanel
 			updateAllButtons();
 			return;
 		}
-		liveParty.joinParty(passphrase, party.getActivity(), party.getCapacity(), role, learner);
+		liveParty.joinParty(passphrase, party.getActivity(), party.getCapacity(), role, learner, invited);
 		partyState.setMember(party);
 		String roleSuffix = role != null ? " as " + Role.displayNameOf(role) : "";
 		String learnerSuffix = learner ? " (learner)" : "";
@@ -630,10 +645,10 @@ abstract class PartyCardPanel extends JPanel
 		info.setLayout(new BoxLayout(info, BoxLayout.Y_AXIS));
 		info.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 
-		// Activity title (Tier-1 heading: bold)
-		JLabel activityLabel = new JLabel(activity != null
+		// Activity title (Tier-1 heading: bold); CoX ads append their scale, e.g. "(3+4)".
+		JLabel activityLabel = new JLabel((activity != null
 			? activity.displayName(party.isHardMode(), party.getInvocation())
-			: party.getActivity());
+			: party.getActivity()) + coxScaleSuffix(party));
 		activityLabel.setForeground(Color.WHITE);
 		activityLabel.setFont(FontManager.getRunescapeBoldFont());
 
@@ -1004,6 +1019,30 @@ abstract class PartyCardPanel extends JPanel
 			tags.add("Ironman only");
 		}
 		return tags.isEmpty() ? null : String.join(", ", tags);
+	}
+
+	/** The CoX scale a party advertises (e.g. "3+4"), or "" when unset or not a CoX ad. */
+	static String coxScaleOf(Party party)
+	{
+		String scale = party.getCoxScale();
+		if (scale == null || scale.trim().isEmpty() || !"cox".equals(party.getActivity()))
+		{
+			return "";
+		}
+		scale = scale.trim();
+		// A bare scaling like "4" is shown combined with the party size, e.g. a 3-man → "3+4".
+		if (!scale.contains("+") && party.getCapacity() > 0)
+		{
+			return party.getCapacity() + "+" + scale;
+		}
+		return scale;
+	}
+
+	/** A title suffix like " (3+4)" for a CoX ad's scale, or "" when none. */
+	static String coxScaleSuffix(Party party)
+	{
+		String scale = coxScaleOf(party);
+		return scale.isEmpty() ? "" : " (" + scale + ")";
 	}
 
 	protected String requirementText(Activity activity, Party party)
