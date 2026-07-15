@@ -32,7 +32,13 @@ import java.awt.RenderingHints;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
+
 import com.google.gson.Gson;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
@@ -172,91 +178,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Inject
 	private EventBus eventBus;
 
-	private static final String INVITE_OPTION = "Invite to party";
-
-	private OSPartyPanel panel;
-	private NavigationButton navButton;
-	/** Red-dotted variant of the sidebar button, shown alternately with {@link #navButton} to blink on invite. */
-	private NavigationButton navButtonAlert;
-	/** Drives the sidebar invite blink on the EDT; null when not blinking. EDT-only. */
-	private javax.swing.Timer navBlinkTimer;
-	/** Whether the alert (red-dot) button is currently the one shown. EDT-only. */
-	private boolean navAlertShown;
-	/** Whether the OSParty side panel is currently open; gates the flash so it never closes the open panel. */
-	private volatile boolean panelActive;
-	/** Received invites awaiting an in-game chatbox Accept/Decline prompt (drained on the client thread). */
-	private final java.util.concurrent.ConcurrentLinkedDeque<PartyInvite> invitePromptQueue =
-		new java.util.concurrent.ConcurrentLinkedDeque<>();
-	/** Unresolved invites (by backend party id), shared by the chatbox prompt and the sidebar banner. */
-	private final java.util.Map<String, PartyInvite> activeInvites = new java.util.concurrent.ConcurrentHashMap<>();
-	/** Per-friend send cooldown: normalised name -> last invite epoch ms. */
-	private static final long INVITE_COOLDOWN_MS = 30_000;
-	private final java.util.Map<String, Long> lastInviteAt = new java.util.concurrent.ConcurrentHashMap<>();
-	/** Backend party id of the invite the chatbox prompt is currently showing; null when none. Client-thread. */
-	private String openInviteId;
-	/** Last identity we registered with the server, so onGameTick only re-sends on change. Client-thread only. */
-	private long identifiedHash;
-	private String identifiedName;
-	private ApplicantOverlay applicantOverlay;
-	private FcRequestOverlay fcRequestOverlay;
-	private ReadyCheckOverlay readyCheckOverlay;
-	private TilePingOverlay tilePingOverlay;
-	private NpcDefenceOverlay defenceOverlay;
-	private PlayerMarkerOverlay playerMarkerOverlay;
-	/** Status-bar defence info box, present only while tracking and the toggle is on. */
-	private DefenceInfoBox defenceBox;
-
-	/** True while the ping hotkey is held; a left-click then pings the hovered tile. */
-	private volatile boolean pingHotkeyDown;
-
-	/** Holding the ping hotkey arms a tile ping on the next left-click. */
-	private final HotkeyListener pingHotkeyListener = new HotkeyListener(() -> config.pingHotkey())
-	{
-		@Override
-		public void hotkeyPressed()
-		{
-			pingHotkeyDown = true;
-		}
-
-		@Override
-		public void hotkeyReleased()
-		{
-			pingHotkeyDown = false;
-		}
-	};
-
-	/** Consumes the hotkey+left-click and pings the tile under the cursor instead. */
-	private final MouseAdapter pingMouseListener = new MouseAdapter()
-	{
-		@Override
-		public MouseEvent mousePressed(MouseEvent event)
-		{
-			if (pingHotkeyDown && config.pings() && javax.swing.SwingUtilities.isLeftMouseButton(event)
-				&& liveParty.isConnected())
-			{
-				pingHoveredTile();
-				event.consume();
-			}
-			return event;
-		}
-	};
-
-	/** Last known logged-in player name. Written on the client thread, read (volatile) from the EDT. */
-	private volatile String playerName;
-
-	private volatile String friendsChatOwner;
-	private volatile int world;
-	/** Currently loaded map regions (for location-aware activity suggestions). */
-	private volatile int[] mapRegions;
-	private volatile String coxLayout;
-	private volatile AccountType accountType;
-	/** Local player's stable account id; {@code -1} when logged out. Sent to the API so blocks/favourites survive name changes. */
-	private volatile long accountHash = -1L;
-	/** Whether we've checked for a resumable hosted party since this login. */
-	private boolean rejoinChecked;
-
-	private WorldPinger worldPinger;
-
 	@Inject
 	private FavoritesService favoritesService;
 
@@ -274,15 +195,73 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 	@Inject
 	private SpriteManager spriteManager;
-	/** Snapshot of the local player's friends list, updated each game tick. */
+
+	private OSPartyPanel panel;
+	private NavigationButton navButton;
+	private NavigationButton navButtonAlert;
+	private javax.swing.Timer navBlinkTimer;
+	private boolean navAlertShown;
+	private volatile boolean panelActive;
+	private final ConcurrentLinkedDeque<PartyInvite> invitePromptQueue = new ConcurrentLinkedDeque<>();
+	private final Map<String, PartyInvite> activeInvites = new ConcurrentHashMap<>();
+	private static final long INVITE_COOLDOWN_MS = 30_000;
+	private final Map<String, Long> lastInviteAt = new ConcurrentHashMap<>();
+	private String openInviteId;
+	private long identifiedHash;
+	private String identifiedName;
+	private ApplicantOverlay applicantOverlay;
+	private FcRequestOverlay fcRequestOverlay;
+	private ReadyCheckOverlay readyCheckOverlay;
+	private TilePingOverlay tilePingOverlay;
+	private NpcDefenceOverlay defenceOverlay;
+	private PlayerMarkerOverlay playerMarkerOverlay;
+	private DefenceInfoBox defenceBox;
+	private volatile boolean pingHotkeyDown;
+	private volatile String playerName;
+	private volatile String friendsChatOwner;
+	private volatile int world;
+	private volatile int[] mapRegions;
+	private volatile String coxLayout;
+	private volatile AccountType accountType;
+	private volatile long accountHash = -1L;
+	private boolean rejoinChecked;
+	private WorldPinger worldPinger;
+
 	private volatile Set<String> friendNames = java.util.Collections.emptySet();
 
-	/** Applicants awaiting an in-game Accept/Decline prompt (host only). */
-	private final java.util.Deque<PendingPrompt> promptQueue = new java.util.ArrayDeque<>();
-	/** True while one of our chatbox prompts is open, so we show them one at a time. */
+	private final Deque<PendingPrompt> promptQueue = new ArrayDeque<>();
 	private boolean promptOpen;
-	/** Member id the open chatbox prompt is for, so we can close it if they're resolved elsewhere; 0 = none. */
 	private long openPromptMemberId;
+
+	private final HotkeyListener pingHotkeyListener = new HotkeyListener(() -> config.pingHotkey())
+	{
+		@Override
+		public void hotkeyPressed()
+		{
+			pingHotkeyDown = true;
+		}
+
+		@Override
+		public void hotkeyReleased()
+		{
+			pingHotkeyDown = false;
+		}
+	};
+
+	private final MouseAdapter pingMouseListener = new MouseAdapter()
+	{
+		@Override
+		public MouseEvent mousePressed(MouseEvent event)
+		{
+			if (pingHotkeyDown && config.pings() && javax.swing.SwingUtilities.isLeftMouseButton(event)
+					&& liveParty.isConnected())
+			{
+				pingHoveredTile();
+				event.consume();
+			}
+			return event;
+		}
+	};
 
 	private static final class PendingPrompt
 	{
@@ -589,15 +568,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Subscribe
 	public void onSpecDrainMessage(SpecDrainMessage event)
 	{
-		// A party member landed a defence-draining special attack; fold it into the
-		// tracker so our defence figure reflects the whole party's draining.
 		specTracker.onSpecDrain(event);
 	}
 
 	@Subscribe
 	public void onItemContainerChanged(ItemContainerChanged event)
 	{
-		// Inventory or equipment changed — re-broadcast our loadout next tick.
 		liveParty.markLocalDirty();
 	}
 
@@ -757,49 +733,36 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		gameMessage("Rejoined your " + name + " party - disband it from the OSParty panel if you're done.");
 	}
 
-	/**
-	 * @return the logged-in player's name, or {@code null} when logged out (the "logged out" signal).
-	 * Safe from the EDT; for pre-login identity use {@link #getSelfName()}.
-	 */
 	public String getPlayerName()
 	{
 		return playerName;
 	}
 
-	/**
-	 * Local player's name for identity matching (isSelf/favourites/blocks), known even pre-login via the
-	 * Jagex launcher display name. Unlike {@link #getPlayerName()} this is not a "logged in?" signal.
-	 */
 	public String getSelfName()
 	{
 		return playerName != null ? playerName : client.getLauncherDisplayName();
 	}
 
-	/** @return owner of the friends chat the player is in, or null. Safe from the EDT. */
 	public String getFriendsChatOwner()
 	{
 		return friendsChatOwner;
 	}
 
-	/** @return the current world, or 0 when not logged in. Safe from the EDT. */
 	public int getCurrentWorld()
 	{
 		return world;
 	}
 
-	/** @return the currently loaded map regions, or null when not logged in. Safe from the EDT. */
 	public int[] getMapRegions()
 	{
 		return mapRegions;
 	}
 
-	/** @return the current CoX raid layout string, or null when not in a raid. Safe from the EDT. */
 	public String getCoxLayout()
 	{
 		return coxLayout;
 	}
 
-	/** Resolve a world number to its {@link WorldRegion} (party-ad flag), or null. Safe from the EDT. */
 	public WorldRegion regionForWorld(int worldNum)
 	{
 		if (worldNum <= 0)
@@ -831,19 +794,16 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		return world != null ? world.getAddress() : null;
 	}
 
-	/** @return the set of normalised (lowercase) friend names. Safe from any thread. */
 	public Set<String> getFriendNames()
 	{
 		return friendNames;
 	}
 
-	/** @return the local player's account type, or null when not logged in. Safe from the EDT. */
 	public AccountType getAccountType()
 	{
 		return accountType;
 	}
 
-	/** @return the local player's account hash, or {@code -1} when not logged in. Safe from the EDT. */
 	public long getAccountHash()
 	{
 		return accountHash;
@@ -1175,7 +1135,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 		String partyId = party.getId();
 		client.createMenuEntry(-1)
-			.setOption(INVITE_OPTION)
+			.setOption("Invite to party")
 			.setTarget(event.getTarget())
 			.setType(MenuAction.RUNELITE)
 			.onClick(e -> sendInvite(partyId, friend));

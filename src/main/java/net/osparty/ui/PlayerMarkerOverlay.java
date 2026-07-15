@@ -7,27 +7,25 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.awt.Polygon;
+import java.awt.RenderingHints;
+import java.awt.Shape;
+import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
 import java.util.Map;
 import net.runelite.api.Client;
 import net.runelite.api.Perspective;
 import net.runelite.api.Player;
-import net.runelite.api.Point;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
 
 /**
- * Marks party members tagged as a learner or teacher in the game scene: an icon
- * beside their name and a coloured highlight on their tile. Untagged members get
- * nothing. The icon and tile marker are independent toggles, and the tile colour
- * is configurable per role. Driven by {@link LiveParty#learnerMarkers()}.
+ * Marks party members tagged as a learner or teacher in the game scene.
  */
 public class PlayerMarkerOverlay extends Overlay
 {
-	/** Gap in px between the icon and the name. */
-	private static final int ICON_GAP = 2;
+	private static final double ICON_TILE_FILL = 0.18;
 
 	private final Client client;
 	private final LiveParty liveParty;
@@ -79,7 +77,7 @@ public class PlayerMarkerOverlay extends Overlay
 			}
 			if (icons)
 			{
-				drawNameIcon(graphics, player, marker == Marker.TEACHER ? teacherIcon : learnerIcon);
+				drawTileIcon(graphics, player, marker == Marker.TEACHER ? teacherIcon : learnerIcon);
 			}
 		}
 		return null;
@@ -110,22 +108,57 @@ public class PlayerMarkerOverlay extends Overlay
 		graphics.draw(tile);
 	}
 
-	/** Draw the icon just left of the player's overhead name, like a clan icon. */
-	private void drawNameIcon(Graphics2D graphics, Player player, BufferedImage icon)
+	/** Draw the role icon flat on the player's tile, in perspective, like a ground decal. */
+	private void drawTileIcon(Graphics2D graphics, Player player, BufferedImage icon)
 	{
 		if (icon == null)
 		{
 			return;
 		}
-		String name = player.getName();
-		Point textLoc = player.getCanvasTextLocation(graphics, name,
-			player.getLogicalHeight() + config.markerNameOffset());
-		if (textLoc == null)
+		LocalPoint lp = player.getLocalLocation();
+		if (lp == null)
 		{
 			return;
 		}
-		int x = textLoc.getX() - ICON_GAP - icon.getWidth();
-		int y = textLoc.getY() - icon.getHeight();
-		graphics.drawImage(icon, x, y, null);
+		Polygon tile = Perspective.getCanvasTilePoly(client, lp);
+		if (tile == null || tile.npoints < 4)
+		{
+			return;
+		}
+		// getCanvasTilePoly corners: [0]=SW, [1]=SE, [2]=NE, [3]=NW. Inset toward the tile centre so the
+		// coloured tile stays visible as a frame around the icon.
+		double cx = (tile.xpoints[0] + tile.xpoints[1] + tile.xpoints[2] + tile.xpoints[3]) / 4.0;
+		double cy = (tile.ypoints[0] + tile.ypoints[1] + tile.ypoints[2] + tile.ypoints[3]) / 4.0;
+		double nwx = inset(cx, tile.xpoints[3]), nwy = inset(cy, tile.ypoints[3]);
+		double nex = inset(cx, tile.xpoints[2]), ney = inset(cy, tile.ypoints[2]);
+		double swx = inset(cx, tile.xpoints[0]), swy = inset(cy, tile.ypoints[0]);
+
+		double w = icon.getWidth();
+		double h = icon.getHeight();
+		if (w <= 0 || h <= 0)
+		{
+			return;
+		}
+		// Map the icon square onto the tile: top edge NW->NE, left edge NW->SW (icon "up" faces north).
+		AffineTransform transform = new AffineTransform(
+			(nex - nwx) / w, (ney - nwy) / w,
+			(swx - nwx) / h, (swy - nwy) / h,
+			nwx, nwy);
+
+		Shape oldClip = graphics.getClip();
+		Object oldInterp = graphics.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+		graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+		graphics.clip(tile);
+		graphics.drawImage(icon, transform, null);
+		graphics.setClip(oldClip);
+		if (oldInterp != null)
+		{
+			graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, oldInterp);
+		}
+	}
+
+	private static double inset(double centre, double corner)
+	{
+		return centre + (corner - centre) * ICON_TILE_FILL;
 	}
 }
