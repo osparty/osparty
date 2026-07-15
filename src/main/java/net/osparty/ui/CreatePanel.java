@@ -262,15 +262,15 @@ class CreatePanel extends JPanel implements Scrollable
 		invocationRow.setVisible(false);
 		add(invocationRow);
 
-		// Chambers of Xeric only: the team-size scaling the raid is run at, e.g. a 3-man
-		// scaled to 4 is written "3+4". Free text (the host's own notation), constrained to
-		// digits and '+' so it stays a compact scale string.
-		coxScaleField.setToolTipText("Team-size scaling, e.g. 3+4");
+		// Chambers of Xeric only: the scaling the raid is run at, entered as a plain number (the size
+		// the raid is scaled to). It's shown combined with the party size, e.g. a 3-man scaled to 4
+		// is entered as "4" and displayed as "3+4". Digits only.
+		coxScaleField.setToolTipText("Scaling (team size the raid is scaled to), e.g. 4");
 		((AbstractDocument) coxScaleField.getDocument()).setDocumentFilter(new DocumentFilter()
 		{
 			private boolean allowed(String text)
 			{
-				return text.chars().allMatch(c -> (c >= '0' && c <= '9') || c == '+');
+				return text.chars().allMatch(c -> c >= '0' && c <= '9');
 			}
 
 			@Override
@@ -284,13 +284,13 @@ class CreatePanel extends JPanel implements Scrollable
 			public void replace(FilterBypass fb, int offset, int length, String text,
 				javax.swing.text.AttributeSet attr) throws javax.swing.text.BadLocationException
 			{
-				if (text == null || (allowed(text) && fb.getDocument().getLength() - length + text.length() <= 7))
+				if (text == null || (allowed(text) && fb.getDocument().getLength() - length + text.length() <= 3))
 				{
 					super.replace(fb, offset, length, text, attr);
 				}
 			}
 		});
-		coxScaleRow = field("Scale (e.g. 3+4)", coxScaleField);
+		coxScaleRow = field("Scale (e.g. 4)", coxScaleField);
 		coxScaleRow.setVisible(false);
 		add(coxScaleRow);
 
