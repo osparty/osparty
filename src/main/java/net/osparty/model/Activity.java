@@ -20,7 +20,7 @@ public enum Activity
 	TOMBS_OF_AMASCUT("toa", "Tombs of Amascut", 1, 8, "Expert", 13354, 13454, 14160, 14162, 14164, 14674, 14676, 15184, 15186, 15188, 15696, 15698, 15700),
 	NEX("nex", "Nex", 1, 40, null, 11601, 11345),
 	NIGHTMARE("nightmare", "The Nightmare", 1, 80, null, 15515, 15256),
-	CORPOREAL_BEAST("corp", "Corporeal Beast", 1, 30, null, 12857),
+	CORPOREAL_BEAST("corp", "Corporeal Beast", 1, 30, null, 11844, 11842),
 	BARBARIAN_ASSAULT("ba", "Barbarian Assault", 5, 5, null, 10039),
 	ZALCANO("zalcano", "Zalcano", 1, 30, null, 13150),
 	HUEYCOATL("hueycoatl", "The Hueycoatl", 1, 10, null, 5939),
