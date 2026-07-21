@@ -24,7 +24,7 @@ public enum Activity
 	BARBARIAN_ASSAULT("ba", "Barbarian Assault", 5, 5, null, 10039, 10322, 7508, 7509),
 	ZALCANO("zalcano", "Zalcano", 1, 30, null, 13150, 12126),
 	HUEYCOATL("hueycoatl", "The Hueycoatl", 1, 10, null, 5939),
-	YAMA("yama", "Yama", 1, 2, null, 6045),
+	YAMA("yama", "Yama", 1, 2, null, 5789, 6045),
 	ROYAL_TITANS("royaltitans", "Royal Titans", 1, 2, null, 11925),
 	KREEARRA("kreearra", "Kree'arra", 1, 8, null, 11346),
 	GENERAL_GRAARDOR("graardor", "General Graardor", 1, 8, null, 11347),
