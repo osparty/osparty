@@ -15,7 +15,7 @@ import lombok.Getter;
 @Getter
 public enum Activity
 {
-	CHAMBERS_OF_XERIC("cox", "CoX", 1, 100, "CM", 4919),
+	CHAMBERS_OF_XERIC("cox", "CoX", 1, 100, "CM", 4919, 13136, 13137, 13138, 13139, 13140, 13141, 13393, 13394, 13395, 13396, 13397, 12889, 13145, 13401),
 	THEATRE_OF_BLOOD("tob", "Theatre of Blood", 3, 5, "HM", 14642),
 	TOMBS_OF_AMASCUT("toa", "Tombs of Amascut", 1, 8, "Expert", 13354),
 	NEX("nex", "Nex", 1, 40, null, 11601),
