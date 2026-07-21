@@ -1917,7 +1917,7 @@ class SearchPanel extends PartyCardPanel
 	private int countActiveFilters()
 	{
 		int count = 0;
-		if (selectedActivities.size() < Activity.values().length)
+		if (!selectedActivities.isEmpty())
 		{
 			count++;
 		}
