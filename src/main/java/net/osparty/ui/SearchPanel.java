@@ -956,8 +956,11 @@ class SearchPanel extends PartyCardPanel
 			header.add(groupLabel, BorderLayout.WEST);
 			activityListPanel.add(header);
 
-			// Activity checkboxes
-			for (Activity activity : group.activities)
+			// Activity checkboxes, alphabetical within the group (ignoring a leading "The ").
+			Activity[] sorted = group.activities.clone();
+			java.util.Arrays.sort(sorted, Comparator.comparing(
+				a -> a.getDisplayName().replaceFirst("(?i)^The ", ""), String.CASE_INSENSITIVE_ORDER));
+			for (Activity activity : sorted)
 			{
 				boolean nearby = activity == recommended;
 				JCheckBox box = new JCheckBox(activity.getDisplayName() + (nearby ? "  (nearby)" : ""));
