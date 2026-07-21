@@ -25,7 +25,7 @@ public enum Activity
 	ZALCANO("zalcano", "Zalcano", 1, 30, null, 13150, 12126),
 	HUEYCOATL("hueycoatl", "The Hueycoatl", 1, 10, null, 5939),
 	YAMA("yama", "Yama", 1, 2, null, 5789, 6045),
-	ROYAL_TITANS("royaltitans", "Royal Titans", 1, 2, null, 11925),
+	ROYAL_TITANS("royaltitans", "Royal Titans", 1, 2, null, 11925, 11669),
 	KREEARRA("kreearra", "Kree'arra", 1, 8, null, 11346),
 	GENERAL_GRAARDOR("graardor", "General Graardor", 1, 8, null, 11347),
 	KRIL_TSUTSAROTH("kril", "K'ril Tsutsaroth", 1, 8, null, 11603),
