@@ -699,7 +699,7 @@ abstract class PartyCardPanel extends JPanel
 			sub.append(" · stale");
 		}
 		JLabel meta = new JLabel(sub.toString());
-		meta.setForeground(stale ? ColorScheme.MEDIUM_GRAY_COLOR : ColorScheme.LIGHT_GRAY_COLOR);
+		meta.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		meta.setFont(FontManager.getRunescapeSmallFont());
 		meta.setAlignmentX(Component.LEFT_ALIGNMENT);
 

@@ -29,6 +29,7 @@ import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -108,7 +109,8 @@ class SearchPanel extends PartyCardPanel
 			Activity.COMMANDER_ZILYANA, Activity.NEX),
 		new ActivityGroup("Other",
 			Activity.NIGHTMARE, Activity.CORPOREAL_BEAST, Activity.BARBARIAN_ASSAULT,
-			Activity.ZALCANO, Activity.HUEYCOATL, Activity.YAMA, Activity.ROYAL_TITANS),
+			Activity.ZALCANO, Activity.HUEYCOATL, Activity.YAMA, Activity.ROYAL_TITANS,
+			Activity.VOLCANIC_MINE),
 	};
 
 	private static final String SORT_NEWEST = "Newest first";
@@ -124,8 +126,12 @@ class SearchPanel extends PartyCardPanel
 	private final JPanel activityListPanel = new JPanel();
 	private boolean activitiesExpanded;
 	private final JButton activitiesToggle = new JButton();
+	/** Toggles between selecting every activity and deselecting them all. */
+	private final JButton selectAllActivitiesButton = new JButton();
 	private final JPanel activityContent = new JPanel();
 	private final Set<Activity> selectedActivities = EnumSet.noneOf(Activity.class);
+	/** Per-activity open-party count badge, refreshed as the live list changes. */
+	private final Map<Activity, JLabel> activityCountLabels = new EnumMap<>(Activity.class);
 	private final Set<Role> selectedRoles = EnumSet.noneOf(Role.class);
 	private boolean rolesExpanded;
 	private final JButton roleToggle = new JButton();
@@ -138,7 +144,7 @@ class SearchPanel extends PartyCardPanel
 	private boolean regionsExpanded;
 	private final JButton regionToggle = new JButton();
 	private final JPanel regionContent = new JPanel();
-	/** Outer "Filters" disclosure that wraps every filter section (point 8). */
+	/** Outer "Filters" disclosure that wraps every filter section except Activities (point 8). */
 	private boolean filtersExpanded;
 	private final JButton filtersToggle = new JButton();
 	private final JPanel filtersContent = new JPanel();
@@ -159,7 +165,7 @@ class SearchPanel extends PartyCardPanel
 				return;
 			}
 			Graphics2D g2 = (Graphics2D) g.create();
-			g2.setColor(ColorScheme.MEDIUM_GRAY_COLOR);
+			g2.setColor(ColorScheme.LIGHT_GRAY_COLOR);
 			g2.setFont(getFont().deriveFont(Font.ITALIC));
 			Insets in = getInsets();
 			int baseline = getBaseline(getWidth(), getHeight());
@@ -179,6 +185,7 @@ class SearchPanel extends PartyCardPanel
 		new String[]{SORT_NEWEST, SORT_OLDEST, SORT_PING, SORT_FULL});
 	private final JLabel activeFiltersLabel = new JLabel();
 	private final JButton resetButton = new JButton("Reset");
+	private final JButton applyFiltersButton = new JButton("Apply filters");
 	private final JLabel statusLabel = new JLabel();
 	private final JPanel resultsPanel = new JPanel();
 	/** Results scroll vs the offline message + Reconnect button (point 52). */
@@ -224,9 +231,11 @@ class SearchPanel extends PartyCardPanel
 		JPanel north = new JPanel();
 		north.setLayout(new BoxLayout(north, BoxLayout.Y_AXIS));
 		north.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		north.add(buildActivityFilter());
 		north.add(buildFiltersSection());
 		north.add(buildControlsBar());
 		north.add(buildSearchBar());
+		north.add(buildApplyRow());
 		north.add(buildSortRow());
 
 		resultsPanel.setLayout(new BoxLayout(resultsPanel, BoxLayout.Y_AXIS));
@@ -302,10 +311,11 @@ class SearchPanel extends PartyCardPanel
 		}).start();
 	}
 
-	/** Wraps every filter section in one collapsible "Filters" disclosure (collapsed by default). */
+	/** Wraps the non-activity filter sections in one collapsible "Filters" disclosure (collapsed by default). */
 	private JPanel buildFiltersSection()
 	{
 		JPanel panel = cappedRow(new BorderLayout(0, 4));
+		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 
 		styleCollapsibleHeader(filtersToggle);
 		filtersToggle.addActionListener(e -> setFiltersExpanded(!filtersExpanded));
@@ -314,7 +324,6 @@ class SearchPanel extends PartyCardPanel
 		filtersContent.setLayout(new BoxLayout(filtersContent, BoxLayout.Y_AXIS));
 		filtersContent.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		filtersContent.setAlignmentX(Component.LEFT_ALIGNMENT);
-		filtersContent.add(buildActivityFilter());
 		filtersContent.add(buildRoleFilter());
 		filtersContent.add(buildRegionFilter());
 		filtersContent.add(buildTextFilter());
@@ -342,10 +351,36 @@ class SearchPanel extends PartyCardPanel
 		filtersToggle.setText(active == 0 ? "Filters" : "Filters (" + active + ")");
 	}
 
+	/** Full-width "Apply filters" button: force-refreshes the party list from the server. */
+	private JPanel buildApplyRow()
+	{
+		applyFiltersButton.setFocusPainted(false);
+		applyFiltersButton.setFont(FontManager.getRunescapeSmallFont());
+		applyFiltersButton.setToolTipText("Refresh the party list with the current filters");
+		applyFiltersButton.addActionListener(e -> forceRefresh());
+
+		JPanel row = cappedRow(new BorderLayout());
+		row.setBorder(BorderFactory.createEmptyBorder(2, 0, 0, 0));
+		row.add(applyFiltersButton, BorderLayout.CENTER);
+		return row;
+	}
+
+	/** Drop the cached render and re-subscribe so the server pushes a fresh party list. */
+	private void forceRefresh()
+	{
+		renderedSignature = null;
+		if (subscription != null)
+		{
+			stopSubscription();
+			startSubscription();
+		}
+		renderCurrent();
+	}
+
 	private JPanel buildSortRow()
 	{
 		sortComboBox.addActionListener(e -> filtersChanged());
-		JPanel sortRow = labeledRow("Sort", sortComboBox);
+		JPanel sortRow = labeledRow("Sort:", sortComboBox);
 		sortRow.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 		return sortRow;
 	}
@@ -355,7 +390,7 @@ class SearchPanel extends PartyCardPanel
 	{
 		JPanel bottomRow = cappedRow(new BorderLayout(4, 0));
 		bottomRow.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
-		activeFiltersLabel.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
+		activeFiltersLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		activeFiltersLabel.setFont(FontManager.getRunescapeSmallFont());
 		resetButton.setFocusPainted(false);
 		resetButton.setFont(FontManager.getRunescapeSmallFont());
@@ -377,7 +412,7 @@ class SearchPanel extends PartyCardPanel
 		JPanel panel = cappedRow(new BorderLayout(0, 4));
 		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 
-		styleCollapsibleHeader(activitiesToggle, true);
+		styleCollapsibleHeader(activitiesToggle);
 		updateActivitiesToggleText();
 		activitiesToggle.addActionListener(e -> setActivitiesExpanded(!activitiesExpanded));
 		panel.add(activitiesToggle, BorderLayout.NORTH);
@@ -393,12 +428,43 @@ class SearchPanel extends PartyCardPanel
 		// Show ~6 rows; the rest scroll.
 		scroll.setPreferredSize(new Dimension(10, 170));
 
+		// Select all / Deselect all sits just under the header separator, above the list.
+		selectAllActivitiesButton.setFocusPainted(false);
+		selectAllActivitiesButton.setFont(FontManager.getRunescapeSmallFont());
+		selectAllActivitiesButton.addActionListener(e -> toggleAllActivities());
+		updateSelectAllActivitiesText();
+		JPanel selectRow = new JPanel(new BorderLayout());
+		selectRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		selectRow.setBorder(BorderFactory.createEmptyBorder(4, 0, 4, 0));
+		selectRow.add(selectAllActivitiesButton, BorderLayout.CENTER);
+
 		activityContent.setLayout(new BorderLayout());
 		activityContent.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		activityContent.add(selectRow, BorderLayout.NORTH);
 		activityContent.add(scroll);
 		activityContent.setVisible(activitiesExpanded);
 		panel.add(activityContent, BorderLayout.CENTER);
 		return panel;
+	}
+
+	private void toggleAllActivities()
+	{
+		if (selectedActivities.size() < Activity.values().length)
+		{
+			selectedActivities.addAll(EnumSet.allOf(Activity.class));
+		}
+		else
+		{
+			selectedActivities.clear();
+		}
+		rebuildActivityList();
+		filtersChanged();
+	}
+
+	private void updateSelectAllActivitiesText()
+	{
+		selectAllActivitiesButton.setText(selectedActivities.size() < Activity.values().length
+			? "Select all" : "Deselect all");
 	}
 
 	private void setActivitiesExpanded(boolean expanded)
@@ -414,13 +480,13 @@ class SearchPanel extends PartyCardPanel
 	private void updateActivitiesToggleText()
 	{
 		activitiesToggle.setIcon(activitiesExpanded ? CARET_EXPANDED : CARET_COLLAPSED);
-		int n = selectedActivities.size();
-		activitiesToggle.setText(n == 0 ? "Activities" : "Activities (" + n + ")");
+		activitiesToggle.setText("Activities");
 	}
 
-	/** RuneLite's config-section caret (grey), pointing right when collapsed / down when expanded. */
-	private static final ImageIcon CARET_COLLAPSED = caret(0);
-	private static final ImageIcon CARET_EXPANDED = caret(Math.PI / 2);
+	/** RuneLite's config-section caret (grey), pointing right when collapsed / down when expanded.
+	 *  Package-private so other tabs (e.g. Create) can render matching collapsible headers. */
+	static final ImageIcon CARET_COLLAPSED = caret(0);
+	static final ImageIcon CARET_EXPANDED = caret(Math.PI / 2);
 
 	private static ImageIcon caret(double rotation)
 	{
@@ -456,9 +522,11 @@ class SearchPanel extends PartyCardPanel
 			: base.deriveFont(Font.BOLD));
 		toggle.setIconTextGap(6);
 		toggle.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+		// Sub-headers indent only the chevron and title, so they read as children of the
+		// "Filters" header while the underline and content keep the full sidebar width.
 		toggle.setBorder(BorderFactory.createCompoundBorder(
 			BorderFactory.createMatteBorder(0, 0, 1, 0, ColorScheme.MEDIUM_GRAY_COLOR),
-			BorderFactory.createEmptyBorder(3, 0, 4, 0)));
+			BorderFactory.createEmptyBorder(3, sub ? 10 : 0, 4, 0)));
 	}
 
 	/** The role multiselect (ToB/CoX): tick roles you'll fill; none ticked means no constraint. */
@@ -631,7 +699,7 @@ class SearchPanel extends PartyCardPanel
 		});
 
 		JPanel bar = cappedRow(new BorderLayout());
-		bar.setBorder(BorderFactory.createEmptyBorder(0, 0, 4, 0));
+		bar.setBorder(BorderFactory.createEmptyBorder(8, 0, 4, 0));
 		bar.add(textField, BorderLayout.CENTER);
 		return bar;
 	}
@@ -910,11 +978,67 @@ class SearchPanel extends PartyCardPanel
 					}
 					filtersChanged();
 				});
-				activityListPanel.add(box);
+
+				// Right-aligned open-party count in a subtle grey box with an orange number.
+				JLabel count = new JLabel("0");
+				count.setOpaque(true);
+				count.setBackground(ColorScheme.DARK_GRAY_COLOR);
+				count.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+				count.setFont(FontManager.getRunescapeSmallFont());
+				count.setHorizontalAlignment(SwingConstants.CENTER);
+				count.setBorder(BorderFactory.createEmptyBorder(1, 5, 1, 5));
+				activityCountLabels.put(activity, count);
+				// GridBagLayout centres the badge at its preferred size instead of stretching it row-tall.
+				JPanel badgeWrap = new JPanel(new GridBagLayout());
+				badgeWrap.setOpaque(false);
+				badgeWrap.add(count);
+
+				JPanel row = cappedRow(new BorderLayout(4, 0));
+				row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+				row.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 6));
+				row.add(box, BorderLayout.CENTER);
+				row.add(badgeWrap, BorderLayout.EAST);
+				activityListPanel.add(row);
 			}
 		}
+		updateActivityCounts();
 		activityListPanel.revalidate();
 		activityListPanel.repaint();
+	}
+
+	/** Refresh each activity row's count badge from the latest pushed list (open parties only). */
+	private void updateActivityCounts()
+	{
+		Map<Activity, Integer> counts = new EnumMap<>(Activity.class);
+		if (lastResults != null)
+		{
+			boolean showBlocked = Boolean.parseBoolean(
+				configManager.getConfiguration(OSPartyConfig.GROUP, "showBlockedParties"));
+			for (Party party : lastResults)
+			{
+				if (party.isFull())
+				{
+					continue;
+				}
+				if (!showBlocked && blockListService.hasAnyBlocked(party))
+				{
+					continue;
+				}
+				Activity act = Activity.fromId(party.getActivity());
+				if (act != null)
+				{
+					counts.merge(act, 1, Integer::sum);
+				}
+			}
+		}
+		for (Map.Entry<Activity, JLabel> entry : activityCountLabels.entrySet())
+		{
+			String text = Integer.toString(counts.getOrDefault(entry.getKey(), 0));
+			if (!text.equals(entry.getValue().getText()))
+			{
+				entry.getValue().setText(text);
+			}
+		}
 	}
 
 	/** Float the nearby activity to the top and highlight it, but never auto-check it (point 13). */
@@ -960,6 +1084,7 @@ class SearchPanel extends PartyCardPanel
 		updateActiveFiltersLabel();
 		updateFiltersToggleText();
 		updateActivitiesToggleText();
+		updateSelectAllActivitiesText();
 		reapplyFilters();
 		// Narrow/widen the server feed to match: scope to a single activity, else all.
 		if (subscription != null)
@@ -1102,7 +1227,10 @@ class SearchPanel extends PartyCardPanel
 		}
 		hideIneligibleFilter.setSelected(Boolean.parseBoolean(get(KEY_HIDE_INELIGIBLE)));
 		filtersExpanded = Boolean.parseBoolean(get(KEY_FILTERS_EXPANDED));
-		activitiesExpanded = Boolean.parseBoolean(get(KEY_ACTIVITIES_EXPANDED));
+		// Expanded by default: only an explicitly saved "false" collapses it.
+		String activitiesSaved = get(KEY_ACTIVITIES_EXPANDED);
+		activitiesExpanded = activitiesSaved == null || activitiesSaved.isEmpty()
+			|| Boolean.parseBoolean(activitiesSaved);
 	}
 
 	private static <T> String idsOf(Set<T> values, java.util.function.Function<T, String> id)
@@ -1359,6 +1487,8 @@ class SearchPanel extends PartyCardPanel
 	private void showResults(List<Party> parties)
 	{
 		lastResults = parties;
+		// Badges refresh on every push, even when the visible-card render below is skipped.
+		updateActivityCounts();
 
 		LootRule wantLoot = lootFilterValue();
 		boolean ironOnly = ironmanFilter.isSelected();
@@ -1546,7 +1676,9 @@ class SearchPanel extends PartyCardPanel
 			}
 		}
 
-		boolean filtersActive = countActiveFilters() > 0;
+		// Activities aren't in the badge count but still narrow the list, so the status stays "X of Y".
+		boolean filtersActive = countActiveFilters() > 0
+			|| selectedActivities.size() < Activity.values().length;
 		if (visible.isEmpty())
 		{
 			setStatus(filtersActive && totalOpen > 0
@@ -1921,14 +2053,10 @@ class SearchPanel extends PartyCardPanel
 		return sb.toString();
 	}
 
-	/** Count the number of non-default filters currently active. */
+	/** Count the number of non-default filters currently active (activities are counted separately). */
 	private int countActiveFilters()
 	{
 		int count = 0;
-		if (selectedActivities.size() < Activity.values().length)
-		{
-			count++;
-		}
 		if (!selectedRoles.isEmpty())
 		{
 			count++;

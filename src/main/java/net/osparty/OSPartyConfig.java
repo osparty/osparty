@@ -124,6 +124,30 @@ public interface OSPartyConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "hideInventory",
+		name = "Hide my inventory",
+		description = "Don't share your inventory (including rune pouch contents) with other party members.",
+		position = 18,
+		section = GENERAL
+	)
+	default boolean hideInventory()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "hideGear",
+		name = "Hide my gear",
+		description = "Don't share your equipped gear with other party members.",
+		position = 19,
+		section = GENERAL
+	)
+	default boolean hideGear()
+	{
+		return false;
+	}
+
+	@ConfigItem(
 		keyName = "inGamePrompts",
 		name = "In-game join prompts",
 		description = "As a host, show Accept/Decline for new applicants in the in-game chatbox (not just the side panel).",

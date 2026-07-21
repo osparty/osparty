@@ -148,7 +148,7 @@ public class KillcountService
 			case COMMANDER_ZILYANA:
 				return HiscoreSkill.COMMANDER_ZILYANA;
 			default:
-				return null; // BA has no boss killcount
+				return null; // BA and Volcanic Mine have no boss killcount
 		}
 	}
 

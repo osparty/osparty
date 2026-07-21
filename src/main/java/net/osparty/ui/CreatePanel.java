@@ -15,12 +15,14 @@ import com.google.gson.Gson;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Insets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -46,6 +48,7 @@ import javax.swing.JSpinner;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SpinnerNumberModel;
+import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.event.AncestorEvent;
@@ -86,7 +89,7 @@ class CreatePanel extends JPanel implements Scrollable
 	private final IntSupplier worldSupplier;
 	private final JLabel descCounter = new JLabel();
 
-	private final JComboBox<Activity> activityDropdown = new JComboBox<>(Activity.values());
+	private final JComboBox<Activity> activityDropdown = new JComboBox<>(sortedActivities());
 	/** The activity we're currently standing near (suggested at the top of the list). */
 	private Activity recommended;
 	private boolean rebuildingDropdown;
@@ -118,6 +121,15 @@ class CreatePanel extends JPanel implements Scrollable
 	private BiConsumer<String, Consumer<String>> joinByCodeHandler;
 	private JPanel difficultyHeader;
 	private JPanel rolesHeader;
+	/** Collapsible "Requirements", "Difficulty" and "Roles" sections, all collapsed by default. */
+	private boolean requirementsExpanded;
+	private final JButton requirementsToggle = new JButton();
+	private JPanel requirementsContent;
+	private boolean difficultyExpanded;
+	private final JButton difficultyToggle = new JButton();
+	private JPanel difficultyContent;
+	private boolean rolesExpanded;
+	private final JButton rolesToggle = new JButton();
 
 	private final JComboBox<String> favouriteDropdown = new JComboBox<>();
 	private boolean rebuildingFavourites;
@@ -131,7 +143,16 @@ class CreatePanel extends JPanel implements Scrollable
 	private final JComboBox<Role> myRoleDropdown = new JComboBox<>();
 	private JPanel rolesSection;
 	private JPanel roleCountsPanel;
-	private final JLabel roleTotalLabel = new JLabel();
+	/** Composition hint under "My role"; a wrapping text area so long summaries (BA, 4/5-man ToB) never truncate to "…". */
+	private final JTextArea roleTotalLabel = new JTextArea()
+	{
+		@Override
+		public Dimension getMaximumSize()
+		{
+			// BoxLayout may stretch children; cap the height so it only grows when the text wraps.
+			return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+		}
+	};
 	private final LinkedHashMap<String, JSpinner> roleCountSpinners = new LinkedHashMap<>();
 	private boolean rebuildingRoles;
 
@@ -236,31 +257,35 @@ class CreatePanel extends JPanel implements Scrollable
 		updateDescCounter();
 		add(descCounter);
 
-		// ---- Requirements ----
-		add(sectionHeader("Requirements"));
+		// ---- Requirements ---- (collapsible, collapsed by default)
+		add(collapsibleHeader(requirementsToggle, "Requirements", this::toggleRequirements));
+		requirementsContent = column();
 		minKcField = field("Minimum KC", minKcSpinner);
-		add(minKcField);
+		requirementsContent.add(minKcField);
 		hardKcField = field(hardKcLabel, hardKcSpinner);
-		add(hardKcField);
-		add(checkBoxRow(privateCheck));
-		add(checkBoxRow(ironmanCheck));
+		requirementsContent.add(hardKcField);
+		requirementsContent.add(checkBoxRow(privateCheck));
+		requirementsContent.add(checkBoxRow(ironmanCheck));
+		requirementsContent.setVisible(requirementsExpanded);
+		add(requirementsContent);
 
-		// ---- Difficulty ---- (header + rows hidden by applyActivityBounds when N/A)
-		difficultyHeader = sectionHeader("Difficulty");
+		// ---- Difficulty ---- (collapsible; header + rows hidden by applyActivityBounds when N/A)
+		difficultyHeader = collapsibleHeader(difficultyToggle, "Difficulty", this::toggleDifficulty);
 		add(difficultyHeader);
+		difficultyContent = column();
 		// Chambers of Xeric only: shown/hidden by applyActivityBounds.
 		includeLayoutRow = checkBoxRow(includeLayoutCheck);
 		includeLayoutRow.setVisible(false);
-		add(includeLayoutRow);
+		difficultyContent.add(includeLayoutRow);
 
 		// A CM/HMT toggle (CoX/ToB) or an invocation level (ToA); applyActivityBounds picks one.
 		hardModeRow = checkBoxRow(hardModeCheck);
 		hardModeRow.setVisible(false);
-		add(hardModeRow);
+		difficultyContent.add(hardModeRow);
 
 		invocationRow = field("Invocation level", invocationSpinner);
 		invocationRow.setVisible(false);
-		add(invocationRow);
+		difficultyContent.add(invocationRow);
 
 		// Chambers of Xeric only: the scaling the raid is run at, entered as a plain number (the size
 		// the raid is scaled to). It's shown combined with the party size, e.g. a 3-man scaled to 4
@@ -292,16 +317,19 @@ class CreatePanel extends JPanel implements Scrollable
 		});
 		coxScaleRow = field("Scale (e.g. 4)", coxScaleField);
 		coxScaleRow.setVisible(false);
-		add(coxScaleRow);
+		difficultyContent.add(coxScaleRow);
 
 		// Learner-raid tagging (raids only): ticking either Learner or Teacher marks
 		// the ad as a learner raid; neither leaves it a normal raid.
 		learnerRow = buildLearnerRow();
 		learnerRow.setVisible(false);
-		add(learnerRow);
+		difficultyContent.add(learnerRow);
+		difficultyContent.setVisible(difficultyExpanded);
+		add(difficultyContent);
 
 		// ---- Roles ---- (ToB/CoX only): the host's own role plus a count per role.
-		rolesHeader = sectionHeader("Roles");
+		// Collapsible and collapsed by default; only shown at all for role activities.
+		rolesHeader = collapsibleHeader(rolesToggle, "Roles", this::toggleRolesSection);
 		add(rolesHeader);
 		rolesSection = buildRolesSection();
 		rolesSection.setVisible(false);
@@ -328,7 +356,9 @@ class CreatePanel extends JPanel implements Scrollable
 		});
 
 		createButton.setFocusPainted(false);
-		createButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+		createButton.setBackground(ColorScheme.BRAND_ORANGE);
+		createButton.setForeground(Color.WHITE);
+		createButton.setFont(createButton.getFont().deriveFont(Font.BOLD));
 		createButton.addActionListener(e -> {
 			if (editing)
 			{
@@ -339,7 +369,12 @@ class CreatePanel extends JPanel implements Scrollable
 				create();
 			}
 		});
-		add(createButton);
+		// Full-width row so the button lines up with the fields above it.
+		JPanel createRow = column();
+		createRow.setLayout(new BorderLayout());
+		createRow.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
+		createRow.add(createButton, BorderLayout.CENTER);
+		add(createRow);
 
 		statusLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		statusLabel.setFont(FontManager.getRunescapeSmallFont());
@@ -453,12 +488,24 @@ class CreatePanel extends JPanel implements Scrollable
 			}
 			Role mine = (Role) myRoleDropdown.getSelectedItem();
 			String hostRole = mine != null ? mine.getId() : null;
-			if (hostRole == null || !req.contains(hostRole))
+			if (hostRole == null)
+			{
+				return false;
+			}
+			// The host's own pick can consume a Fill/Any slot (e.g. 5x Fill CoX, hosting as Melee).
+			if (!req.contains(hostRole) && !hasFillSlot(activity, req))
 			{
 				return false;
 			}
 		}
 		return true;
+	}
+
+	/** Whether the composition still has a Fill/Any slot for this activity and difficulty. */
+	private boolean hasFillSlot(Activity activity, List<String> requiredRoles)
+	{
+		Role fill = activity.fillRole(hardModeCheck.isSelected());
+		return fill != null && requiredRoles != null && requiredRoles.contains(fill.getId());
 	}
 
 	/** Enable/disable Create live based on validity (point 18); the role total label shows why. */
@@ -493,7 +540,7 @@ class CreatePanel extends JPanel implements Scrollable
 		{
 			activityDropdown.addItem(near);
 		}
-		for (Activity activity : Activity.values())
+		for (Activity activity : sortedActivities())
 		{
 			if (activity != near)
 			{
@@ -507,6 +554,14 @@ class CreatePanel extends JPanel implements Scrollable
 		}
 		rebuildingDropdown = false;
 		applyActivityBounds();
+	}
+
+	/** All activities in alphabetical order for the dropdown (the nearby one still floats to the top). */
+	private static Activity[] sortedActivities()
+	{
+		Activity[] sorted = Activity.values().clone();
+		Arrays.sort(sorted, Comparator.comparing(Activity::getDisplayName, String.CASE_INSENSITIVE_ORDER));
+		return sorted;
 	}
 
 	private JPanel field(String labelText, Component input)
@@ -644,6 +699,11 @@ class CreatePanel extends JPanel implements Scrollable
 
 		// The "include raid layout" option only makes sense for Chambers of Xeric.
 		boolean isCox = "cox".equals(activity.getId());
+		// Default it on when switching to CoX (a saved preset may still override it afterwards).
+		if (isCox && !includeLayoutRow.isVisible())
+		{
+			includeLayoutCheck.setSelected(true);
+		}
 		includeLayoutRow.setVisible(isCox);
 		if (!isCox)
 		{
@@ -686,16 +746,16 @@ class CreatePanel extends JPanel implements Scrollable
 
 		// Roles: a "my role" dropdown + per-role count spinners for ToB/CoX.
 		boolean hasRoles = activity.hasRoles();
-		rolesSection.setVisible(hasRoles);
+		rolesSection.setVisible(hasRoles && rolesExpanded);
 		if (hasRoles)
 		{
 			rebuildRoles(activity);
 		}
 
 		// Hide a section header when none of its rows apply to this activity.
-		boolean anyDifficulty = includeLayoutRow.isVisible() || hardModeRow.isVisible()
-			|| invocationRow.isVisible() || coxScaleRow.isVisible() || learnerRow.isVisible();
+		boolean anyDifficulty = anyDifficultyRows();
 		difficultyHeader.setVisible(anyDifficulty);
+		difficultyContent.setVisible(anyDifficulty && difficultyExpanded);
 		rolesHeader.setVisible(hasRoles);
 
 		refreshValidation();
@@ -727,6 +787,11 @@ class CreatePanel extends JPanel implements Scrollable
 		roleTotalLabel.setFont(FontManager.getRunescapeSmallFont());
 		roleTotalLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
 		roleTotalLabel.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
+		roleTotalLabel.setLineWrap(true);
+		roleTotalLabel.setWrapStyleWord(true);
+		roleTotalLabel.setEditable(false);
+		roleTotalLabel.setFocusable(false);
+		roleTotalLabel.setOpaque(false);
 		panel.add(roleTotalLabel);
 		return panel;
 	}
@@ -1112,6 +1177,90 @@ class CreatePanel extends JPanel implements Scrollable
 	}
 
 	/** A bold section divider in the Create form (Basics / Requirements / Difficulty / Roles). */
+	/** A vertical group of rows whose height tracks its content (so BoxLayout doesn't stretch it). */
+	private static JPanel column()
+	{
+		JPanel panel = new JPanel()
+		{
+			@Override
+			public Dimension getMaximumSize()
+			{
+				return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+			}
+		};
+		panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+		panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+		return panel;
+	}
+
+	/** A {@link #sectionHeader}-styled header with a chevron that collapses/expands its section. */
+	private JPanel collapsibleHeader(JButton toggle, String text, Runnable onToggle)
+	{
+		toggle.setText(text);
+		toggle.setIcon(SearchPanel.CARET_COLLAPSED);
+		toggle.setHorizontalAlignment(SwingConstants.LEFT);
+		toggle.setFocusPainted(false);
+		toggle.setContentAreaFilled(false);
+		toggle.setForeground(ColorScheme.BRAND_ORANGE);
+		toggle.setFont(FontManager.getRunescapeSmallFont().deriveFont(Font.BOLD));
+		toggle.setIconTextGap(6);
+		toggle.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+		toggle.setBorder(BorderFactory.createEmptyBorder(8, 0, 3, 0));
+		toggle.addActionListener(e -> onToggle.run());
+
+		JPanel row = new JPanel(new BorderLayout())
+		{
+			@Override
+			public Dimension getMaximumSize()
+			{
+				return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+			}
+		};
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row.setAlignmentX(Component.LEFT_ALIGNMENT);
+		row.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, ColorScheme.MEDIUM_GRAY_COLOR));
+		row.add(toggle, BorderLayout.CENTER);
+		return row;
+	}
+
+	private void toggleRequirements()
+	{
+		requirementsExpanded = !requirementsExpanded;
+		requirementsContent.setVisible(requirementsExpanded);
+		requirementsToggle.setIcon(requirementsExpanded
+			? SearchPanel.CARET_EXPANDED : SearchPanel.CARET_COLLAPSED);
+		revalidate();
+		repaint();
+	}
+
+	/** Whether the current activity has any difficulty-section rows to show. */
+	private boolean anyDifficultyRows()
+	{
+		return includeLayoutRow.isVisible() || hardModeRow.isVisible()
+			|| invocationRow.isVisible() || coxScaleRow.isVisible() || learnerRow.isVisible();
+	}
+
+	private void toggleDifficulty()
+	{
+		difficultyExpanded = !difficultyExpanded;
+		difficultyContent.setVisible(difficultyExpanded && anyDifficultyRows());
+		difficultyToggle.setIcon(difficultyExpanded
+			? SearchPanel.CARET_EXPANDED : SearchPanel.CARET_COLLAPSED);
+		revalidate();
+		repaint();
+	}
+
+	private void toggleRolesSection()
+	{
+		rolesExpanded = !rolesExpanded;
+		Activity activity = (Activity) activityDropdown.getSelectedItem();
+		rolesSection.setVisible(rolesExpanded && activity != null && activity.hasRoles());
+		rolesToggle.setIcon(rolesExpanded ? SearchPanel.CARET_EXPANDED : SearchPanel.CARET_COLLAPSED);
+		revalidate();
+		repaint();
+	}
+
 	private JPanel sectionHeader(String text)
 	{
 		JPanel row = new JPanel(new BorderLayout())
@@ -1167,11 +1316,25 @@ class CreatePanel extends JPanel implements Scrollable
 		}
 		Role mine = (Role) myRoleDropdown.getSelectedItem();
 		String hostRole = mine != null ? mine.getId() : null;
-		if (hostRole == null || !requiredRoles.contains(hostRole))
+		if (hostRole == null)
 		{
-			setStatus("Add at least one " + (mine != null ? mine.getDisplayName() : "of your role")
-				+ " slot — that's the role you'll fill.");
+			setStatus("Pick the role you'll fill.");
 			return null;
+		}
+		if (!requiredRoles.contains(hostRole))
+		{
+			// The host's pick consumes a Fill/Any slot: swap one Fill for their actual role so the
+			// advertised composition stays consistent with the role the host occupies.
+			Role fill = activity.fillRole(hardModeCheck.isSelected());
+			int fillIdx = fill == null || requiredRoles == null ? -1 : requiredRoles.indexOf(fill.getId());
+			if (fillIdx < 0)
+			{
+				setStatus("Add at least one " + mine.getDisplayName()
+					+ " slot — that's the role you'll fill.");
+				return null;
+			}
+			requiredRoles = new ArrayList<>(requiredRoles);
+			requiredRoles.set(fillIdx, hostRole);
 		}
 		return new RoleSelection(requiredRoles, hostRole);
 	}

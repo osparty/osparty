@@ -23,6 +23,7 @@ public enum Activity
 	CORPOREAL_BEAST("corp", "Corporeal Beast", 1, 30, null, 11844, 11842),
 	BARBARIAN_ASSAULT("ba", "Barbarian Assault", 5, 5, null, 10039, 10322, 7508, 7509),
 	ZALCANO("zalcano", "Zalcano", 1, 30, null, 13150, 12126),
+	VOLCANIC_MINE("volcanicmine", "Volcanic Mine", 1, 30, null, 15263, 15262, 15163),
 	HUEYCOATL("hueycoatl", "The Hueycoatl", 1, 10, null, 5939),
 	YAMA("yama", "Yama", 1, 2, null, 5789, 6045),
 	ROYAL_TITANS("royaltitans", "Royal Titans", 1, 2, null, 11925, 11669),
@@ -57,11 +58,12 @@ public enum Activity
 
 	/**
 	 * True when this activity has a hiscore killcount a host can set a minimum for.
-	 * Barbarian Assault is a minigame with no boss killcount, so its ads carry no KC bar.
+	 * Barbarian Assault and Volcanic Mine are minigames with no boss killcount, so
+	 * their ads carry no KC bar.
 	 */
 	public boolean hasKillcount()
 	{
-		return this != BARBARIAN_ASSAULT;
+		return this != BARBARIAN_ASSAULT && this != VOLCANIC_MINE;
 	}
 
 	public boolean isRaid()

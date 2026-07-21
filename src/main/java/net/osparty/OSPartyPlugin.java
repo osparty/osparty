@@ -29,6 +29,7 @@ import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.time.temporal.ChronoUnit;
@@ -71,6 +72,8 @@ import net.runelite.api.World;
 import net.runelite.client.audio.AudioPlayer;
 import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.config.Keybind;
+import net.runelite.client.input.KeyListener;
 import net.runelite.client.input.KeyManager;
 import net.runelite.client.input.MouseAdapter;
 import net.runelite.client.input.MouseManager;
@@ -233,18 +236,61 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private boolean promptOpen;
 	private long openPromptMemberId;
 
-	private final HotkeyListener pingHotkeyListener = new HotkeyListener(() -> config.pingHotkey())
+	/**
+	 * The OS-dependent twin of the backtick key: the same physical key is reported as
+	 * Back Quote on some platforms/layouts and as Dead Grave on others (e.g. Windows),
+	 * so a binding to either must accept both.
+	 */
+	private static int graveTwin(int keyCode)
+	{
+		if (keyCode == KeyEvent.VK_BACK_QUOTE)
+		{
+			return KeyEvent.VK_DEAD_GRAVE;
+		}
+		if (keyCode == KeyEvent.VK_DEAD_GRAVE)
+		{
+			return KeyEvent.VK_BACK_QUOTE;
+		}
+		return KeyEvent.VK_UNDEFINED;
+	}
+
+	private boolean pingHotkeyMatches(KeyEvent e, boolean release)
+	{
+		Keybind bind = config.pingHotkey();
+		int twin = graveTwin(bind.getKeyCode());
+		if (release)
+		{
+			// Match the key alone so releasing a modifier first can't leave the hotkey stuck down.
+			return e.getKeyCode() == bind.getKeyCode()
+				|| (twin != KeyEvent.VK_UNDEFINED && e.getKeyCode() == twin);
+		}
+		return bind.matches(e)
+			|| (twin != KeyEvent.VK_UNDEFINED && new Keybind(twin, bind.getModifiers()).matches(e));
+	}
+
+	private final KeyListener pingHotkeyListener = new KeyListener()
 	{
 		@Override
-		public void hotkeyPressed()
+		public void keyTyped(KeyEvent e)
 		{
-			pingHotkeyDown = true;
 		}
 
 		@Override
-		public void hotkeyReleased()
+		public void keyPressed(KeyEvent e)
 		{
-			pingHotkeyDown = false;
+			if (pingHotkeyMatches(e, false))
+			{
+				pingHotkeyDown = true;
+			}
+		}
+
+		@Override
+		public void keyReleased(KeyEvent e)
+		{
+			if (pingHotkeyMatches(e, true))
+			{
+				pingHotkeyDown = false;
+			}
 		}
 	};
 
@@ -426,6 +472,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			&& "showDiscordBadges".equals(event.getKey()) && panel != null)
 		{
 			SwingUtilities.invokeLater(panel::refreshDiscordBadgeViews);
+		}
+		// Re-broadcast our snapshot right away so hiding/unhiding inventory or gear takes effect
+		// for the party without waiting for the periodic re-announce.
+		if (OSPartyConfig.GROUP.equals(event.getGroup())
+			&& ("hideInventory".equals(event.getKey()) || "hideGear".equals(event.getKey())))
+		{
+			liveParty.markLocalDirty();
 		}
 	}
 

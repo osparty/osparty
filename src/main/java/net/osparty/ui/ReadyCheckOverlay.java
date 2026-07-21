@@ -55,6 +55,15 @@ public class ReadyCheckOverlay extends OverlayPanel
 			.right(status.getSecondsLeft() + "s")
 			.leftColor(status.isLocalReady() ? Color.GREEN : Color.WHITE)
 			.build());
+		// Can't ready up from another world: tell the player where to hop.
+		if (!status.isLocalReady() && liveParty.onDifferentWorldThanHost())
+		{
+			int hostWorld = liveParty.hostWorld();
+			panelComponent.getChildren().add(LineComponent.builder()
+				.left("Hop to the host's world" + (hostWorld > 0 ? " (W" + hostWorld + ")" : ""))
+				.leftColor(Color.RED)
+				.build());
+		}
 
 		return super.render(graphics);
 	}

@@ -73,6 +73,7 @@ public class LiveParty
 	private final Client client;
 	private final ClientThread clientThread;
 	private final ConfigManager configManager;
+	private final net.osparty.OSPartyConfig config;
 
 	private volatile String currentActivityId;
 	private volatile int currentTeamSize;
@@ -138,13 +139,14 @@ public class LiveParty
 
 	@Inject
 	private LiveParty(PartyService partyService, WSClient wsClient, Client client, ClientThread clientThread,
-		ConfigManager configManager)
+		ConfigManager configManager, net.osparty.OSPartyConfig config)
 	{
 		this.partyService = partyService;
 		this.wsClient = wsClient;
 		this.client = client;
 		this.clientThread = clientThread;
 		this.configManager = configManager;
+		this.config = config;
 	}
 
 	public void register()
@@ -673,7 +675,8 @@ public class LiveParty
 	/** Start a ready check (anyone in the party may). The starter counts as ready. */
 	public void startReadyCheck()
 	{
-		if (!isConnected())
+		// The starter counts as ready, so starting is world-gated exactly like readying up.
+		if (!isConnected() || onDifferentWorldThanHost())
 		{
 			return;
 		}
@@ -697,7 +700,8 @@ public class LiveParty
 
 	public void markReady()
 	{
-		if (readyCheckId == 0)
+		// Guard against a stale enabled button: never ready up from another world than the host.
+		if (readyCheckId == 0 || onDifferentWorldThanHost())
 		{
 			return;
 		}
@@ -901,6 +905,20 @@ public class LiveParty
 			PlayerUpdate update = LocalPlayerSync.snapshot(client);
 			if (update != null)
 			{
+				// Privacy settings: strip inventory/gear before they ever leave this client,
+				// so peers simply receive an update without that data.
+				if (config.hideInventory())
+				{
+					update.setInventory(null);
+					update.setInventoryQuantities(null);
+					update.setRunePouch(null);
+					update.setRunePouchAmounts(null);
+					update.setRunePouchNames(null);
+				}
+				if (config.hideGear())
+				{
+					update.setEquipment(null);
+				}
 				// Our personal best for this party's activity+size (read locally).
 				update.setPbSeconds(PersonalBests.read(configManager, currentActivityId, currentTeamSize));
 				// The role we've chosen to fill (a user choice, not read from the client).
@@ -1313,6 +1331,30 @@ public class LiveParty
 		out.sort(Comparator.comparingInt((RosterMember m) -> m.getStatus().ordinal())
 			.thenComparing(RosterMember::getName, Comparator.nullsLast(String::compareToIgnoreCase)));
 		return out;
+	}
+
+	/** The world the host is currently on (live player data; our own world when hosting), or 0 when unknown. */
+	public int hostWorld()
+	{
+		if (hosting)
+		{
+			PlayerUpdate mine = playerData.get(localId());
+			return mine != null && mine.getWorld() > 0 ? mine.getWorld() : client.getWorld();
+		}
+		if (lastState != null)
+		{
+			PlayerUpdate data = playerData.get(lastState.getHostMemberId());
+			return data != null ? data.getWorld() : 0;
+		}
+		return 0;
+	}
+
+	/** True when both worlds are known and the local player is not on the host's world. */
+	public boolean onDifferentWorldThanHost()
+	{
+		int host = hostWorld();
+		int mine = client.getWorld();
+		return host > 0 && mine > 0 && host != mine;
 	}
 
 	private boolean isRecent(long now, long memberId)

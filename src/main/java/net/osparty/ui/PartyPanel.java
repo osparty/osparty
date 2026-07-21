@@ -1910,11 +1910,22 @@ class PartyPanel extends JPanel
 		{
 			JButton start = new JButton("Start ready check");
 			start.setFocusPainted(false);
-			start.addActionListener(e -> {
-				liveParty.startReadyCheck();
-				setStatus("Ready check started.");
-				refresh();
-			});
+			// Starting counts you as ready, so it's world-gated exactly like readying up.
+			if (liveParty.onDifferentWorldThanHost())
+			{
+				start.setEnabled(false);
+				int hostWorld = liveParty.hostWorld();
+				start.setToolTipText("Hop to the host's world"
+					+ (hostWorld > 0 ? " (W" + hostWorld + ")" : "") + " to start a ready check.");
+			}
+			else
+			{
+				start.addActionListener(e -> {
+					liveParty.startReadyCheck();
+					setStatus("Ready check started.");
+					refresh();
+				});
+			}
 			row.add(start, BorderLayout.CENTER);
 			return row;
 		}
@@ -1924,10 +1935,21 @@ class PartyPanel extends JPanel
 		{
 			JButton ready = new JButton("Ready up (" + counts + ")");
 			ready.setFocusPainted(false);
-			ready.addActionListener(e -> {
-				liveParty.markReady();
-				refresh();
-			});
+			// Readying up implies being where the party is: greyed out until you're on the host's world.
+			if (liveParty.onDifferentWorldThanHost())
+			{
+				ready.setEnabled(false);
+				int hostWorld = liveParty.hostWorld();
+				ready.setToolTipText("Hop to the host's world"
+					+ (hostWorld > 0 ? " (W" + hostWorld + ")" : "") + " to ready up.");
+			}
+			else
+			{
+				ready.addActionListener(e -> {
+					liveParty.markReady();
+					refresh();
+				});
+			}
 			row.add(ready, BorderLayout.CENTER);
 		}
 		else
