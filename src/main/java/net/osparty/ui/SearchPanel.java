@@ -108,7 +108,7 @@ class SearchPanel extends PartyCardPanel
 			Activity.COMMANDER_ZILYANA, Activity.NEX),
 		new ActivityGroup("Other",
 			Activity.NIGHTMARE, Activity.CORPOREAL_BEAST, Activity.BARBARIAN_ASSAULT,
-			Activity.ZALCANO, Activity.HUEYCOATL, Activity.YAMA),
+			Activity.ZALCANO, Activity.HUEYCOATL, Activity.YAMA, Activity.ROYAL_TITANS),
 	};
 
 	private static final String SORT_NEWEST = "Newest first";
