@@ -21,6 +21,7 @@ final class StatusIcons
 	static final ImageIcon CROSS = new ImageIcon(cross());
 	static final ImageIcon CHEVRON_DOWN = new ImageIcon(chevron(true));
 	static final ImageIcon CHEVRON_UP = new ImageIcon(chevron(false));
+	static final ImageIcon KEBAB = new ImageIcon(kebab());
 	static final ImageIcon FRIENDS_CHAT = loadFriendsChat();
 	static final ImageIcon ONLINE = new ImageIcon(dot(new Color(0x4C, 0xD1, 0x37)));
 	static final ImageIcon OFFLINE = new ImageIcon(dot(new Color(0xD1, 0x3A, 0x3A)));
@@ -83,6 +84,20 @@ final class StatusIcons
 			g.drawLine(3, 9, 7, 5);
 			g.drawLine(7, 5, 11, 9);
 		}
+		g.dispose();
+		return img;
+	}
+
+	/** Three vertical dots — the "more actions" (kebab) glyph, matching the chevron's grey. */
+	private static BufferedImage kebab()
+	{
+		BufferedImage img = base();
+		Graphics2D g = img.createGraphics();
+		hints(g);
+		g.setColor(new Color(0xA0, 0xA0, 0xA0));
+		g.fillOval(6, 2, 3, 3);
+		g.fillOval(6, 6, 3, 3);
+		g.fillOval(6, 10, 3, 3);
 		g.dispose();
 		return img;
 	}

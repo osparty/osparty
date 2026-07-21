@@ -62,8 +62,10 @@ import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.Scrollable;
 import javax.swing.SwingConstants;
@@ -124,9 +126,6 @@ class PartyPanel extends JPanel
 	private final Runnable onAuthorizeDiscord;
 	private final java.util.function.LongSupplier accountHashSupplier;
 	private final HostTransferHandler hostTransferHandler;
-	/** Favorite-star sprites (gold = favorited, grey = not), matching the Search panel; null until loaded. */
-	private BufferedImage memberStarImg;
-	private BufferedImage freeStarImg;
 
 	/** Skills in the in-game skills-tab layout (row-major, 3 columns), total last. */
 	private static final Skill[] SKILL_LAYOUT = {
@@ -171,6 +170,23 @@ class PartyPanel extends JPanel
 	private final Map<Long, Long> fcRequestCooldown = new HashMap<>();
 	private static final long FC_REQUEST_COOLDOWN_MS = 10_000;
 
+	/**
+	 * The freshest ad member list (with server-asserted Discord badges), fetched from
+	 * {@code getPartyByHost} whenever the roster changes. The stored {@code currentParty} is a
+	 * snapshot from join/create time that never gains later joiners' badges, so without this a
+	 * viewer only ever sees the host's.
+	 */
+	private volatile List<Member> liveAdMembers;
+	private String liveAdBadgeSig = "";
+	/** Roster membership last seen; a change (join/leave/admit/hash resolve) triggers an ad refetch. */
+	private String lastRosterKey;
+
+	/** Reused member rows, keyed by memberId, rebuilt only when {@link #memberSignature} changes. */
+	private final Map<Long, JPanel> memberEntryCache = new HashMap<>();
+	private final Map<Long, String> memberEntrySig = new HashMap<>();
+	/** Memoised orb sprites so a reused/rebuilt vitals row sets its icon synchronously (no flicker). */
+	private final Map<Integer, ImageIcon> orbIconCache = new HashMap<>();
+
 	PartyPanel(PartyService partyService, Supplier<String> playerNameSupplier,
                HostApplicationHandler hostApplicationHandler, PartyState partyState, ItemManager itemManager,
                LiveParty liveParty, RuneWatchService runeWatch, KillcountService killcounts,
@@ -195,14 +211,6 @@ class PartyPanel extends JPanel
 		this.killcounts = killcounts;
 		this.skillIcons = skillIcons;
 		this.spriteManager = spriteManager;
-		if (spriteManager != null)
-		{
-			// Same favorite-star sprites as the Search panel: 1131 = members (gold), 1130 = free (grey).
-			spriteManager.getSpriteAsync(1131, 0,
-				img -> { if (img != null) { memberStarImg = ImageUtil.resizeImage(img, 14, 14); } });
-			spriteManager.getSpriteAsync(1130, 0,
-				img -> { if (img != null) { freeStarImg = ImageUtil.resizeImage(img, 14, 14); } });
-		}
 		this.currentWorld = currentWorld;
 		this.worldHopper = worldHopper;
 		this.friendsChatOwnerSupplier = friendsChatOwnerSupplier;
@@ -356,6 +364,11 @@ class PartyPanel extends JPanel
 			detailTab.clear();
 			notifiedPending.clear();
 			autoDeclinedBlocked.clear();
+			memberEntryCache.clear();
+			memberEntrySig.clear();
+			liveAdMembers = null;
+			liveAdBadgeSig = "";
+			lastRosterKey = null;
 			lastReportedSize = -1;
 			lastReportedLayout = null;
 			hostApplicationHandler.setPendingApplicants(java.util.Collections.emptyList(), null);
@@ -396,6 +409,15 @@ class PartyPanel extends JPanel
 		}
 
 		List<RosterMember> roster = liveParty.isConnected() ? liveParty.roster() : null;
+
+		// Only fetch the live ad (for badges) when the roster actually changes — a member joins,
+		// leaves, is admitted, or their accountHash finally resolves — not on every vitals update.
+		String rosterKey = rosterKey(party.getId(), roster);
+		if (!rosterKey.equals(lastRosterKey))
+		{
+			lastRosterKey = rosterKey;
+			refreshAdBadges();
+		}
 
 		int admitted = roster == null ? 0
 			: (int) roster.stream().filter(m -> m.getStatus() != Status.PENDING).count();
@@ -491,6 +513,7 @@ class PartyPanel extends JPanel
 			// "In the friends chat" means the host's own FC, matched by host name.
 			String hostName = party.getHost();
 			boolean anyPending = false;
+			Set<Long> seenIds = new HashSet<>();
 			for (RosterMember member : roster)
 			{
 				// Real synced applicants go in their own section below; ignore data-less ghosts.
@@ -502,7 +525,8 @@ class PartyPanel extends JPanel
 					}
 					continue;
 				}
-				content.add(buildMemberEntry(party, activity, member, host, hostName));
+				seenIds.add(member.getMemberId());
+				content.add(memberEntry(party, activity, member, host, hostName));
 				content.add(Box.createVerticalStrut(4));
 			}
 
@@ -514,11 +538,16 @@ class PartyPanel extends JPanel
 				{
 					if (member.getStatus() == Status.PENDING && !member.isLocal() && member.getData() != null)
 					{
-						content.add(buildMemberEntry(party, activity, member, true, hostName));
+						seenIds.add(member.getMemberId());
+						content.add(memberEntry(party, activity, member, true, hostName));
 						content.add(Box.createVerticalStrut(4));
 					}
 				}
 			}
+
+			// Evict rows for members who have left so the caches can't grow without bound.
+			memberEntryCache.keySet().retainAll(seenIds);
+			memberEntrySig.keySet().retainAll(seenIds);
 		}
 
 		if (host && roster != null)
@@ -606,6 +635,56 @@ class PartyPanel extends JPanel
 		}
 	}
 
+	/**
+	 * A member row, reused from {@link #memberEntryCache} when nothing it renders has changed. Every
+	 * refresh tears down and re-adds {@code content}; handing back the same panel instances (whose
+	 * icons are already loaded) is what stops the roster flickering as live updates stream in.
+	 */
+	private JPanel memberEntry(Party party, Activity activity, RosterMember member, boolean host,
+		String hostName)
+	{
+		long id = member.getMemberId();
+		String sig = memberSignature(party, activity, member, host);
+		JPanel cached = memberEntryCache.get(id);
+		if (cached != null && sig.equals(memberEntrySig.get(id)))
+		{
+			return cached;
+		}
+		JPanel entry = buildMemberEntry(party, activity, member, host, hostName);
+		memberEntryCache.put(id, entry);
+		memberEntrySig.put(id, sig);
+		return entry;
+	}
+
+	/** Everything {@link #buildMemberEntry} renders, so a matching signature means an identical row. */
+	private String memberSignature(Party party, Activity activity, RosterMember member, boolean host)
+	{
+		long id = member.getMemberId();
+		PlayerUpdate data = member.getData();
+		boolean isExpanded = expanded.contains(id);
+		boolean fav = favoritesService != null && member.getName() != null && !member.isLocal()
+			&& favoritesService.isFavorite(memberHash(member), member.getName());
+		boolean blocked = blockListService != null && member.getName() != null
+			&& blockListService.isBlocked(memberHash(member), member.getName());
+		List<String> badges = adBadges(party, member);
+		boolean fcReady = fcRequestCooldown.getOrDefault(id, 0L) - System.currentTimeMillis() <= 0;
+		// KC shows only in the expanded detail and arrives via an async lookup, so fold it in there.
+		String kcSig = "";
+		if (isExpanded && data != null && activity != null && data.getName() != null && data.getKillCount() < 0)
+		{
+			KillcountService.Killcount c = killcounts.cached(data.getName(), activity);
+			kcSig = c == null ? "?" : c.killCount + "/" + c.hardModeKillCount;
+		}
+		return id + "|" + member.getStatus() + "|" + member.isOnline() + "|" + member.getName()
+			+ "|" + member.isLocal() + "|" + isExpanded + "|" + detailTab.getOrDefault(id, TAB_SKILLS)
+			+ "|" + host + "|" + currentWorld.getAsInt() + "|" + fav + "|" + blocked
+			+ "|" + (runeWatch.get(member.getName()) != null)
+			+ "|" + (badges == null ? "" : String.join(",", badges)) + "|" + fcReady
+			+ "|" + (activity == null ? "" : activity.getId())
+			+ "|" + liveParty.getLocalRole() + "|" + liveParty.isLocalLearner()
+			+ "|" + (data == null ? 0 : data.hashCode()) + "|" + kcSig;
+	}
+
 	private JPanel buildMemberEntry(Party party, Activity activity, RosterMember member, boolean host,
 		String hostName)
 	{
@@ -614,7 +693,18 @@ class PartyPanel extends JPanel
 
 		JPanel entry = cappedPanel(new BorderLayout(0, 4));
 		entry.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		entry.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
+		if (status == Status.HOST)
+		{
+			// Mark the host with an orange outline (the panel's BRAND_ORANGE accent), not a crown in
+			// front of the name — the crown pushed long (12-char) names with icons off the row.
+			entry.setBorder(BorderFactory.createCompoundBorder(
+				BorderFactory.createLineBorder(ColorScheme.BRAND_ORANGE, 1),
+				BorderFactory.createEmptyBorder(5, 7, 5, 7)));
+		}
+		else
+		{
+			entry.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
+		}
 		entry.setAlignmentX(Component.LEFT_ALIGNMENT);
 
 		JPanel stack = new JPanel();
@@ -630,33 +720,22 @@ class PartyPanel extends JPanel
 		JLabel dot = new JLabel(online ? StatusIcons.ONLINE : StatusIcons.OFFLINE);
 		dot.setToolTipText(online ? "Online" : "Offline");
 
-		// Host gets a gold crown, not "(host)" text.
+		// Host is marked by the entry's orange outline (above); name is orange too, no "(host)" text.
 		String tag = status == Status.PENDING ? " (pending)" : "";
 		JLabel name = new JLabel(member.getName() + tag);
 		name.setForeground(status == Status.HOST ? ColorScheme.BRAND_ORANGE
 			: status == Status.PENDING ? ColorScheme.PROGRESS_INPROGRESS_COLOR : Color.WHITE);
 		applyAccountIcon(name, member.getData());
 
+		// Favourite/block/kick now live on the row's right-click menu (see memberMenu), not as icons.
+		// The online/offline dot moved down to the status line (left of the world), so the name, world
+		// and vitals all share the same left edge.
 		JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
 		((FlowLayout) left.getLayout()).setAlignOnBaseline(true);
 		left.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		left.add(dot);
-		JButton star = memberStar(member);
-		if (star != null)
-		{
-			left.add(star);
-		}
-		JButton block = memberBlock(member);
-		if (block != null)
-		{
-			left.add(block);
-		}
-		if (status == Status.HOST && StatusIcons.CROWN != null)
-		{
-			JLabel crown = new JLabel(StatusIcons.CROWN);
-			crown.setToolTipText("Host");
-			left.add(crown);
-		}
+		// The account-type icon fills its box from the left, but the dot/heart glyphs below carry ~4px of
+		// internal padding — nudge the name in to line the ironman icon up with that left column.
+		left.setBorder(BorderFactory.createEmptyBorder(0, 4, 0, 0));
 		left.add(name);
 
 		// RuneWatch warning icon, trailing the name (point 31; non-ironman badge dropped).
@@ -683,6 +762,9 @@ class PartyPanel extends JPanel
 		chevron.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 2));
 		chevron.addMouseListener(expandOnClick(member));
 
+		// Same actions as the row's right-click menu; the host also gets a visible 3-dot button for them.
+		JPopupMenu menu = memberMenu(activity, member, host);
+
 		// Discord-role badges (server-asserted on the ad, matched by accountHash) sit left of the chevron.
 		JPanel east = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
 		east.setBackground(ColorScheme.DARKER_GRAY_COLOR);
@@ -698,6 +780,25 @@ class PartyPanel extends JPanel
 			}
 		}
 		east.add(chevron);
+		if (host && menu != null)
+		{
+			JLabel kebab = new JLabel(StatusIcons.KEBAB);
+			kebab.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+			kebab.setToolTipText("Member actions");
+			kebab.setBorder(BorderFactory.createEmptyBorder(0, 2, 0, 2));
+			kebab.addMouseListener(new MouseAdapter()
+			{
+				@Override
+				public void mousePressed(MouseEvent e)
+				{
+					if (SwingUtilities.isLeftMouseButton(e))
+					{
+						menu.show(kebab, 0, kebab.getHeight());
+					}
+				}
+			});
+			east.add(kebab);
+		}
 
 		topRow.add(left, BorderLayout.CENTER);
 		topRow.add(east, BorderLayout.EAST);
@@ -729,19 +830,20 @@ class PartyPanel extends JPanel
 			bits.add("W" + world);
 		}
 
-		JPanel metaRow = cappedPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+		// Status line: the online/offline dot leads (left of the world), left-aligned under the name
+		// above and the vitals below. Leading gap 5 lines the dot glyph up with the ironman-icon/heart column.
+		JPanel metaRow = cappedPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
 		((FlowLayout) metaRow.getLayout()).setAlignOnBaseline(true);
 		metaRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		metaRow.setAlignmentX(Component.LEFT_ALIGNMENT);
-		metaRow.setBorder(BorderFactory.createEmptyBorder(0, 16, 2, 0));
-		boolean anyMeta = false;
+		metaRow.setBorder(BorderFactory.createEmptyBorder(0, 0, 2, 0));
+		metaRow.add(dot);
 		if (!bits.isEmpty())
 		{
 			JLabel metaLabel = new JLabel(String.join("  ·  ", bits));
 			metaLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 			metaLabel.setFont(FontManager.getRunescapeSmallFont());
 			metaRow.add(metaLabel);
-			anyMeta = true;
 		}
 		// FC presence only matters for CoX (raid formed via host's FC); hidden elsewhere.
 		boolean showFc = hostName != null && data != null && activity == Activity.CHAMBERS_OF_XERIC;
@@ -759,12 +861,9 @@ class PartyPanel extends JPanel
 				? "In " + hostName + "'s friends chat"
 				: "Not in " + hostName + "'s friends chat");
 			metaRow.add(fcIcon);
-			anyMeta = true;
 		}
-		if (anyMeta)
-		{
-			stack.add(metaRow);
-		}
+		// Always shown now — it carries the presence dot even when there's no role/world/FC.
+		stack.add(metaRow);
 
 		// ---- vitals line: HP · prayer · spec · run energy (always shown once live) ----
 		JComponent vitals = buildVitalsRow(data);
@@ -773,15 +872,15 @@ class PartyPanel extends JPanel
 			stack.add(vitals);
 		}
 
-		// ---- action buttons ----
+		// ---- action buttons (right-aligned to the same edge as the badges/chevron/kebab above) ----
 		JComponent actions = buildActionsRow(activity, member, host, hostName);
 		if (actions != null)
 		{
-			JPanel actionRow = cappedPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+			JPanel actionRow = cappedPanel(new BorderLayout());
 			actionRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 			actionRow.setAlignmentX(Component.LEFT_ALIGNMENT);
-			actionRow.setBorder(BorderFactory.createEmptyBorder(0, 16, 0, 0));
-			actionRow.add(actions);
+			actionRow.setBorder(BorderFactory.createEmptyBorder(2, 0, 0, 2));
+			actionRow.add(actions, BorderLayout.EAST);
 			stack.add(actionRow);
 		}
 
@@ -792,82 +891,113 @@ class PartyPanel extends JPanel
 			entry.add(buildDetail(activity, member), BorderLayout.CENTER);
 		}
 
+		// Right-click anywhere on the row opens the same actions (kept alongside the host's 3-dot button).
+		if (menu != null)
+		{
+			entry.setComponentPopupMenu(menu);
+			inheritPopupMenu(entry);
+		}
+
 		return entry;
 	}
 
-	/** A favorite-toggle star for any roster member (point 34), keyed by name. */
-	private JButton memberStar(RosterMember member)
+	/**
+	 * Right-click actions for a roster member: favourite and block toggles, and (host only, on an
+	 * admitted member) kick / kick-and-block. {@code null} for yourself or when nothing applies.
+	 */
+	private JPopupMenu memberMenu(Activity activity, RosterMember member, boolean host)
 	{
-		// No star on yourself — you can't favorite your own account.
-		if (favoritesService == null || member.getName() == null || member.isLocal())
+		if (member.isLocal() || member.getName() == null)
 		{
-			return null;
+			return null; // no actions on yourself
 		}
 		final String rsn = member.getName();
 		final long hash = memberHash(member);
-		JButton star = new JButton();
-		star.setFocusPainted(false);
-		star.setContentAreaFilled(false);
-		star.setBorderPainted(false);
-		star.setMargin(new Insets(0, 2, 0, 2));
-		boolean fav = favoritesService.isFavorite(hash, rsn);
-		star.setIcon(favStarIcon(fav));
-		star.setToolTipText(fav ? "Remove " + rsn + " from Favorites" : "Add " + rsn + " to Favorites");
-		star.addActionListener(e -> {
-			favoritesService.toggle(hash, rsn);
-			boolean nowFav = favoritesService.isFavorite(hash, rsn);
-			star.setIcon(favStarIcon(nowFav));
-			star.setToolTipText(nowFav ? "Remove " + rsn + " from Favorites" : "Add " + rsn + " to Favorites");
-		});
-		return star;
+		JPopupMenu menu = new JPopupMenu();
+		boolean any = false;
+
+		if (favoritesService != null)
+		{
+			boolean fav = favoritesService.isFavorite(hash, rsn);
+			JMenuItem favItem = new JMenuItem(fav ? "Remove from Favorites" : "Add to Favorites");
+			favItem.addActionListener(e -> {
+				favoritesService.toggle(hash, rsn);
+				refresh();
+			});
+			menu.add(favItem);
+			any = true;
+		}
+
+		if (blockListService != null)
+		{
+			boolean blocked = blockListService.isBlocked(hash, rsn);
+			JMenuItem blockItem = new JMenuItem(blocked ? "Remove from blocklist" : "Add to blocklist");
+			blockItem.addActionListener(e -> toggleBlock(hash, rsn, blocked));
+			menu.add(blockItem);
+			any = true;
+		}
+
+		if (host && member.getStatus() == Status.MEMBER)
+		{
+			menu.addSeparator();
+			JMenuItem kickItem = new JMenuItem("Kick player");
+			kickItem.addActionListener(e -> kick(activity, member));
+			menu.add(kickItem);
+			JMenuItem kickBlockItem = new JMenuItem("Kick and block player");
+			kickBlockItem.addActionListener(e -> kickAndBlock(activity, member, hash, rsn));
+			menu.add(kickBlockItem);
+			any = true;
+		}
+
+		return any ? menu : null;
 	}
 
-	/** The favorite star, using the Search panel's sprite icons when loaded, else the drawn fallback. */
-	private ImageIcon favStarIcon(boolean fav)
+	/** Toggle a member's block state, confirming before a block and clearing any conflicting favourite. */
+	private void toggleBlock(long hash, String rsn, boolean wasBlocked)
 	{
-		if (memberStarImg != null && freeStarImg != null)
+		// Confirm the consequences before blocking, but let unblocking happen instantly.
+		if (!wasBlocked && !BlockConfirm.confirm(this, rsn))
 		{
-			return new ImageIcon(fav ? memberStarImg : freeStarImg);
+			return;
 		}
-		return fav ? StatusIcons.STAR_FILLED : StatusIcons.STAR_OUTLINE;
+		blockListService.toggle(hash, rsn);
+		if (!wasBlocked && favoritesService != null && favoritesService.isFavorite(hash, rsn))
+		{
+			favoritesService.toggle(hash, rsn); // blocking and favouriting are mutually exclusive
+		}
+		refresh();
 	}
 
-	/** A block-toggle button for any roster member (keyed by accountHash when known). */
-	private JButton memberBlock(RosterMember member)
+	/** Kick a member and add them to the block list (host only), confirming the block first. */
+	private void kickAndBlock(Activity activity, RosterMember member, long hash, String rsn)
 	{
-		// You can't block your own account.
-		if (blockListService == null || member.getName() == null || member.isLocal())
+		if (!BlockConfirm.confirm(this, rsn))
 		{
-			return null;
+			return;
 		}
-		final String rsn = member.getName();
-		final long hash = memberHash(member);
-		JButton block = new JButton();
-		block.setFocusPainted(false);
-		block.setContentAreaFilled(false);
-		block.setBorderPainted(false);
-		block.setMargin(new Insets(0, 2, 0, 2));
-		boolean blocked = blockListService.isBlocked(hash, rsn);
-		block.setIcon(blocked ? StatusIcons.BLOCK_ON : StatusIcons.BLOCK_OFF);
-		block.setToolTipText(blocked ? "Unblock " + rsn : "Block " + rsn);
-		block.addActionListener(e -> {
-			boolean wasBlocked = blockListService.isBlocked(hash, rsn);
-			// Confirm the consequences before blocking (but let unblocking happen instantly).
-			if (!wasBlocked && !BlockConfirm.confirm(block, rsn))
-			{
-				return;
-			}
+		if (!blockListService.isBlocked(hash, rsn))
+		{
 			blockListService.toggle(hash, rsn);
-			boolean nowBlocked = !wasBlocked;
-			if (nowBlocked && favoritesService != null && favoritesService.isFavorite(hash, rsn))
+			if (favoritesService != null && favoritesService.isFavorite(hash, rsn))
 			{
 				favoritesService.toggle(hash, rsn);
 			}
-			block.setIcon(nowBlocked ? StatusIcons.BLOCK_ON : StatusIcons.BLOCK_OFF);
-			block.setToolTipText(nowBlocked ? "Unblock " + rsn : "Block " + rsn);
-			refresh();
-		});
-		return block;
+		}
+		kick(activity, member); // refreshes and sets the status line
+	}
+
+	/** Let every descendant defer its right-click to {@code root}'s component popup menu. */
+	private static void inheritPopupMenu(JComponent root)
+	{
+		for (Component child : root.getComponents())
+		{
+			if (child instanceof JComponent)
+			{
+				JComponent jc = (JComponent) child;
+				jc.setInheritsPopupMenu(true);
+				inheritPopupMenu(jc);
+			}
+		}
 	}
 
 	/** The member's self-reported accountHash, or {@code 0} until they've synced. */
@@ -878,7 +1008,9 @@ class PartyPanel extends JPanel
 
 	/**
 	 * Discord-role badges the API asserted for this member on the ad (matched by accountHash,
-	 * then name), or {@code null} when hidden or none.
+	 * then name), or {@code null} when hidden or none. Prefers the freshly-polled ad
+	 * ({@link #liveAdMembers}) so later joiners' badges appear; {@code currentParty} is a snapshot
+	 * from join/create time that only ever reliably carries the host's badge.
 	 */
 	private List<String> adBadges(Party party, RosterMember member)
 	{
@@ -886,14 +1018,26 @@ class PartyPanel extends JPanel
 		{
 			return null;
 		}
-		if (party == null || party.getMembers() == null)
+		long hash = memberHash(member);
+		String name = member.getName();
+		List<String> live = badgesFrom(liveAdMembers, hash, name);
+		if (live != null)
+		{
+			return live;
+		}
+		return party == null ? null : badgesFrom(party.getMembers(), hash, name);
+	}
+
+	/** Badges for the member matching {@code hash} (then {@code name}) in {@code members}, or null. */
+	private static List<String> badgesFrom(List<Member> members, long hash, String name)
+	{
+		if (members == null)
 		{
 			return null;
 		}
-		long hash = memberHash(member);
 		if (hash != 0)
 		{
-			for (Member adMember : party.getMembers())
+			for (Member adMember : members)
 			{
 				if (adMember != null && adMember.getAccountHash() == hash)
 				{
@@ -901,10 +1045,9 @@ class PartyPanel extends JPanel
 				}
 			}
 		}
-		String name = member.getName();
 		if (name != null)
 		{
-			for (Member adMember : party.getMembers())
+			for (Member adMember : members)
 			{
 				if (adMember != null && adMember.getName() != null
 					&& normalizeName(adMember.getName()).equalsIgnoreCase(normalizeName(name)))
@@ -914,6 +1057,72 @@ class PartyPanel extends JPanel
 			}
 		}
 		return null;
+	}
+
+	/** Membership key over (partyId, each member's id·status·accountHash); changes on join/leave/admit/hash-resolve. */
+	private static String rosterKey(String partyId, List<RosterMember> roster)
+	{
+		StringBuilder sb = new StringBuilder(partyId == null ? "" : partyId).append('|');
+		if (roster != null)
+		{
+			for (RosterMember m : roster)
+			{
+				sb.append(m.getMemberId()).append(':').append(m.getStatus()).append(':')
+					.append(memberHash(m)).append(';');
+			}
+		}
+		return sb.toString();
+	}
+
+	/** Fetch the current party's live ad and, if its badges changed, adopt them and re-render. */
+	private void refreshAdBadges()
+	{
+		Party party = partyState.getCurrentParty();
+		if (party == null || party.getHost() == null
+			|| (config != null && !config.showDiscordBadges()))
+		{
+			return;
+		}
+		partyService.getPartyByHost(party.getHost(),
+			fresh -> SwingUtilities.invokeLater(() -> onAdBadgesFetched(fresh)),
+			err -> { /* no ad for this host right now — keep the last known badges */ });
+	}
+
+	private void onAdBadgesFetched(Party fresh)
+	{
+		// Ignore a response that arrived after we left the party.
+		if (fresh == null || !partyState.isInParty())
+		{
+			return;
+		}
+		String sig = badgeSignature(fresh.getMembers());
+		if (sig.equals(liveAdBadgeSig))
+		{
+			return; // unchanged — don't churn the roster
+		}
+		liveAdBadgeSig = sig;
+		liveAdMembers = fresh.getMembers();
+		refresh();
+	}
+
+	/** A stable string over each ad member's (hash, name, badges), for change detection. */
+	private static String badgeSignature(List<Member> members)
+	{
+		if (members == null || members.isEmpty())
+		{
+			return "";
+		}
+		StringBuilder sb = new StringBuilder();
+		for (Member m : members)
+		{
+			if (m == null)
+			{
+				continue;
+			}
+			sb.append(m.getAccountHash()).append(':').append(m.getName()).append('=')
+				.append(m.getBadges() == null ? "" : String.join(",", m.getBadges())).append(';');
+		}
+		return sb.toString();
 	}
 
 	private static String normalizeName(String name)
@@ -928,6 +1137,11 @@ class PartyPanel extends JPanel
 			@Override
 			public void mousePressed(MouseEvent e)
 			{
+				// Left-click toggles; let right-click fall through to the row's popup menu.
+				if (!SwingUtilities.isLeftMouseButton(e))
+				{
+					return;
+				}
 				long id = member.getMemberId();
 				if (!expanded.remove(id))
 				{
@@ -960,13 +1174,7 @@ class PartyPanel extends JPanel
 			wrap.add(decline);
 			any = true;
 		}
-		else if (host && member.getStatus() == Status.MEMBER)
-		{
-			JButton kick = smallButton("Kick");
-			kick.addActionListener(e -> kick(activity, member));
-			wrap.add(kick);
-			any = true;
-		}
+		// Kick / kick-and-block moved to the row's right-click menu (see memberMenu).
 
 		// Hop to the member's world (any viewer) when it differs from ours.
 		PlayerUpdate data = member.getData();
@@ -1136,6 +1344,13 @@ class PartyPanel extends JPanel
 	/** Load an orb sprite scaled to fit {@link #ORB_ICON} so wider orbs don't overflow the label. */
 	private void loadOrbIcon(JLabel label, int spriteId)
 	{
+		// Memoised: once resolved, a rebuilt/reused vitals row sets its orb synchronously (no blank flash).
+		ImageIcon ready = orbIconCache.get(spriteId);
+		if (ready != null)
+		{
+			label.setIcon(ready);
+			return;
+		}
 		if (spriteManager == null)
 		{
 			return;
@@ -1151,7 +1366,9 @@ class PartyPanel extends JPanel
 			int h = Math.max(1, (int) Math.round(img.getHeight() * scale));
 			BufferedImage scaled = ImageUtil.resizeImage(img, w, h);
 			SwingUtilities.invokeLater(() -> {
-				label.setIcon(new ImageIcon(scaled));
+				ImageIcon icon = new ImageIcon(scaled);
+				orbIconCache.put(spriteId, icon);
+				label.setIcon(icon);
 				label.repaint();
 			});
 		});

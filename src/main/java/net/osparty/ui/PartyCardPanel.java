@@ -13,9 +13,11 @@ import net.osparty.party.LiveParty;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
-import java.awt.Insets;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -31,9 +33,12 @@ import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JTextArea;
+import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.text.DefaultCaret;
 
@@ -43,7 +48,6 @@ import net.runelite.api.vars.AccountType;
 import net.runelite.client.game.SpriteManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
-import net.runelite.client.util.ImageUtil;
 import net.runelite.http.api.worlds.WorldRegion;
 
 /** Abstract base for party-card panels (Search and Faves): apply/cancel, cooldowns, {@link #buildPartyCard}. */
@@ -67,9 +71,6 @@ abstract class PartyCardPanel extends JPanel
 	protected final BlockListService blockListService;
 	protected final Supplier<Set<String>> friendNamesSupplier;
 	protected final net.osparty.OSPartyConfig config;
-
-	private volatile BufferedImage memberStarImg;
-	private volatile BufferedImage freeStarImg;
 
 	private Runnable onFavoriteChanged = () -> {};
 	private Runnable onBlockChanged = () -> {};
@@ -128,11 +129,6 @@ abstract class PartyCardPanel extends JPanel
 		this.friendNamesSupplier = friendNamesSupplier;
 		if (spriteManager != null)
 		{
-			// 1131 = WORLD_SWITCHER_STAR_MEMBERS, 1130 = WORLD_SWITCHER_STAR_FREE
-			spriteManager.getSpriteAsync(1131, 0,
-				img -> { if (img != null) memberStarImg = ImageUtil.resizeImage(img, 14, 14); });
-			spriteManager.getSpriteAsync(1130, 0,
-				img -> { if (img != null) freeStarImg = ImageUtil.resizeImage(img, 14, 14); });
 			BadgeIcons.preload(spriteManager);
 		}
 	}
@@ -672,94 +668,20 @@ abstract class PartyCardPanel extends JPanel
 			hostLabel.setToolTipText("OSRS Friend");
 		}
 
-		// Favorite button: member-world star when favourited, free-world star when not.
+		// Blocked hosts (only shown when "Show blocked parties" is on) are greyed to mark them.
 		long hostHash = party.getHostAccountHash();
-		boolean hostFav = favoritesService != null && favoritesService.isFavorite(hostHash, party.getHost());
-		boolean anyFav = favoritesService != null && favoritesService.hasAnyFavorite(party);
-
-		JButton starBtn = new JButton();
-		starBtn.setFocusPainted(false);
-		starBtn.setContentAreaFilled(false);
-		starBtn.setBorderPainted(false);
-		starBtn.setMargin(new Insets(0, 2, 0, 2));
-		if (memberStarImg != null && freeStarImg != null)
-		{
-			starBtn.setIcon(new ImageIcon(anyFav ? memberStarImg : freeStarImg));
-		}
-		else
-		{
-			starBtn.setIcon(anyFav ? StatusIcons.STAR_FILLED : StatusIcons.STAR_OUTLINE);
-		}
-		starBtn.setToolTipText(hostFav ? "Remove host from Favorites" : "Add host to Favorites");
-		starBtn.addActionListener(e -> {
-			if (favoritesService != null && party.getHost() != null)
-			{
-				favoritesService.toggle(hostHash, party.getHost());
-				boolean nowHostFav = favoritesService.isFavorite(hostHash, party.getHost());
-				boolean nowAnyFav = favoritesService.hasAnyFavorite(party);
-				if (memberStarImg != null && freeStarImg != null)
-				{
-					starBtn.setIcon(new ImageIcon(nowAnyFav ? memberStarImg : freeStarImg));
-				}
-				else
-				{
-					starBtn.setIcon(nowAnyFav ? StatusIcons.STAR_FILLED : StatusIcons.STAR_OUTLINE);
-				}
-				starBtn.setToolTipText(nowHostFav ? "Remove host from Favorites" : "Add host to Favorites");
-				onFavoriteToggled(party);
-				onFavoriteChanged.run();
-			}
-		});
-
-		// Block toggle: hides the host's ads from search; mutually exclusive with favouriting.
 		boolean hostBlocked = blockListService != null && blockListService.isBlocked(hostHash, party.getHost());
 		if (hostBlocked)
 		{
-			// Only reachable when "Show blocked parties" is on; grey the name to mark it.
 			hostLabel.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
 			hostLabel.setToolTipText("Blocked host");
 		}
-		JButton blockBtn = new JButton(hostBlocked ? StatusIcons.BLOCK_ON : StatusIcons.BLOCK_OFF);
-		blockBtn.setFocusPainted(false);
-		blockBtn.setContentAreaFilled(false);
-		blockBtn.setBorderPainted(false);
-		blockBtn.setMargin(new Insets(0, 2, 0, 2));
-		blockBtn.setToolTipText(hostBlocked ? "Unblock host" : "Block host");
-		blockBtn.addActionListener(e -> {
-			if (blockListService != null && party.getHost() != null)
-			{
-				boolean wasBlocked = blockListService.isBlocked(hostHash, party.getHost());
-				// Confirm the consequences before blocking (but let unblocking happen instantly).
-				if (!wasBlocked && !BlockConfirm.confirm(blockBtn, party.getHost()))
-				{
-					return;
-				}
-				blockListService.toggle(hostHash, party.getHost());
-				boolean nowBlocked = !wasBlocked;
-				// Favouriting and blocking the same host are mutually exclusive.
-				if (nowBlocked && favoritesService != null && favoritesService.isFavorite(hostHash, party.getHost()))
-				{
-					favoritesService.toggle(hostHash, party.getHost());
-					onFavoriteChanged.run();
-				}
-				blockBtn.setIcon(nowBlocked ? StatusIcons.BLOCK_ON : StatusIcons.BLOCK_OFF);
-				blockBtn.setToolTipText(nowBlocked ? "Unblock host" : "Block host");
-				onBlockToggled(party);
-				onBlockChanged.run();
-			}
-		});
 
-		// Host row: star | name | block, kept apart so they can't be misclicked.
+		// Host row: just the name now — favourite/block live on the card's right-click / 3-dot menu.
 		JPanel hostRow = new JPanel(new BorderLayout(2, 0));
 		hostRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		hostRow.setAlignmentX(Component.LEFT_ALIGNMENT);
-		hostRow.add(starBtn, BorderLayout.WEST);
 		hostRow.add(hostLabel, BorderLayout.CENTER);
-		// You can't block yourself, so don't offer the toggle on your own ad.
-		if (blockListService == null || !blockListService.isSelf(hostHash, party.getHost()))
-		{
-			hostRow.add(blockBtn, BorderLayout.EAST);
-		}
 
 		String capacity = party.getCapacity() > 0
 			? party.getSize() + "/" + party.getCapacity()
@@ -872,21 +794,126 @@ abstract class PartyCardPanel extends JPanel
 		actionPanel.add(rolePicker);
 		actionPanel.add(applyWrap);
 
-		// Header: activity title left, host's Discord-role badges top-right (see Member#getBadges).
+		// Header: activity title left; host's Discord badges then a 3-dot menu top-right.
 		JPanel header = new JPanel(new BorderLayout());
 		header.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		header.add(activityLabel, BorderLayout.CENTER);
+
+		JPopupMenu menu = hostMenu(party);
+		JPanel headerEast = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+		headerEast.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		JPanel badgeRow = buildHostBadgeRow(party);
 		if (badgeRow != null)
 		{
-			header.add(badgeRow, BorderLayout.EAST);
+			headerEast.add(badgeRow);
 		}
+		if (menu != null)
+		{
+			JLabel kebab = new JLabel(StatusIcons.KEBAB);
+			kebab.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+			kebab.setToolTipText("Host actions");
+			kebab.addMouseListener(new MouseAdapter()
+			{
+				@Override
+				public void mousePressed(MouseEvent e)
+				{
+					if (SwingUtilities.isLeftMouseButton(e))
+					{
+						menu.show(kebab, 0, kebab.getHeight());
+					}
+				}
+			});
+			headerEast.add(kebab);
+		}
+		header.add(headerEast, BorderLayout.EAST);
 
 		card.add(header, BorderLayout.NORTH);
 		card.add(info, BorderLayout.CENTER);
 		card.add(actionPanel, BorderLayout.SOUTH);
 
+		// Right-click anywhere on the card opens the same host actions as the 3-dot button.
+		if (menu != null)
+		{
+			card.setComponentPopupMenu(menu);
+			inheritPopupMenu(card);
+		}
+
 		return card;
+	}
+
+	/** Right-click / 3-dot actions for a card's host: favourite and block toggles. Null when none apply. */
+	private JPopupMenu hostMenu(Party party)
+	{
+		final String host = party.getHost();
+		if (host == null)
+		{
+			return null;
+		}
+		final long hostHash = party.getHostAccountHash();
+		// Reliable (accountHash-based) self-check — the name-based isOwnParty missed our own ad when the
+		// stored host name differed slightly, which let us favourite ourselves.
+		boolean self = blockListService != null && blockListService.isSelf(hostHash, host);
+		JPopupMenu menu = new JPopupMenu();
+		boolean any = false;
+
+		if (favoritesService != null)
+		{
+			boolean fav = favoritesService.isFavorite(hostHash, host);
+			// You can't favourite yourself; only offer the item to REMOVE a self-favourite you already have.
+			if (!self || fav)
+			{
+				JMenuItem favItem = new JMenuItem(fav ? "Remove host from Favorites" : "Add host to Favorites");
+				favItem.addActionListener(e -> {
+					favoritesService.toggle(hostHash, host);
+					onFavoriteToggled(party);
+					onFavoriteChanged.run();
+				});
+				menu.add(favItem);
+				any = true;
+			}
+		}
+
+		// You can't block yourself, so don't offer it on your own ad.
+		if (blockListService != null && !self)
+		{
+			boolean blocked = blockListService.isBlocked(hostHash, host);
+			JMenuItem blockItem = new JMenuItem(blocked ? "Unblock host" : "Block host");
+			blockItem.addActionListener(e -> {
+				boolean wasBlocked = blockListService.isBlocked(hostHash, host);
+				// Confirm the consequences before blocking, but let unblocking happen instantly.
+				if (!wasBlocked && !BlockConfirm.confirm(this, host))
+				{
+					return;
+				}
+				blockListService.toggle(hostHash, host);
+				// Favouriting and blocking the same host are mutually exclusive.
+				if (!wasBlocked && favoritesService != null && favoritesService.isFavorite(hostHash, host))
+				{
+					favoritesService.toggle(hostHash, host);
+					onFavoriteChanged.run();
+				}
+				onBlockToggled(party);
+				onBlockChanged.run();
+			});
+			menu.add(blockItem);
+			any = true;
+		}
+
+		return any ? menu : null;
+	}
+
+	/** Let every descendant defer its right-click to {@code root}'s component popup menu. */
+	private static void inheritPopupMenu(JComponent root)
+	{
+		for (Component child : root.getComponents())
+		{
+			if (child instanceof JComponent)
+			{
+				JComponent jc = (JComponent) child;
+				jc.setInheritsPopupMenu(true);
+				inheritPopupMenu(jc);
+			}
+		}
 	}
 
 	/** The host's Discord-role badges as a right-aligned icon row, or {@code null} when none. */

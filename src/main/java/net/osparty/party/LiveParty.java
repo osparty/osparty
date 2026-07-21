@@ -101,6 +101,14 @@ public class LiveParty
 	/** Kicked/declined members still briefly in the relay room; hidden so they don't flash back as pending. */
 	private final Set<Long> leaving = ConcurrentHashMap.newKeySet();
 
+	/**
+	 * Identities (accountHash / normalised name) of members admitted before a host restart. When we
+	 * reclaim our own party, members still in the room are re-admitted silently instead of re-appearing
+	 * as applicants the host has to approve again.
+	 */
+	private final Set<Long> resumedHashes = ConcurrentHashMap.newKeySet();
+	private final Set<String> resumedNames = ConcurrentHashMap.newKeySet();
+
 	private volatile PartyStateMessage lastState;
 
 	private volatile boolean stateDirty;
@@ -428,6 +436,40 @@ public class LiveParty
 		lastState = null;
 		stateDirty = false;
 		localDirty = false;
+		resumedHashes.clear();
+		resumedNames.clear();
+	}
+
+	/**
+	 * Seed the pre-restart roster (from the reclaimed ad) so members still in the room are re-admitted
+	 * silently when we resume hosting, instead of re-appearing as applicants the host must re-approve.
+	 * Call after {@link #hostParty} (which resets state) when reclaiming an existing party.
+	 */
+	public void rememberResumedRoster(List<net.osparty.model.Member> members)
+	{
+		resumedHashes.clear();
+		resumedNames.clear();
+		if (members == null)
+		{
+			return;
+		}
+		for (net.osparty.model.Member m : members)
+		{
+			if (m == null || m.getName() == null)
+			{
+				continue;
+			}
+			// Don't try to re-admit ourselves (the host).
+			if (hostName != null && normalizeName(m.getName()).equals(normalizeName(hostName)))
+			{
+				continue;
+			}
+			if (m.getAccountHash() != 0)
+			{
+				resumedHashes.add(m.getAccountHash());
+			}
+			resumedNames.add(normalizeName(m.getName()));
+		}
 	}
 
 	public boolean isConnected()
@@ -1085,7 +1127,29 @@ public class LiveParty
 		lastSeen.put(id, System.currentTimeMillis());
 		// A fresh update means they're alive - un-hide if we'd pruned them as stale.
 		leaving.remove(id);
+		reAdmitIfResumed(id, update);
 		fire();
+	}
+
+	/** Re-admit a member who was in our party before a restart, without the host re-approving them. */
+	private void reAdmitIfResumed(long memberId, PlayerUpdate update)
+	{
+		if (!hosting || memberId == localId() || admitted.containsKey(memberId)
+			|| (resumedHashes.isEmpty() && resumedNames.isEmpty()))
+		{
+			return;
+		}
+		boolean match = (update.getAccountHash() != 0 && resumedHashes.contains(update.getAccountHash()))
+			|| (update.getName() != null && resumedNames.contains(normalizeName(update.getName())));
+		if (match && admit(memberId, update.getName()))
+		{
+			// One-shot: don't keep the identity around to re-admit a later, different joiner by the same name.
+			resumedHashes.remove(update.getAccountHash());
+			if (update.getName() != null)
+			{
+				resumedNames.remove(normalizeName(update.getName()));
+			}
+		}
 	}
 
 	public void onPartyState(PartyStateMessage state)

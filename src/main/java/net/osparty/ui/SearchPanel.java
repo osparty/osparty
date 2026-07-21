@@ -1226,6 +1226,13 @@ class SearchPanel extends PartyCardPanel
 		renderCurrent();
 	}
 
+	/** Favouriting from a card's menu: re-render so the card (and its menu label) reflect the new state. */
+	@Override
+	protected void onFavoriteToggled(Party party)
+	{
+		renderCurrent();
+	}
+
 	/** Subscribe to the live party list (the server pushes the full list on connect and after every change). */
 	private void startSubscription()
 	{
