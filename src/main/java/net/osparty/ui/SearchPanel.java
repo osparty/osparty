@@ -1021,11 +1021,12 @@ class SearchPanel extends PartyCardPanel
 	/** Restore the saved filter selection into the in-memory state and the controls. */
 	private void loadFilters()
 	{
-		// On the very first ever launch, start with no activities selected (all off).
+		// On the very first ever launch, start with every activity selected (show all parties).
 		boolean firstRun = !Boolean.parseBoolean(get(KEY_FIRST_RUN));
 		if (firstRun)
 		{
 			put(KEY_FIRST_RUN, "true");
+			selectedActivities.addAll(EnumSet.allOf(Activity.class));
 		}
 
 		String activities = get(KEY_ACTIVITIES);
@@ -1979,8 +1980,9 @@ class SearchPanel extends PartyCardPanel
 	/** Reset every filter to its default state. */
 	private void resetAllFilters()
 	{
-		// "All off" is the default activity state (point 9), so Reset clears them too.
+		// Every activity selected is the default state, so Reset re-selects them all.
 		selectedActivities.clear();
+		selectedActivities.addAll(EnumSet.allOf(Activity.class));
 		selectedRoles.clear();
 		for (WorldRegion r : KNOWN_REGIONS)
 		{
