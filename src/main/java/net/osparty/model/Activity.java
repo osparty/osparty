@@ -19,7 +19,7 @@ public enum Activity
 	THEATRE_OF_BLOOD("tob", "Theatre of Blood", 3, 5, "HM", 14642),
 	TOMBS_OF_AMASCUT("toa", "Tombs of Amascut", 1, 8, "Expert", 13354),
 	NEX("nex", "Nex", 1, 40, null, 11601),
-	NIGHTMARE("nightmare", "The Nightmare", 1, 80, null, 15515, 15155),
+	NIGHTMARE("nightmare", "The Nightmare", 1, 80, null, 15515, 15256),
 	CORPOREAL_BEAST("corp", "Corporeal Beast", 1, 30, null, 12857),
 	BARBARIAN_ASSAULT("ba", "Barbarian Assault", 5, 5, null, 10039),
 	ZALCANO("zalcano", "Zalcano", 1, 30, null, 13150),
