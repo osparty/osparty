@@ -137,6 +137,8 @@ public class KillcountService
 				return HiscoreSkill.THE_HUEYCOATL;
 			case YAMA:
 				return HiscoreSkill.YAMA;
+			case ROYAL_TITANS:
+				return HiscoreSkill.THE_ROYAL_TITANS;
 			case KREEARRA:
 				return HiscoreSkill.KREEARRA;
 			case GENERAL_GRAARDOR:
