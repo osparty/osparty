@@ -714,20 +714,49 @@ public class PartySocket extends WebSocketListener
 		}
 	}
 
+	/** Invoked (off EDT) with the party id when the server reports our hosted ad no longer exists. */
+	private volatile Consumer<String> onHostedGone;
+
+	public void setOnHostedGone(Consumer<String> callback)
+	{
+		this.onHostedGone = callback;
+	}
+
+	private void notifyHostedGone(String id)
+	{
+		Consumer<String> cb = onHostedGone;
+		if (cb != null)
+		{
+			cb.accept(id);
+		}
+	}
+
 	private void handleGone(String id)
 	{
-		// The grace window lapsed before we reconnected — the ad is gone server-side.
+		log.info("Party socket: received 'gone' frame for party {} (hosting {})", id, hostingId);
+		// Our hosted ad is gone server-side (stale purge, manual cleanup, or expired before resume).
 		if (id != null && id.equals(hostingId))
 		{
-			log.debug("Hosted ad {} expired before resume; clearing hosting state", id);
 			hostingId = null;
 			hostingKey = null;
 			lastSentPatch = null;
+			notifyHostedGone(id);
 		}
 	}
 
 	private void handleError(String id, String detail)
 	{
+		// Our own ad vanished server-side (stale purge / manual cleanup) — the server rejects
+		// the heartbeat with "gone". Fold hosting state and tell the UI so the tab clears.
+		if ("gone".equals(detail) && id != null && id.equals(hostingId))
+		{
+			log.info("Party socket: heartbeat rejected with 'gone' for party {}; clearing hosting state", id);
+			hostingId = null;
+			hostingKey = null;
+			lastSentPatch = null;
+			notifyHostedGone(id);
+			return;
+		}
 		// An id'd error may reject a pending voice/access/transfer request; route it there first.
 		if (id != null)
 		{

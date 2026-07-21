@@ -32,6 +32,20 @@ public interface PartyService
 	void getPartyByHost(String host, Consumer<Party> onSuccess, Consumer<Throwable> onError);
 
 	/**
+	 * Register a callback fired (off the EDT) with the party id when the server reports the
+	 * hosted ad no longer exists (stale purge, manual cleanup, or expiry before a resume).
+	 */
+	default void setOnHostedPartyGone(Consumer<String> callback)
+	{
+	}
+
+	/** Whether the API socket is currently connected (lookups return null instantly when it isn't). */
+	default boolean isApiConnected()
+	{
+		return true;
+	}
+
+	/**
 	 * Create an advertised party. {@code hostKey} is a secret the caller mints; the server requires it on
 	 * later host-only mutations, so only the real host can change or close the ad.
 	 */

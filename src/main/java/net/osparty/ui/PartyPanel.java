@@ -85,6 +85,7 @@ import net.runelite.client.util.ImageUtil;
 import net.runelite.client.util.LinkBrowser;
 
 /** "Party" tab: the live party the player is in; roster/gear/stats come from {@link LiveParty}. */
+@lombok.extern.slf4j.Slf4j
 class PartyPanel extends JPanel
 {
 	private static final int TAB_SKILLS = 0;
@@ -256,6 +257,9 @@ class PartyPanel extends JPanel
 				setStatus("You are no longer in the party.");
 			}
 		}));
+		// Our hosted ad was removed server-side (stale purge / manual cleanup): fold the tab and
+		// close the room, which in turn clears every member's tab via the roster logic above.
+		partyService.setOnHostedPartyGone(id -> SwingUtilities.invokeLater(() -> onHostedPartyGone(id)));
 
 		new Timer(30_000, e -> {
 			if (partyState.isHost() && partyState.getCurrentParty() != null)
@@ -263,6 +267,7 @@ class PartyPanel extends JPanel
 				partyService.heartbeat(partyState.getCurrentParty().getId(), currentPartySize(),
 					currentWorld.getAsInt(), currentLayout(), currentNeededRolesParam(), liveParty.rosterMembers(),
 					partyState.getHostKey(), ok -> { }, err -> { });
+				verifyAdStillExists();
 			}
 		}).start();
 
@@ -2112,6 +2117,44 @@ class PartyPanel extends JPanel
 			target = candidates.get(combo.getSelectedIndex());
 		}
 		hostTransferHandler.offerTransfer(target.getMemberId(), hostStays);
+	}
+
+	/**
+	 * Fallback for the host: look our own ad up by host name every heartbeat. Catches a
+	 * server-side removal even when no {@code gone} frame reaches us. Only trusted while
+	 * the socket is connected — a lookup while disconnected returns null for every host.
+	 */
+	private void verifyAdStillExists()
+	{
+		Party party = partyState.getCurrentParty();
+		if (party == null || party.getHost() == null || !partyService.isApiConnected())
+		{
+			return;
+		}
+		String id = party.getId();
+		partyService.getPartyByHost(party.getHost(),
+			fresh -> log.debug("Hosted ad {} still advertised", id),
+			err -> SwingUtilities.invokeLater(() -> {
+				if (partyService.isApiConnected())
+				{
+					log.info("Hosted ad {} no longer advertised on the server; folding the Party tab", id);
+					onHostedPartyGone(id);
+				}
+			}));
+	}
+
+	/** The server no longer has our hosted party: leave the live room and clear the tab. */
+	private void onHostedPartyGone(String partyId)
+	{
+		Party party = partyState.getCurrentParty();
+		if (party == null || !party.getId().equals(partyId))
+		{
+			return; // already left, or a different party by now
+		}
+		log.info("Hosted party {} gone server-side: leaving live room and clearing the tab", partyId);
+		liveParty.leave();
+		partyState.clear();
+		setStatus("Your party was removed on the server.");
 	}
 
 	private void disband(Party party, JButton button)

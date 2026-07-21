@@ -96,6 +96,18 @@ public class PartyApiClient implements PartyService
 	}
 
 	@Override
+	public void setOnHostedPartyGone(Consumer<String> callback)
+	{
+		partySocket.setOnHostedGone(callback);
+	}
+
+	@Override
+	public boolean isApiConnected()
+	{
+		return partySocket.isConnected();
+	}
+
+	@Override
 	public void createParty(PartyRequest partyRequest, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError)
 	{
 		// The socket advertises the ad; the hosted ack carries the server-assigned id.
