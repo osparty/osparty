@@ -63,7 +63,7 @@ import net.runelite.client.util.LinkBrowser;
 public class OSPartyPanel extends PluginPanel
 {
 	// PluginHub's build omits runelite-plugin.properties; keep in step with it each release.
-	private static final String VERSION = "1.0.39";
+	private static final String VERSION = "1.0.40";
 	private static final String GITHUB_URL = "https://github.com/osparty/osparty";
 	private static final String DISCORD_URL = "https://discord.gg/EtMRxTHXWJ";
 
