@@ -21,7 +21,7 @@ public enum Activity
 	NEX("nex", "Nex", 1, 40, null, 11601, 11345),
 	NIGHTMARE("nightmare", "The Nightmare", 1, 80, null, 15515, 15256),
 	CORPOREAL_BEAST("corp", "Corporeal Beast", 1, 30, null, 11844, 11842),
-	BARBARIAN_ASSAULT("ba", "Barbarian Assault", 5, 5, null, 10039),
+	BARBARIAN_ASSAULT("ba", "Barbarian Assault", 5, 5, null, 10039, 10322, 7508, 7509),
 	ZALCANO("zalcano", "Zalcano", 1, 30, null, 13150),
 	HUEYCOATL("hueycoatl", "The Hueycoatl", 1, 10, null, 5939),
 	YAMA("yama", "Yama", 1, 2, null, 6045),
