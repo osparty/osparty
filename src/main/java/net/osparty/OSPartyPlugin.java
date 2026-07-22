@@ -200,6 +200,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private SpriteManager spriteManager;
 
 	private OSPartyPanel panel;
+	private BufferedImage navIcon;
 	private NavigationButton navButton;
 	private NavigationButton navButtonAlert;
 	private javax.swing.Timer navBlinkTimer;
@@ -389,19 +390,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			worldPinger, this::worldAddressForNum, this::getFriendNames, favoritesService, blockListService,
 			this::getAccountHash, spriteManager, partyHistoryService, this::gameMessage);
 
-		BufferedImage icon = ImageUtil.loadImageResource(getClass(), "panel_icon.png");
-		navButton = NavigationButton.builder()
-			.tooltip("OSParty")
-			.icon(icon)
-			.priority(7)
-			.panel(panel)
-			.build();
-		navButtonAlert = NavigationButton.builder()
-			.tooltip("OSParty — party invite received")
-			.icon(withInviteBadge(icon))
-			.priority(7)
-			.panel(panel)
-			.build();
+		navIcon = ImageUtil.loadImageResource(getClass(), "panel_icon.png");
+		buildNavButtons();
 
 		clientToolbar.addNavigation(navButton);
 		panel.setOnActivated(this::onPanelActivated);
@@ -460,6 +450,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		playerMarkerOverlay = null;
 		panel = null;
 		navButton = null;
+		navButtonAlert = null;
+		navIcon = null;
+		// startUp always registers the normal button, so the alert flag must not survive a restart.
+		navAlertShown = false;
 		playerName = null;
 		accountHash = -1L;
 		partyStore.close();
@@ -479,6 +473,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			&& ("hideInventory".equals(event.getKey()) || "hideGear".equals(event.getKey())))
 		{
 			liveParty.markLocalDirty();
+		}
+		if (OSPartyConfig.GROUP.equals(event.getGroup())
+			&& OSPartyConfig.SIDE_PANEL_PRIORITY.equals(event.getKey()))
+		{
+			SwingUtilities.invokeLater(this::rebuildNavButtons);
 		}
 	}
 
@@ -1458,6 +1457,41 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			showNavButton(false);
 		}
+	}
+
+	/** Build (or rebuild) both sidebar buttons at the configured priority. Neither is registered here. */
+	private void buildNavButtons()
+	{
+		int priority = config.sidePanelPriority();
+		navButton = NavigationButton.builder()
+			.tooltip("OSParty")
+			.icon(navIcon)
+			.priority(priority)
+			.panel(panel)
+			.build();
+		navButtonAlert = NavigationButton.builder()
+			.tooltip("OSParty — party invite received")
+			.icon(withInviteBadge(navIcon))
+			.priority(priority)
+			.panel(panel)
+			.build();
+	}
+
+	/**
+	 * Re-register the sidebar button so a priority change moves the icon without a plugin restart.
+	 * A NavigationButton's priority is fixed at build time, so both buttons are rebuilt and whichever
+	 * was showing (normal vs. alert) is put back. EDT only.
+	 */
+	private void rebuildNavButtons()
+	{
+		if (navButton == null || navButtonAlert == null)
+		{
+			return;
+		}
+		boolean alert = navAlertShown;
+		clientToolbar.removeNavigation(alert ? navButtonAlert : navButton);
+		buildNavButtons();
+		clientToolbar.addNavigation(alert ? navButtonAlert : navButton);
 	}
 
 	/** Swap which sidebar button is registered (normal vs. red-dot alert). EDT only. */

@@ -134,7 +134,6 @@ public class LiveParty
 	private volatile Runnable onReadyExpired;
 
 	// ---- map pings -----------------------------------------------------------
-	private static final long PING_DURATION_MS = 2_000;
 	private final List<TilePing> pings = new CopyOnWriteArrayList<>();
 
 	@Inject
@@ -867,7 +866,9 @@ public class LiveParty
 	private void expirePings()
 	{
 		long now = System.currentTimeMillis();
-		pings.removeIf(p -> now - p.getCreatedAt() > PING_DURATION_MS);
+		// Same window TilePingOverlay animates over, so a ping is never culled mid-fade or left lingering.
+		long duration = Math.max(1, config.pingAnimMs());
+		pings.removeIf(p -> now - p.getCreatedAt() > duration);
 	}
 
 	private String localName()
