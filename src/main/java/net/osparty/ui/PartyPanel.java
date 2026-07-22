@@ -2147,9 +2147,9 @@ class PartyPanel extends JPanel
 	private void onHostedPartyGone(String partyId)
 	{
 		Party party = partyState.getCurrentParty();
-		if (party == null || !party.getId().equals(partyId))
+		if (party == null || !party.getId().equals(partyId) || !partyState.isHost())
 		{
-			return; // already left, or a different party by now
+			return; // already left, handed the party away, or a different party by now
 		}
 		log.info("Hosted party {} gone server-side: leaving live room and clearing the tab", partyId);
 		liveParty.leave();

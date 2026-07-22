@@ -72,7 +72,8 @@ public class HostTransferHandler
 		timeout.setRepeats(false);
 		outgoing = new OutgoingTransfer(targetMemberId, targetName, newKey, hostStays, timeout);
 		liveParty.offerHostTransfer(targetMemberId, newKey, localNameSupplier.get(), hostStays);
-		notifier.accept("Transferring the party to " + targetName + "…");
+		// ASCII only: these land in the game chatbox, whose font has no ellipsis or dash glyph.
+		notifier.accept("Transferring the party to " + targetName + "...");
 		timeout.start();
 	}
 
@@ -149,7 +150,11 @@ public class HostTransferHandler
 			return;
 		}
 		String key = message.getNewHostKey() != null ? message.getNewHostKey() : incoming.newKey;
-		liveParty.promoteToHost(localNameSupplier.get());
+		String localName = localNameSupplier.get();
+		liveParty.promoteToHost(localName);
+		// The backend re-keyed the ad to us; mirror that locally or host-name lookups (and the
+		// ad-still-exists check) would keep asking about the old host and fold the tab.
+		party.setHost(localName);
 		partyService.adoptHostedParty(party.getId(), key);
 		partyState.setHosting(party, key);
 		notifier.accept("You are now the host of this party.");
@@ -196,6 +201,7 @@ public class HostTransferHandler
 		liveParty.commitHostTransfer(transfer.targetId, transfer.newKey, transfer.hostStays);
 		liveParty.demoteToMember();
 		partyService.releaseHostedParty(party.getId());
+		party.setHost(transfer.targetName);
 		if (transfer.hostStays)
 		{
 			partyState.demoteToMember(party);
@@ -230,7 +236,7 @@ public class HostTransferHandler
 		String name = outgoing.targetName;
 		liveParty.abortHostTransfer(outgoing.targetId);
 		clearOutgoing();
-		notifier.accept(name + " didn't respond — you're still the host.");
+		notifier.accept(name + " didn't respond - you're still the host.");
 	}
 
 	// ---- helpers -------------------------------------------------------------

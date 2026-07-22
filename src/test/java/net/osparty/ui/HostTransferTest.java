@@ -96,6 +96,7 @@ public class HostTransferTest
 		verify(liveParty, never()).leave();
 		assertFalse("old host is no longer the host", partyState.isHost());
 		assertEquals(party, partyState.getCurrentParty());
+		assertEquals("the ad now belongs to the new host", "NewHost", party.getHost());
 	}
 
 	@Test
@@ -165,6 +166,7 @@ public class HostTransferTest
 		verify(liveParty).promoteToHost("LocalName");
 		verify(partyService).adoptHostedParty("p1", "new-key");
 		assertTrue("new host now hosts the party", partyState.isHost());
+		assertEquals("the ad is ours now, so lookups use our name", "LocalName", party.getHost());
 		assertTrue(notes.stream().anyMatch(n -> n.contains("now the host")));
 	}
 
