@@ -8,6 +8,7 @@ import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
@@ -170,7 +171,7 @@ public class PartyHistoryService
 			entry.setMembers(stored);
 		}
 		boolean changed = false;
-		boolean[] matched = new boolean[stored.size()];
+		BitSet matched = new BitSet(stored.size());
 
 		for (Member lm : live)
 		{
@@ -182,10 +183,11 @@ public class PartyHistoryService
 			if (idx < 0)
 			{
 				stored.add(new HistoryMember(lm.getName(), lm.getAccountHash(), now, 0));
+				matched.set(stored.size() - 1); // a joiner appended this pass is present, not a leaver
 				changed = true;
 				continue;
 			}
-			matched[idx] = true;
+			matched.set(idx);
 			HistoryMember hm = stored.get(idx);
 			if (hm.getLeftAt() != 0) // rejoined
 			{
@@ -205,10 +207,10 @@ public class PartyHistoryService
 		}
 
 		// Anyone stored, still marked present, but absent from the live roster has just left.
-		for (int i = 0; i < matched.length; i++)
+		for (int i = 0; i < stored.size(); i++)
 		{
 			HistoryMember hm = stored.get(i);
-			if (!matched[i] && hm.getLeftAt() == 0)
+			if (!matched.get(i) && hm.getLeftAt() == 0)
 			{
 				hm.setLeftAt(now);
 				changed = true;
@@ -232,13 +234,13 @@ public class PartyHistoryService
 	}
 
 	/** Index of the stored member matching {@code lm} (by hash, else name); {@code -1} if newly seen. */
-	private static int indexOfMember(List<HistoryMember> stored, boolean[] matched, Member lm)
+	private static int indexOfMember(List<HistoryMember> stored, BitSet matched, Member lm)
 	{
 		if (lm.getAccountHash() != 0)
 		{
 			for (int i = 0; i < stored.size(); i++)
 			{
-				if (!matched[i] && stored.get(i).getAccountHash() == lm.getAccountHash())
+				if (!matched.get(i) && stored.get(i).getAccountHash() == lm.getAccountHash())
 				{
 					return i;
 				}
@@ -248,7 +250,7 @@ public class PartyHistoryService
 		{
 			HistoryMember hm = stored.get(i);
 			// Only match by name where the hash can't contradict it (one side unknown).
-			if (!matched[i] && (hm.getAccountHash() == 0 || lm.getAccountHash() == 0)
+			if (!matched.get(i) && (hm.getAccountHash() == 0 || lm.getAccountHash() == 0)
 				&& sameName(hm.getName(), lm.getName()))
 			{
 				return i;
