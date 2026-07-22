@@ -167,6 +167,13 @@ class PartyPanel extends JPanel
 	private String lastReportedLayout;
 	/** Invoked when the host clicks "Edit party"; wired by the owning panel to open the edit form. */
 	private Runnable onEditParty;
+	/**
+	 * Ready-check countdown label plus the ticker that retexts it. The panel as a whole only
+	 * re-renders on roster/websocket events, which is far too coarse for a per-second countdown,
+	 * so the label updates itself instead of waiting for the next refresh.
+	 */
+	private JLabel readyCheckCountdown;
+	private final Timer readyCheckTicker = new Timer(200, e -> tickReadyCheck());
 	/** memberId -> epoch millis until which the "Request FC" button is on cooldown. */
 	private final Map<Long, Long> fcRequestCooldown = new HashMap<>();
 	private static final long FC_REQUEST_COOLDOWN_MS = 10_000;
@@ -1198,7 +1205,8 @@ class PartyPanel extends JPanel
 		}
 
 		// Per-activity join prompt: CoX = host's FC, ToB = notice board, ToA = Grouping Obelisk.
-		if (host && data != null && activity != null)
+		// Never for a pending applicant — they aren't in the party yet, so there's nothing to join.
+		if (host && data != null && activity != null && member.getStatus() != Status.PENDING)
 		{
 			String kind = null;
 			String label = null;
@@ -1911,8 +1919,10 @@ class PartyPanel extends JPanel
 		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		row.setAlignmentX(Component.LEFT_ALIGNMENT);
 
+		readyCheckCountdown = null;
 		if (status == null)
 		{
+			readyCheckTicker.stop();
 			JButton start = new JButton("Start ready check");
 			start.setFocusPainted(false);
 			// Starting counts you as ready, so it's world-gated exactly like readying up.
@@ -1959,13 +1969,37 @@ class PartyPanel extends JPanel
 		}
 		else
 		{
-			JLabel waiting = new JLabel("Ready " + counts + " - " + status.getSecondsLeft() + "s left");
+			JLabel waiting = new JLabel(readyCheckText(status));
 			waiting.setForeground(ColorScheme.PROGRESS_COMPLETE_COLOR);
 			waiting.setFont(FontManager.getRunescapeSmallFont());
 			waiting.setHorizontalAlignment(SwingConstants.CENTER);
 			row.add(waiting, BorderLayout.CENTER);
+			readyCheckCountdown = waiting;
 		}
+		readyCheckTicker.start();
 		return row;
+	}
+
+	private static String readyCheckText(LiveParty.ReadyCheckStatus status)
+	{
+		return "Ready " + status.getReady() + "/" + status.getTotal()
+			+ " - " + status.getSecondsLeft() + "s left";
+	}
+
+	/** Retexts the countdown between refreshes; a full rebuild only when the check ends. */
+	private void tickReadyCheck()
+	{
+		LiveParty.ReadyCheckStatus status = liveParty.readyCheck();
+		if (status == null)
+		{
+			readyCheckTicker.stop();
+			refresh();
+			return;
+		}
+		if (readyCheckCountdown != null)
+		{
+			readyCheckCountdown.setText(readyCheckText(status));
+		}
 	}
 
 	private JPanel buildActions(Party party, boolean host)

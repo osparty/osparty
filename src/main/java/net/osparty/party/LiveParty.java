@@ -806,7 +806,9 @@ public class LiveParty
 				ready++;
 			}
 		}
-		long left = Math.max(0, READY_CHECK_TIMEOUT_MS - (System.currentTimeMillis() - readyCheckStartedAt)) / 1000;
+		// Round up: the check reads "30s" for its whole first second and only hits 0 at expiry.
+		long leftMs = Math.max(0, READY_CHECK_TIMEOUT_MS - (System.currentTimeMillis() - readyCheckStartedAt));
+		long left = (leftMs + 999) / 1000;
 		return new ReadyCheckStatus(readyCheckStarter, ready, required.size(), (int) left,
 			readyMembers.contains(localId()));
 	}
