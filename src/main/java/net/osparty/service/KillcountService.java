@@ -1,7 +1,12 @@
 package net.osparty.service;
 
 import net.osparty.model.Activity;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -22,22 +27,41 @@ import net.runelite.client.hiscore.Skill;
 @Singleton
 public class KillcountService
 {
+	private static final long FAILURE_RETRY_MS = 60_000L;
+
 	/** {@code -1} = unknown / unranked. */
 	public static final class Killcount
 	{
 		public final int killCount;
 		public final int hardModeKillCount;
+		public final boolean unavailable;
+		private final long fetchedAt;
 
-		Killcount(int killCount, int hardModeKillCount)
+		Killcount(int killCount, int hardModeKillCount, boolean unavailable)
 		{
 			this.killCount = killCount;
 			this.hardModeKillCount = hardModeKillCount;
+			this.unavailable = unavailable;
+			this.fetchedAt = System.currentTimeMillis();
+		}
+
+		public boolean isKnown(boolean hardMode)
+		{
+			return !unavailable && (hardMode ? hardModeKillCount : killCount) >= 0;
+		}
+
+		private boolean isStale()
+		{
+			return unavailable && System.currentTimeMillis() - fetchedAt > FAILURE_RETRY_MS;
 		}
 	}
 
 	private final HiscoreClient hiscoreClient;
 	private final Map<String, Killcount> cache = new ConcurrentHashMap<>();
-	private final Map<String, Boolean> inFlight = new ConcurrentHashMap<>();
+	/** Guards {@link #inFlight} and {@link #waiting} together, so a callback is never dropped on a race. */
+	private final Object lock = new Object();
+	private final Set<String> inFlight = new HashSet<>();
+	private final Map<String, List<Runnable>> waiting = new HashMap<>();
 
 	@Inject
 	private KillcountService(HiscoreClient hiscoreClient)
@@ -55,8 +79,10 @@ public class KillcountService
 	}
 
 	/**
-	 * Look up the activity killcount for {@code rsn} once (subsequent calls are
-	 * no-ops while cached/in flight). {@code onComplete} fires on the EDT.
+	 * Look up the activity killcount for {@code rsn}, hitting the hiscores at most once per
+	 * (player, activity) — a failed lookup is retried after {@link #FAILURE_RETRY_MS}.
+	 * {@code onComplete} always fires on the EDT, including when the result is already cached
+	 * or another caller's lookup is already in flight; callers may rely on it to resume work.
 	 */
 	public void lookup(String rsn, Activity activity, Runnable onComplete)
 	{
@@ -65,43 +91,94 @@ public class KillcountService
 			return;
 		}
 		String key = key(rsn, activity);
-		if (cache.containsKey(key) || inFlight.putIfAbsent(key, Boolean.TRUE) != null)
+
+		synchronized (lock)
 		{
-			return;
+			Killcount cached = cache.get(key);
+			if (cached == null || cached.isStale())
+			{
+				if (onComplete != null)
+				{
+					waiting.computeIfAbsent(key, k -> new ArrayList<>()).add(onComplete);
+				}
+				if (!inFlight.add(key))
+				{
+					// Someone else is already fetching this; our callback rides along with theirs.
+					return;
+				}
+			}
+			else
+			{
+				// Already known: answer immediately rather than dropping the callback.
+				if (onComplete != null)
+				{
+					SwingUtilities.invokeLater(onComplete);
+				}
+				return;
+			}
 		}
 
 		HiscoreSkill skill = skillFor(activity);
 		if (skill == null)
 		{
 			// Activity has no hiscore killcount (minigames etc.).
-			cache.put(key, new Killcount(-1, -1));
-			inFlight.remove(key);
+			complete(key, new Killcount(-1, -1, false));
 			return;
 		}
 
-		hiscoreClient.lookupAsync(rsn, HiscoreEndpoint.NORMAL).whenComplete((result, ex) -> {
-			int kc = -1;
-			int hard = -1;
-			if (ex == null && result != null)
-			{
-				kc = count(result, skill);
-				HiscoreSkill hardSkill = hardSkillFor(activity);
-				if (hardSkill != null)
+		try
+		{
+			hiscoreClient.lookupAsync(rsn, HiscoreEndpoint.NORMAL).whenComplete((result, ex) -> {
+				int kc = -1;
+				int hard = -1;
+				boolean unavailable = ex != null || result == null;
+				try
 				{
-					hard = count(result, hardSkill);
+					if (!unavailable)
+					{
+						kc = count(result, skill);
+						HiscoreSkill hardSkill = hardSkillFor(activity);
+						if (hardSkill != null)
+						{
+							hard = count(result, hardSkill);
+						}
+					}
+					else
+					{
+						log.debug("Hiscore lookup failed for {}", rsn, ex);
+					}
 				}
-			}
-			else
-			{
-				log.debug("Hiscore lookup failed for {}", rsn, ex);
-			}
-			cache.put(key, new Killcount(kc, hard));
+				catch (RuntimeException e)
+				{
+					log.debug("Hiscore result unreadable for {}", rsn, e);
+					unavailable = true;
+				}
+				complete(key, new Killcount(kc, hard, unavailable));
+			});
+		}
+		catch (RuntimeException e)
+		{
+			log.debug("Hiscore lookup could not be started for {}", rsn, e);
+			complete(key, new Killcount(-1, -1, true));
+		}
+	}
+
+	private void complete(String key, Killcount result)
+	{
+		List<Runnable> callbacks;
+		synchronized (lock)
+		{
+			cache.put(key, result);
 			inFlight.remove(key);
-			if (onComplete != null)
+			callbacks = waiting.remove(key);
+		}
+		if (callbacks != null)
+		{
+			for (Runnable callback : callbacks)
 			{
-				SwingUtilities.invokeLater(onComplete);
+				SwingUtilities.invokeLater(callback);
 			}
-		});
+		}
 	}
 
 	private static int count(HiscoreResult result, HiscoreSkill skill)

@@ -111,7 +111,14 @@ class CreatePanel extends JPanel implements Scrollable
 	private final JTextField coxScaleField = new JTextField();
 	private JPanel coxScaleRow;
 	private final JButton createButton = new JButton("Create party");
-	private final JLabel statusLabel = new JLabel();
+	private final JTextArea statusLabel = new JTextArea()
+	{
+		@Override
+		public Dimension getMaximumSize()
+		{
+			return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+		}
+	};
 
 	/** "Join existing" section: apply to a party by invite code (delegates the apply logic to the Search tab). */
 	private final JTextField joinCodeField = new JTextField();
@@ -139,6 +146,14 @@ class CreatePanel extends JPanel implements Scrollable
 	private final JSpinner hardKcSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 100_000, 10));
 	private JPanel minKcField;
 	private JPanel hardKcField;
+	private final JTextArea kcWarningLabel = new JTextArea()
+	{
+		@Override
+		public Dimension getMaximumSize()
+		{
+			return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+		}
+	};
 
 	private final JComboBox<Role> myRoleDropdown = new JComboBox<>();
 	private JPanel rolesSection;
@@ -264,6 +279,19 @@ class CreatePanel extends JPanel implements Scrollable
 		requirementsContent.add(minKcField);
 		hardKcField = field(hardKcLabel, hardKcSpinner);
 		requirementsContent.add(hardKcField);
+		kcWarningLabel.setFont(FontManager.getRunescapeSmallFont());
+		kcWarningLabel.setForeground(ColorScheme.PROGRESS_INPROGRESS_COLOR);
+		kcWarningLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+		kcWarningLabel.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
+		kcWarningLabel.setLineWrap(true);
+		kcWarningLabel.setWrapStyleWord(true);
+		kcWarningLabel.setEditable(false);
+		kcWarningLabel.setFocusable(false);
+		kcWarningLabel.setOpaque(false);
+		kcWarningLabel.setVisible(false);
+		requirementsContent.add(kcWarningLabel);
+		minKcSpinner.addChangeListener(e -> updateKcWarning());
+		hardKcSpinner.addChangeListener(e -> updateKcWarning());
 		requirementsContent.add(checkBoxRow(privateCheck));
 		requirementsContent.add(checkBoxRow(ironmanCheck));
 		requirementsContent.setVisible(requirementsExpanded);
@@ -359,6 +387,11 @@ class CreatePanel extends JPanel implements Scrollable
 		createButton.setBackground(ColorScheme.BRAND_ORANGE);
 		createButton.setForeground(Color.WHITE);
 		createButton.setFont(createButton.getFont().deriveFont(Font.BOLD));
+		createButton.addPropertyChangeListener("enabled", e -> {
+			boolean on = createButton.isEnabled();
+			createButton.setBackground(on ? ColorScheme.BRAND_ORANGE : ColorScheme.MEDIUM_GRAY_COLOR);
+			createButton.setForeground(on ? Color.WHITE : ColorScheme.LIGHT_GRAY_COLOR);
+		});
 		createButton.addActionListener(e -> {
 			if (editing)
 			{
@@ -380,12 +413,18 @@ class CreatePanel extends JPanel implements Scrollable
 		statusLabel.setFont(FontManager.getRunescapeSmallFont());
 		statusLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
 		statusLabel.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
+		statusLabel.setLineWrap(true);
+		statusLabel.setWrapStyleWord(true);
+		statusLabel.setEditable(false);
+		statusLabel.setFocusable(false);
+		statusLabel.setOpaque(false);
 		add(statusLabel);
 
 		activityDropdown.setRenderer(new ActivityRenderer());
 		activityDropdown.addActionListener(e -> {
 			if (!rebuildingDropdown)
 			{
+				clearKcRequirements();
 				applyActivityBounds();
 			}
 		});
@@ -436,6 +475,7 @@ class CreatePanel extends JPanel implements Scrollable
 	{
 		boolean loggedIn = playerNameSupplier.get() != null;
 		updateIronmanToggle();
+		updateKcWarning();
 		refreshValidation();
 		joinCodeButton.setEnabled(loggedIn);
 		joinCodeButton.setToolTipText(loggedIn ? null : "Log in to join a party");
@@ -512,7 +552,9 @@ class CreatePanel extends JPanel implements Scrollable
 	private void refreshValidation()
 	{
 		boolean loggedIn = playerNameSupplier.get() != null;
-		createButton.setEnabled(loggedIn && !creating && isFormValid());
+		String shortfall = kcShortfall();
+		createButton.setEnabled(loggedIn && !creating && shortfall == null && isFormValid());
+		createButton.setToolTipText(shortfall);
 	}
 
 	private void updateDescCounter()
@@ -655,6 +697,101 @@ class CreatePanel extends JPanel implements Scrollable
 		model.setValue(Math.min(max, Math.max(min, wanted)));
 	}
 
+	private void clearKcRequirements()
+	{
+		minKcSpinner.setValue(0);
+		hardKcSpinner.setValue(0);
+		kcWarningLabel.setVisible(false);
+	}
+
+	private String kcShortfall()
+	{
+		Activity activity = (Activity) activityDropdown.getSelectedItem();
+		String player = playerNameSupplier.get();
+		if (activity == null || player == null || killcountService == null || !activity.hasKillcount())
+		{
+			return null;
+		}
+		int minKc = (Integer) minKcSpinner.getValue();
+		int minHardKc = activity.hasHardMode() ? (Integer) hardKcSpinner.getValue() : 0;
+		if (minKc <= 0 && minHardKc <= 0)
+		{
+			return null;
+		}
+
+		KillcountService.Killcount kc = killcountService.cached(player, activity);
+		if (kc == null)
+		{
+			return null; // Not looked up yet; updateKcWarning() is fetching and will re-run this.
+		}
+		if (minKc > 0 && kc.isKnown(false) && kc.killCount < minKc)
+		{
+			return "You have " + kc.killCount + " " + activity.getDisplayName() + " KC, below the "
+				+ minKc + " you're asking for — you must meet your own requirement.";
+		}
+		if (minHardKc > 0 && kc.isKnown(true) && kc.hardModeKillCount < minHardKc)
+		{
+			return "You have " + kc.hardModeKillCount + " " + activity.getHardModeLabel() + " KC, below the "
+				+ minHardKc + " you're asking for — you must meet your own requirement.";
+		}
+		return null;
+	}
+
+	private void updateKcWarning()
+	{
+		Activity activity = (Activity) activityDropdown.getSelectedItem();
+		String player = playerNameSupplier.get();
+		int minKc = (Integer) minKcSpinner.getValue();
+		int minHardKc = activity != null && activity.hasHardMode() ? (Integer) hardKcSpinner.getValue() : 0;
+		if (activity == null || player == null || killcountService == null
+			|| !activity.hasKillcount() || (minKc <= 0 && minHardKc <= 0))
+		{
+			showKcMessage(null, false);
+			return;
+		}
+
+		KillcountService.Killcount kc = killcountService.cached(player, activity);
+		if (kc == null)
+		{
+			showKcMessage(null, false);
+			killcountService.lookup(player, activity, this::updateKcWarning);
+			return;
+		}
+
+		String shortfall = kcShortfall();
+		if (shortfall != null)
+		{
+			showKcMessage(shortfall, true);
+		}
+		else if (kc.unavailable)
+		{
+			showKcMessage("Hiscores are unavailable — your own KC can't be checked right now, so this "
+				+ "party will be created without verifying it.", false);
+		}
+		else if ((minKc > 0 && kc.killCount < 0) || (minHardKc > 0 && kc.hardModeKillCount < 0))
+		{
+			showKcMessage("You're not ranked on the hiscores for this activity, so your own KC "
+				+ "can't be checked.", false);
+		}
+		else
+		{
+			showKcMessage(null, false);
+		}
+	}
+
+	private void showKcMessage(String message, boolean blocking)
+	{
+		kcWarningLabel.setText(message == null ? "" : message);
+		kcWarningLabel.setForeground(blocking
+			? ColorScheme.PROGRESS_ERROR_COLOR : ColorScheme.PROGRESS_INPROGRESS_COLOR);
+		kcWarningLabel.setVisible(message != null);
+		if (blocking && !requirementsExpanded)
+		{
+			toggleRequirements();
+		}
+		refreshValidation();
+	}
+
 	private void applyActivityBounds()
 	{
 		Activity activity = (Activity) activityDropdown.getSelectedItem();
@@ -758,6 +895,7 @@ class CreatePanel extends JPanel implements Scrollable
 		difficultyContent.setVisible(anyDifficulty && difficultyExpanded);
 		rolesHeader.setVisible(hasRoles);
 
+		updateKcWarning();
 		refreshValidation();
 		revalidate();
 		repaint();
@@ -997,18 +1135,52 @@ class CreatePanel extends JPanel implements Scrollable
 		return roles;
 	}
 
+	private boolean hostMeetsOwnKc(Activity activity, String player, int minKc, int minHardKc, Runnable retry)
+	{
+		if ((minKc <= 0 && minHardKc <= 0) || killcountService == null || player == null || activity == null)
+		{
+			return true;
+		}
+
+		KillcountService.Killcount kc = killcountService.cached(player, activity);
+		if (kc == null)
+		{
+			setStatus("Checking your KC…");
+			createButton.setEnabled(false);
+			killcountService.lookup(player, activity, () -> {
+				updateKcWarning(); // also re-runs refreshValidation, re-enabling the button
+				retry.run();
+			});
+			return false;
+		}
+
+		if (kc.unavailable)
+		{
+			killcountService.lookup(player, activity, this::updateKcWarning);
+		}
+
+		updateKcWarning();
+		String shortfall = kcShortfall();
+		if (shortfall != null)
+		{
+			setError(shortfall);
+			return false;
+		}
+		return true;
+	}
+
 	private void create()
 	{
 		if (partyState.isInParty())
 		{
-			setStatus("Leave your current party before creating one.");
+			setError("Leave your current party before creating one.");
 			return;
 		}
 
 		String player = playerNameSupplier.get();
 		if (player == null)
 		{
-			setStatus("Log in before creating a party.");
+			setError("Log in before creating a party.");
 			return;
 		}
 
@@ -1036,28 +1208,13 @@ class CreatePanel extends JPanel implements Scrollable
 
 		if (ironmanOnly && !AccountTypes.isIronman(accountType))
 		{
-			setStatus("Only ironman accounts can host an ironman-only party.");
+			setError("Only ironman accounts can host an ironman-only party.");
 			return;
 		}
 
-		// A host must meet their own KC requirement; block only when known below, else look up and allow.
-		if ((minKc > 0 || minHardKc > 0) && killcountService != null)
+		if (!hostMeetsOwnKc(activity, player, minKc, minHardKc, this::create))
 		{
-			KillcountService.Killcount kc = killcountService.cached(player, activity);
-			if (kc == null)
-			{
-				killcountService.lookup(player, activity, this::refreshValidation);
-			}
-			else
-			{
-				boolean below = (minKc > 0 && kc.killCount >= 0 && kc.killCount < minKc)
-					|| (minHardKc > 0 && kc.hardModeKillCount >= 0 && kc.hardModeKillCount < minHardKc);
-				if (below)
-				{
-					setStatus("You don't meet the minimum KC you set — you must meet it yourself.");
-					return;
-				}
-			}
+			return;
 		}
 
 		// CoX: advertise the live raid layout (sent via heartbeat once inside), not baked into the description.
@@ -1107,7 +1264,7 @@ class CreatePanel extends JPanel implements Scrollable
 				error -> SwingUtilities.invokeLater(() -> {
 					creating = false;
 					createButton.setEnabled(true);
-					setStatus("Create failed — " + net.osparty.api.PartyErrors.friendly(error));
+					setError("Create failed — " + net.osparty.api.PartyErrors.friendly(error));
 				}));
 		});
 	}
@@ -1124,11 +1281,11 @@ class CreatePanel extends JPanel implements Scrollable
 		liveParty.hostParty(passphrase, host, party.getActivity(), capacity, false, hostRole, hostLearner, hostTeacher);
 		if (party.isPrivateParty() && party.getInviteCode() != null)
 		{
-			setStatus("Private party created — invite code " + party.getInviteCode() + " (also on the Party tab).");
+			setSuccess("Private party created — invite code " + party.getInviteCode() + " (also on the Party tab).");
 		}
 		else
 		{
-			setStatus("Party created — manage it on the Party tab.");
+			setSuccess("Party created — manage it on the Party tab.");
 		}
 		partyState.setHosting(party, hostKey);
 	}
@@ -1310,7 +1467,7 @@ class CreatePanel extends JPanel implements Scrollable
 			int assigned = requiredRoles == null ? 0 : requiredRoles.size();
 			if (assigned != capacity)
 			{
-				setStatus("Assign exactly " + capacity + " role slots (currently " + assigned + ").");
+				setError("Assign exactly " + capacity + " role slots (currently " + assigned + ").");
 				return null;
 			}
 		}
@@ -1318,7 +1475,7 @@ class CreatePanel extends JPanel implements Scrollable
 		String hostRole = mine != null ? mine.getId() : null;
 		if (hostRole == null)
 		{
-			setStatus("Pick the role you'll fill.");
+			setError("Pick the role you'll fill.");
 			return null;
 		}
 		if (!requiredRoles.contains(hostRole))
@@ -1329,7 +1486,7 @@ class CreatePanel extends JPanel implements Scrollable
 			int fillIdx = fill == null || requiredRoles == null ? -1 : requiredRoles.indexOf(fill.getId());
 			if (fillIdx < 0)
 			{
-				setStatus("Add at least one " + mine.getDisplayName()
+				setError("Add at least one " + mine.getDisplayName()
 					+ " slot — that's the role you'll fill.");
 				return null;
 			}
@@ -1361,6 +1518,13 @@ class CreatePanel extends JPanel implements Scrollable
 		createButton.setText("Save changes");
 		createButton.setEnabled(true);
 		setStatus("Editing your party — the activity can't be changed.");
+	}
+
+	/** The party those messages pointed at is gone, so drop them rather than leave a dead pointer to the Party tab. */
+	void onPartyEnded()
+	{
+		setStatus("");
+		updateLoginState();
 	}
 
 	/** Leave edit mode and restore the create form (defaults / last preset). */
@@ -1408,7 +1572,7 @@ class CreatePanel extends JPanel implements Scrollable
 		Party party = partyState.getCurrentParty();
 		if (party == null || !partyState.isHost())
 		{
-			setStatus("You're not hosting a party to edit.");
+			setError("You're not hosting a party to edit.");
 			return;
 		}
 
@@ -1426,7 +1590,7 @@ class CreatePanel extends JPanel implements Scrollable
 			: 1;
 		if (capacity < present)
 		{
-			setStatus("Capacity can't be below the " + present + " already in the party.");
+			setError("Capacity can't be below the " + present + " already in the party.");
 			return;
 		}
 
@@ -1443,7 +1607,12 @@ class CreatePanel extends JPanel implements Scrollable
 		AccountType accountType = accountTypeSupplier.get();
 		if (ironmanOnly && !AccountTypes.isIronman(accountType))
 		{
-			setStatus("Only ironman accounts can host an ironman-only party.");
+			setError("Only ironman accounts can host an ironman-only party.");
+			return;
+		}
+
+		if (!hostMeetsOwnKc(activity, playerNameSupplier.get(), minKc, minHardKc, this::saveEdit))
+		{
 			return;
 		}
 
@@ -1473,7 +1642,7 @@ class CreatePanel extends JPanel implements Scrollable
 			ignored -> SwingUtilities.invokeLater(() -> onEdited(party, edit, advertiseLayout)),
 			error -> SwingUtilities.invokeLater(() -> {
 				createButton.setEnabled(true);
-				setStatus("Edit failed — " + net.osparty.api.PartyErrors.friendly(error));
+				setError("Edit failed — " + net.osparty.api.PartyErrors.friendly(error));
 			}));
 	}
 
@@ -1509,15 +1678,31 @@ class CreatePanel extends JPanel implements Scrollable
 		liveParty.setLocalTeacher(edit.isTeacher());
 
 		exitEditMode();
-		setStatus("Party updated.");
+		setSuccess("Party updated.");
 		if (onEditDone != null)
 		{
 			onEditDone.run();
 		}
 	}
 
+	/** Neutral progress/confirmation text. */
 	private void setStatus(String text)
 	{
+		statusLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		statusLabel.setText(text);
+	}
+
+	/** Something the host has to act on — red rather than the same grey as everything else. */
+	private void setError(String text)
+	{
+		statusLabel.setForeground(ColorScheme.PROGRESS_ERROR_COLOR);
+		statusLabel.setText(text);
+	}
+
+	/** A finished action that worked. */
+	private void setSuccess(String text)
+	{
+		statusLabel.setForeground(ColorScheme.PROGRESS_COMPLETE_COLOR);
 		statusLabel.setText(text);
 	}
 
@@ -1639,7 +1824,7 @@ class CreatePanel extends JPanel implements Scrollable
 		name = name.trim();
 		if (name.isEmpty() || FAV_PLACEHOLDER.equals(name))
 		{
-			setStatus("Enter a name for the preset.");
+			setError("Enter a name for the preset.");
 			return;
 		}
 		List<PartyPreset> favourites = loadFavourites();
@@ -1649,7 +1834,7 @@ class CreatePanel extends JPanel implements Scrollable
 		saveFavourites(favourites);
 		rebuildFavourites();
 		favouriteDropdown.setSelectedItem(chosen);
-		setStatus("Saved preset \"" + chosen + "\".");
+		setSuccess("Saved preset \"" + chosen + "\".");
 	}
 
 	private void removeSelectedFavourite()
@@ -1657,7 +1842,7 @@ class CreatePanel extends JPanel implements Scrollable
 		int idx = favouriteDropdown.getSelectedIndex();
 		if (idx <= 0)
 		{
-			setStatus("Select a preset to remove.");
+			setError("Select a preset to remove.");
 			return;
 		}
 		List<PartyPreset> favourites = loadFavourites();
@@ -1666,7 +1851,7 @@ class CreatePanel extends JPanel implements Scrollable
 			String removed = favourites.remove(idx - 1).getName();
 			saveFavourites(favourites);
 			rebuildFavourites();
-			setStatus("Removed preset \"" + removed + "\".");
+			setSuccess("Removed preset \"" + removed + "\".");
 		}
 	}
 

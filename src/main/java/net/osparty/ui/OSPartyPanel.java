@@ -788,6 +788,7 @@ public class OSPartyPanel extends PluginPanel
 		{
 			// Any in-flight host transfer is moot once we're out of the party.
 			hostTransferHandler.reset();
+			createPanel.onPartyEnded();
 			// Left/disbanded: stamp still-present members as gone so the row shows nobody in the party.
 			if (historyRecorded && historyService.closeParty(currentHistoryPartyId, System.currentTimeMillis()))
 			{
