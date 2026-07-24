@@ -3,6 +3,7 @@ package net.osparty.ui;
 import net.osparty.OSPartyConfig;
 import net.osparty.party.LiveParty;
 import net.osparty.party.LiveParty.Marker;
+import net.osparty.party.LivePartyBackend;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
@@ -28,12 +29,12 @@ public class PlayerMarkerOverlay extends Overlay
 	private static final double ICON_TILE_FILL = 0.18;
 
 	private final Client client;
-	private final LiveParty liveParty;
+	private final LivePartyBackend liveParty;
 	private final OSPartyConfig config;
 	private final BufferedImage learnerIcon;
 	private final BufferedImage teacherIcon;
 
-	public PlayerMarkerOverlay(Client client, LiveParty liveParty, OSPartyConfig config,
+	public PlayerMarkerOverlay(Client client, LivePartyBackend liveParty, OSPartyConfig config,
 		BufferedImage learnerIcon, BufferedImage teacherIcon)
 	{
 		this.client = client;

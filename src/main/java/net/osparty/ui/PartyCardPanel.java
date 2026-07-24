@@ -9,7 +9,7 @@ import net.osparty.model.LootRule;
 import net.osparty.model.Member;
 import net.osparty.model.Party;
 import net.osparty.model.Role;
-import net.osparty.party.LiveParty;
+import net.osparty.party.LivePartyBackend;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -61,7 +61,7 @@ abstract class PartyCardPanel extends JPanel
 	protected final PartyService partyService;
 	protected final Supplier<String> playerNameSupplier;
 	protected final PartyState partyState;
-	protected final LiveParty liveParty;
+	protected final LivePartyBackend liveParty;
 	protected final Supplier<AccountType> accountTypeSupplier;
 	protected final KillcountService killcountService;
 	protected final WorldPinger worldPinger;
@@ -102,7 +102,7 @@ abstract class PartyCardPanel extends JPanel
 		PartyService partyService,
 		Supplier<String> playerNameSupplier,
 		PartyState partyState,
-		LiveParty liveParty,
+		LivePartyBackend liveParty,
 		Supplier<AccountType> accountTypeSupplier,
 		KillcountService killcountService,
 		WorldPinger worldPinger,

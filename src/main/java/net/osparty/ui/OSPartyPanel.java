@@ -10,7 +10,7 @@ import net.osparty.api.PartyService;
 import net.osparty.service.PartyHistoryService;
 import net.osparty.model.Party;
 import net.osparty.party.HostTransferMessage;
-import net.osparty.party.LiveParty;
+import net.osparty.party.LivePartyBackend;
 import com.google.gson.Gson;
 import net.osparty.service.RuneWatchService;
 import java.awt.BorderLayout;
@@ -88,7 +88,7 @@ public class OSPartyPanel extends PluginPanel
 	}
 
 	private final PartyState partyState;
-	private final LiveParty liveParty;
+	private final LivePartyBackend liveParty;
 	private final PartyService partyService;
 	/** The backend party we're in (host or member), mirrored for off-EDT reads (invite menu); null when none. */
 	private volatile Party contextParty;
@@ -141,7 +141,7 @@ public class OSPartyPanel extends PluginPanel
 
 	public OSPartyPanel(PartyService partyService, OSPartyConfig config, Supplier<String> playerNameSupplier,
 		HostApplicationHandler hostApplicationHandler, Supplier<String> friendsChatOwnerSupplier,
-		IntSupplier worldSupplier, ItemManager itemManager, LiveParty liveParty,
+		IntSupplier worldSupplier, ItemManager itemManager, LivePartyBackend liveParty,
 		RuneWatchService runeWatchService, Supplier<AccountType> accountTypeSupplier,
 		KillcountService killcountService, SkillIconManager skillIconManager, IntConsumer worldHopper,
 		Supplier<int[]> mapRegionsSupplier, IntFunction<WorldRegion> worldRegionResolver,

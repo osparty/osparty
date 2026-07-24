@@ -1,7 +1,7 @@
 package net.osparty.ui;
 
 import net.osparty.OSPartyConfig;
-import net.osparty.party.LiveParty;
+import net.osparty.party.LivePartyBackend;
 import net.osparty.party.TilePing;
 import java.awt.BasicStroke;
 import java.awt.Color;
@@ -23,17 +23,17 @@ import net.runelite.client.ui.overlay.components.TextComponent;
 /**
  * Draws party members' map pings on the game scene: a pulsing, expanding ring on
  * the pinged tile in the sender's colour, with the sender's name in the centre.
- * Each ping animates for {@link LiveParty} ping window, then disappears.
+ * Each ping animates for {@link LivePartyBackend} ping window, then disappears.
  */
 public class TilePingOverlay extends Overlay
 {
 	private static final int MAX_RADIUS = 48;
 
 	private final Client client;
-	private final LiveParty liveParty;
+	private final LivePartyBackend liveParty;
 	private final OSPartyConfig config;
 
-	public TilePingOverlay(Client client, LiveParty liveParty, OSPartyConfig config)
+	public TilePingOverlay(Client client, LivePartyBackend liveParty, OSPartyConfig config)
 	{
 		this.client = client;
 		this.liveParty = liveParty;

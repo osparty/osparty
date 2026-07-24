@@ -7,7 +7,7 @@ import net.osparty.api.PartyService;
 import net.osparty.api.PartySubscription;
 import net.osparty.model.Activity;
 import net.osparty.model.Party;
-import net.osparty.party.LiveParty;
+import net.osparty.party.LivePartyBackend;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
@@ -79,7 +79,7 @@ class FriendsPanel extends PartyCardPanel
 	// ---- constructor -------------------------------------------------------
 
 	FriendsPanel(PartyService partyService, Supplier<String> playerNameSupplier,
-		PartyState partyState, LiveParty liveParty,
+		PartyState partyState, LivePartyBackend liveParty,
 		Supplier<AccountType> accountTypeSupplier,
 		KillcountService killcountService,
 		WorldPinger worldPinger,

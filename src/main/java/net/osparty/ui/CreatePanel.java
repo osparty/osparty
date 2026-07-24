@@ -10,7 +10,7 @@ import net.osparty.model.PartyEditRequest;
 import net.osparty.model.PartyPreset;
 import net.osparty.model.PartyRequest;
 import net.osparty.model.Role;
-import net.osparty.party.LiveParty;
+import net.osparty.party.LivePartyBackend;
 import com.google.gson.Gson;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -78,7 +78,7 @@ class CreatePanel extends JPanel implements Scrollable
 	private final OSPartyConfig config;
 	private final Supplier<String> playerNameSupplier;
 	private final PartyState partyState;
-	private final LiveParty liveParty;
+	private final LivePartyBackend liveParty;
 	private final Supplier<AccountType> accountTypeSupplier;
 	private final LongSupplier accountHashSupplier;
 	private final Supplier<int[]> mapRegionsSupplier;
@@ -180,7 +180,7 @@ class CreatePanel extends JPanel implements Scrollable
 	private Runnable onEditDone;
 
 	CreatePanel(PartyService partyService, OSPartyConfig config, Supplier<String> playerNameSupplier,
-		PartyState partyState, LiveParty liveParty, Supplier<AccountType> accountTypeSupplier,
+		PartyState partyState, LivePartyBackend liveParty, Supplier<AccountType> accountTypeSupplier,
 		LongSupplier accountHashSupplier, Supplier<int[]> mapRegionsSupplier, Supplier<String> coxLayoutSupplier,
 		ConfigManager configManager, Gson gson, KillcountService killcountService, IntSupplier worldSupplier)
 	{

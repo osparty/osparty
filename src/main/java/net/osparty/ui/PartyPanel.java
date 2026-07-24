@@ -16,6 +16,7 @@ import net.osparty.model.Member;
 import net.osparty.model.Party;
 import net.osparty.model.Role;
 import net.osparty.party.LiveParty;
+import net.osparty.party.LivePartyBackend;
 import net.osparty.party.LiveParty.RosterMember;
 import net.osparty.party.LiveParty.Status;
 import net.osparty.party.PlayerUpdate;
@@ -109,7 +110,7 @@ class PartyPanel extends JPanel
 	private final HostApplicationHandler hostApplicationHandler;
 	private final PartyState partyState;
 	private final ItemManager itemManager;
-	private final LiveParty liveParty;
+	private final LivePartyBackend liveParty;
 	private final RuneWatchService runeWatch;
 	private final KillcountService killcounts;
 	private final SkillIconManager skillIcons;
@@ -197,7 +198,7 @@ class PartyPanel extends JPanel
 
 	PartyPanel(PartyService partyService, Supplier<String> playerNameSupplier,
                HostApplicationHandler hostApplicationHandler, PartyState partyState, ItemManager itemManager,
-               LiveParty liveParty, RuneWatchService runeWatch, KillcountService killcounts,
+               LivePartyBackend liveParty, RuneWatchService runeWatch, KillcountService killcounts,
                SkillIconManager skillIcons, IntSupplier currentWorld, IntConsumer worldHopper,
                Supplier<String> friendsChatOwnerSupplier, Supplier<String> coxLayoutSupplier,
                OSPartyConfig config, ConfigManager configManager, FavoritesService favoritesService,

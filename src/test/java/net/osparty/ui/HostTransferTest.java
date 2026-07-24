@@ -9,6 +9,7 @@ import net.osparty.api.PartyService;
 import net.osparty.model.Party;
 import net.osparty.party.HostTransferMessage;
 import net.osparty.party.LiveParty;
+import net.osparty.party.LivePartyBackend;
 import net.runelite.client.config.ConfigManager;
 import org.junit.Before;
 import org.junit.Test;
@@ -33,7 +34,7 @@ public class HostTransferTest
 	private static final long OLD_HOST_ID = 1L;
 	private static final long NEW_HOST_ID = 2L;
 
-	private LiveParty liveParty;
+	private LivePartyBackend liveParty;
 	private PartyService partyService;
 	private PartyState partyState;
 	private List<String> notes;
@@ -43,7 +44,7 @@ public class HostTransferTest
 	@Before
 	public void setUp()
 	{
-		liveParty = mock(LiveParty.class);
+		liveParty = mock(LivePartyBackend.class);
 		partyService = mock(PartyService.class);
 		partyState = new PartyState(mock(ConfigManager.class));
 		notes = new ArrayList<>();

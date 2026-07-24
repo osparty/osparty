@@ -11,7 +11,7 @@ import net.osparty.model.LootRule;
 import net.osparty.model.Member;
 import net.osparty.model.Party;
 import net.osparty.model.Role;
-import net.osparty.party.LiveParty;
+import net.osparty.party.LivePartyBackend;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Cursor;
@@ -206,7 +206,7 @@ class SearchPanel extends PartyCardPanel
 
 	SearchPanel(PartyService partyService, Supplier<String> playerNameSupplier,
                 Supplier<String> friendsChatOwnerSupplier, IntSupplier worldSupplier, PartyState partyState,
-                LiveParty liveParty, Supplier<AccountType> accountTypeSupplier, Supplier<int[]> mapRegionsSupplier,
+                LivePartyBackend liveParty, Supplier<AccountType> accountTypeSupplier, Supplier<int[]> mapRegionsSupplier,
                 IntFunction<WorldRegion> worldRegionResolver, KillcountService killcountService, ConfigManager configManager,
                 WorldPinger worldPinger, IntFunction<String> worldAddressResolver,
                 Supplier<Set<String>> friendNamesSupplier, FavoritesService favoritesService,

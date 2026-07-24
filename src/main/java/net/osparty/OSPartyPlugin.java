@@ -9,7 +9,8 @@ import net.osparty.model.Applicant;
 import net.osparty.model.Party;
 import net.osparty.party.FcRequestMessage;
 import net.osparty.party.HostTransferMessage;
-import net.osparty.party.LiveParty;
+import net.osparty.party.LivePartyBackend;
+import net.osparty.party.RuneLiteLivePartyBackend;
 import net.osparty.party.MemberCommand;
 import net.osparty.party.PartyStateMessage;
 import net.osparty.party.PingMessage;
@@ -128,7 +129,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private SkillIconManager skillIconManager;
 
 	@Inject
-	private LiveParty liveParty;
+	// V2: LivePartyBackend seam — RuneLite relay today, LivePartyV2 when P1 lands (see provideLivePartyBackend).
+	private LivePartyBackend liveParty;
 
 	@Inject
 	private RuneWatchService runeWatchService;
@@ -1569,5 +1571,18 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	OSPartyConfig provideConfig(ConfigManager configManager)
 	{
 		return configManager.getConfig(OSPartyConfig.class);
+	}
+
+	/**
+	 * Selects the live-party implementation behind the {@link LivePartyBackend} seam. Today only the
+	 * RuneLite relay backend exists; the V2 branch is added when {@code LivePartyV2} lands (P1), gated by
+	 * the {@code osparty.partyV2} system property. See PARTY_V2_MIGRATION.md.
+	 */
+	@Provides
+	@javax.inject.Singleton
+	LivePartyBackend provideLivePartyBackend(RuneLiteLivePartyBackend runeLite)
+	{
+		// V2: return Boolean.getBoolean("osparty.partyV2") ? livePartyV2 : runeLite;  (once LivePartyV2 exists)
+		return runeLite;
 	}
 }

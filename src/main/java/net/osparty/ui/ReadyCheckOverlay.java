@@ -1,6 +1,6 @@
 package net.osparty.ui;
 
-import net.osparty.party.LiveParty;
+import net.osparty.party.LivePartyBackend;
 import net.osparty.party.LiveParty.ReadyCheckStatus;
 import java.awt.Color;
 import java.awt.Dimension;
@@ -16,9 +16,9 @@ import net.runelite.client.ui.overlay.components.TitleComponent;
  */
 public class ReadyCheckOverlay extends OverlayPanel
 {
-	private final LiveParty liveParty;
+	private final LivePartyBackend liveParty;
 
-	public ReadyCheckOverlay(LiveParty liveParty)
+	public ReadyCheckOverlay(LivePartyBackend liveParty)
 	{
 		this.liveParty = liveParty;
 		setPosition(OverlayPosition.TOP_CENTER);

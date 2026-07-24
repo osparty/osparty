@@ -9,6 +9,7 @@ import net.osparty.api.PartyService;
 import net.osparty.model.Party;
 import net.osparty.party.HostTransferMessage;
 import net.osparty.party.LiveParty;
+import net.osparty.party.LivePartyBackend;
 
 /**
  * Coordinates handing the party to another member without destroying it, driving the
@@ -25,7 +26,7 @@ public class HostTransferHandler
 	/** How long the old host waits for the target to ACCEPT, and the target waits for the COMMIT. */
 	private static final int HANDSHAKE_TIMEOUT_MS = 12_000;
 
-	private final LiveParty liveParty;
+	private final LivePartyBackend liveParty;
 	private final PartyService partyService;
 	private final PartyState partyState;
 	private final Supplier<String> localNameSupplier;
@@ -36,7 +37,7 @@ public class HostTransferHandler
 	/** New host: an offer we've accepted and are awaiting the COMMIT for. Null when idle. */
 	private IncomingTransfer incoming;
 
-	HostTransferHandler(LiveParty liveParty, PartyService partyService, PartyState partyState,
+	HostTransferHandler(LivePartyBackend liveParty, PartyService partyService, PartyState partyState,
 		Supplier<String> localNameSupplier, Consumer<String> notifier)
 	{
 		this.liveParty = liveParty;
