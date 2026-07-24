@@ -110,6 +110,22 @@ public class NpcDefenceOverlay extends Overlay
 			cursor += arrowW + 2;
 			OverlayUtil.renderTextLocation(graphics, new Point(cursor, baseline), drainStr, DRAIN_COLOR);
 		}
+
+		if (config.magicDefence() && state.getMagicRoll() < state.getMagicBaseRoll())
+		{
+			long percent = Math.round(state.getMagicRoll() * 100.0 / state.getMagicBaseRoll());
+			String magicStr = "M " + Math.max(0, percent) + "%";
+			int magicX = anchor.getX() - fm.stringWidth(magicStr) / 2 + position.getXNudge();
+			int magicBaseline = baseline + fm.getHeight();
+			if (config.defenceTextPlate())
+			{
+				graphics.setColor(new Color(0, 0, 0, 150));
+				graphics.fillRect(magicX - 2, magicBaseline - fm.getAscent() - 1,
+					fm.stringWidth(magicStr) + 4, fm.getHeight() + 2);
+			}
+			OverlayUtil.renderTextLocation(graphics, new Point(magicX, magicBaseline), magicStr,
+				config.magicDefenceColor());
+		}
 		return null;
 	}
 

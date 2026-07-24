@@ -12,15 +12,20 @@ import net.runelite.api.NPC;
 import net.runelite.api.Varbits;
 
 /**
- * Tracks the live defence level of the monster a party is draining with
- * defence-lowering special attacks. Drains are supplied by
- * {@link SpecialAttackTracker} for both the local player and party members (via
- * the party bus), so the computed defence reflects the whole party's draining,
- * not just our own.
+ * Tracks the live defence of the monster a party is draining with defence-lowering
+ * special attacks. Both the physical Defence level and the magic-defence roll are
+ * tracked. Drains are supplied by {@link SpecialAttackTracker} for both the local
+ * player and party members (via the party bus), so the computed values reflect the
+ * whole party's draining, not just our own.
  *
- * <p>The drain formulas and base-defence data are ported from the community
- * Party Defence Tracker plugin. Raid (CoX) party-size scaling is applied; the
- * Challenge Mode multiplier is not, so CM defence reads low.
+ * <p>The physical drain formulas and base-defence data are ported from the community
+ * Party Defence Tracker plugin. Raid (CoX) party-size scaling is applied to the
+ * Defence and Magic levels; the Challenge Mode multiplier is not, so CM reads low.
+ *
+ * <p>Magic defence follows the OSRS roll {@code (9 + Magic level) * (Magic-def bonus + 64)}.
+ * Accursed sceptre and Seercull drain the Magic <em>level</em>; the Eye of ayak drains
+ * the Magic-defence <em>bonus</em>. A few monsters ({@link BossDefence#isMagicUsesDefence()})
+ * roll magic defence off their Defence level, so their physical drains lower it too.
  */
 @Singleton
 public class DefenceTracker
@@ -36,6 +41,12 @@ public class DefenceTracker
 	private double bossStartDef;
 	private double minDef;
 
+	private double magicLevel;
+	private double magicStartLevel;
+	private double magicDefBonus;
+	private double magicStartDefBonus;
+	private boolean magicUsesDefence;
+
 	private final List<Drain> pending = new ArrayList<>();
 
 	@Value
@@ -45,6 +56,9 @@ public class DefenceTracker
 		long current;
 		long min;
 		long base;
+		/** Current magic-defence roll and its starting value; percent = magicRoll / magicBaseRoll. */
+		long magicRoll;
+		long magicBaseRoll;
 	}
 
 	/** One defence-draining special attack landed on an NPC, from any party member. */
@@ -130,14 +144,22 @@ public class DefenceTracker
 		bossIndex = index;
 		bossDef = boss != null ? boss.getBaseDef() : 0;
 		minDef = boss != null ? boss.getMinDef() : 0;
+		magicLevel = boss != null ? boss.getBaseMagic() : 0;
+		magicDefBonus = boss != null ? boss.getBaseMagicDef() : 0;
+		magicUsesDefence = boss != null && boss.isMagicUsesDefence();
 
-		// In CoX, the boss defence is scaled up by the (scaled) party size.
+		// In CoX, the boss's combat levels are scaled up by the (scaled) party size.
+		// This applies to the Defence and Magic levels but not to the magic-defence bonus.
 		if (boss != null && client.getVarbitValue(Varbits.IN_RAID) == 1 && isCoxBoss(name))
 		{
 			int partySize = Math.max(1, client.getVarbitValue(COX_SCALED_PARTY_SIZE_VARBIT));
-			bossDef = (int) (bossDef * (((int) Math.sqrt(partySize - 1) + ((partySize - 1) * 7 / 10 + 100)) / 100.0));
+			double mult = ((int) Math.sqrt(partySize - 1) + ((partySize - 1) * 7 / 10 + 100)) / 100.0;
+			bossDef = (int) (bossDef * mult);
+			magicLevel = (int) (magicLevel * mult);
 		}
 		bossStartDef = bossDef;
+		magicStartLevel = magicLevel;
+		magicStartDefBonus = magicDefBonus;
 	}
 
 	private void calculateDefence(SpecWeapon weapon, int hit)
@@ -190,15 +212,41 @@ public class DefenceTracker
 				}
 				break;
 			case ACCURSED_SCEPTRE:
-				if (hit > 0 && bossDef > base * .85)
+				// Condemn drains both Defence and Magic to at most 15% below their
+				// starting level; it never stacks past that cap.
+				if (hit > 0)
 				{
-					bossDef = base * .85;
+					if (bossDef > base * .85)
+					{
+						bossDef = base * .85;
+					}
+					if (magicLevel > magicStartLevel * .85)
+					{
+						magicLevel = magicStartLevel * .85;
+					}
+				}
+				break;
+			case SEERCULL:
+				// Soulshot lowers Magic level by the damage dealt, but only if the
+				// level has not already been reduced (mirrors the bone-dagger rule).
+				if (magicLevel >= magicStartLevel)
+				{
+					magicLevel -= hit;
+				}
+				break;
+			case EYE_OF_AYAK:
+				// Soul Rend lowers the Magic-defence bonus by the damage dealt,
+				// stacking down to a floor of 0 (negative bonuses are left as-is).
+				if (hit > 0 && magicDefBonus > 0)
+				{
+					magicDefBonus = Math.max(0, magicDefBonus - hit);
 				}
 				break;
 			default:
 				return; // weapon doesn't drain defence
 		}
 		bossDef = Math.max(bossDef, minDef);
+		magicLevel = Math.max(magicLevel, 0);
 	}
 
 	private static boolean isDemon(String name)
@@ -248,7 +296,14 @@ public class DefenceTracker
 		{
 			return null;
 		}
-		return new DefenceState(bossIndex, Math.round(bossDef), Math.round(minDef), Math.round(bossStartDef));
+		double roll = magicUsesDefence
+			? (9 + bossDef) * (magicDefBonus + 64)
+			: (9 + magicLevel) * (magicDefBonus + 64);
+		double baseRoll = magicUsesDefence
+			? (9 + bossStartDef) * (magicStartDefBonus + 64)
+			: (9 + magicStartLevel) * (magicStartDefBonus + 64);
+		return new DefenceState(bossIndex, Math.round(bossDef), Math.round(minDef), Math.round(bossStartDef),
+			Math.round(roll), Math.round(baseRoll));
 	}
 
 	public void reset()
@@ -258,6 +313,11 @@ public class DefenceTracker
 		bossDef = -1;
 		bossStartDef = 0;
 		minDef = 0;
+		magicLevel = 0;
+		magicStartLevel = 0;
+		magicDefBonus = 0;
+		magicStartDefBonus = 0;
+		magicUsesDefence = false;
 		pending.clear();
 	}
 }

@@ -23,7 +23,11 @@ public enum SpecWeapon
 	BARRELCHEST_ANCHOR(ItemID.BRAIN_ANCHOR),
 	BONE_DAGGER(ItemID.DTTD_BONE_DAGGER, ItemID.DTTD_BONE_DAGGER_P, ItemID.DTTD_BONE_DAGGER_P_, ItemID.DTTD_BONE_DAGGER_P__),
 	DORGESHUUN_CROSSBOW(new int[]{ItemID.DTTD_BONE_CROSSBOW}, distance -> 60 + distance * 3),
-	ACCURSED_SCEPTRE(new int[]{ItemID.WILD_CAVE_ACCURSED_CHARGED, ItemID.WILD_CAVE_ACCURSED_CHARGED_RECOL}, distance -> 46 + distance * 10);
+	ACCURSED_SCEPTRE(new int[]{ItemID.WILD_CAVE_ACCURSED_CHARGED, ItemID.WILD_CAVE_ACCURSED_CHARGED_RECOL}, distance -> 46 + distance * 10),
+	// Magic-defence drainers: Seercull (Soulshot) lowers the target's Magic level,
+	// Eye of ayak (Soul Rend) lowers the target's Magic-defence bonus.
+	SEERCULL(new int[]{ItemID.DAGANOTH_CAVE_MAGIC_SHORTBOW}, distance -> 46 + distance * 5),
+	EYE_OF_AYAK(new int[]{ItemID.EYE_OF_AYAK}, distance -> 120);
 
 	private final int[] itemIds;
 	private final IntUnaryOperator clientCycleHitDelay;

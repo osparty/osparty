@@ -316,6 +316,18 @@ public interface OSPartyConfig extends Config
 		return false;
 	}
 
+	@ConfigItem(
+		keyName = "pingSound",
+		name = "Ping sound",
+		description = "Play a sound when a party member drops a map ping.",
+		position = 4,
+		section = SOUNDS
+	)
+	default boolean pingSound()
+	{
+		return false;
+	}
+
 	// ---- Privacy & safety ----
 
 	@ConfigItem(
@@ -404,6 +416,18 @@ public interface OSPartyConfig extends Config
 	default int pingAnimMs()
 	{
 		return 2000;
+	}
+
+	@ConfigItem(
+		keyName = "pingOffscreenIndicator",
+		name = "Off-screen ping arrows",
+		description = "Show an arrow at the screen edge pointing toward pings that are off-screen or behind you.",
+		position = 5,
+		section = MAP_PINGS
+	)
+	default boolean pingOffscreenIndicator()
+	{
+		return true;
 	}
 
 	// ---- Learner & teacher markers ----
@@ -595,5 +619,30 @@ public interface OSPartyConfig extends Config
 	default boolean defenceTextPlate()
 	{
 		return false;
+	}
+
+	@ConfigItem(
+		keyName = "magicDefence",
+		name = "Show magic defence",
+		description = "Also show the monster's live magic defence (as a percentage of its starting value) as the party drains it with the accursed sceptre, Seercull, or Eye of ayak.",
+		position = 11,
+		section = DEFENCE
+	)
+	default boolean magicDefence()
+	{
+		return true;
+	}
+
+	@Alpha
+	@ConfigItem(
+		keyName = "magicDefenceColor",
+		name = "Magic defence colour",
+		description = "Colour of the magic-defence percentage.",
+		position = 12,
+		section = DEFENCE
+	)
+	default Color magicDefenceColor()
+	{
+		return new Color(120, 180, 255);
 	}
 }

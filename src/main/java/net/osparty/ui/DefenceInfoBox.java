@@ -34,6 +34,15 @@ public class DefenceInfoBox extends InfoBox
 		{
 			return "";
 		}
+		if (config.magicDefence() && state.getMagicBaseRoll() > 0)
+		{
+			long percent = Math.round(state.getMagicRoll() * 100.0 / state.getMagicBaseRoll());
+			setTooltip("Monster defence (magic defence: " + Math.max(0, percent) + "%)");
+		}
+		else
+		{
+			setTooltip("Monster defence");
+		}
 		long shown = config.defenceShowFullLevel() ? state.getCurrent() : state.getCurrent() - state.getMin();
 		return Long.toString(Math.max(0, shown));
 	}

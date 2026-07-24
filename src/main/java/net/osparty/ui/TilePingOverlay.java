@@ -24,6 +24,9 @@ import net.runelite.client.ui.overlay.components.TextComponent;
  * Draws party members' map pings on the game scene: a pulsing, expanding ring on
  * the pinged tile in the sender's colour, with the sender's name in the centre.
  * Each ping animates for {@link LiveParty} ping window, then disappears.
+ *
+ * <p>Pings that fall outside the visible viewport are handled by {@link PingArrowOverlay},
+ * which draws an edge arrow above the game interface instead.
  */
 public class TilePingOverlay extends Overlay
 {
@@ -66,31 +69,55 @@ public class TilePingOverlay extends Overlay
 			{
 				continue;
 			}
-			LocalPoint lp = LocalPoint.fromWorld(client, wp);
-			if (lp == null)
-			{
-				continue;
-			}
 			// Configurable (point 47); should match LiveParty's ping window for a clean fade-out.
 			double t = (now - ping.getCreatedAt()) / (double) config.pingAnimMs();
 			if (t < 0 || t > 1)
 			{
 				continue;
 			}
-			drawPing(graphics, lp, wp.getPlane(), ping, t);
+
+			LocalPoint lp = LocalPoint.fromWorld(client, wp);
+			Point center = onScreenCanvas(client, wp);
+			if (center != null && lp != null)
+			{
+				drawPing(graphics, center, lp, ping, t);
+			}
+			// Off-screen pings are drawn as edge arrows by PingArrowOverlay.
 		}
 		graphics.setStroke(prev);
 		return null;
 	}
 
-	private void drawPing(Graphics2D g, LocalPoint lp, int plane, TilePing ping, double t)
+	/**
+	 * The tile's canvas point if it projects inside the visible game viewport, else {@code null}
+	 * (out of scene, behind the camera, or scrolled off the edge). Shared with {@link PingArrowOverlay}
+	 * so a ping is shown as exactly one of an on-scene ring or an off-screen arrow.
+	 */
+	static Point onScreenCanvas(Client client, WorldPoint wp)
+	{
+		LocalPoint lp = LocalPoint.fromWorld(client, wp);
+		if (lp == null)
+		{
+			return null;
+		}
+		Point p = Perspective.localToCanvas(client, lp, wp.getPlane());
+		if (p == null)
+		{
+			return null;
+		}
+		int x0 = client.getViewportXOffset();
+		int y0 = client.getViewportYOffset();
+		if (p.getX() < x0 || p.getX() > x0 + client.getViewportWidth()
+			|| p.getY() < y0 || p.getY() > y0 + client.getViewportHeight())
+		{
+			return null;
+		}
+		return p;
+	}
+
+	private void drawPing(Graphics2D g, Point center, LocalPoint lp, TilePing ping, double t)
 	{
 		Color base = ping.getColor();
-		Point center = Perspective.localToCanvas(client, lp, plane);
-		if (center == null)
-		{
-			return;
-		}
 
 		// Tile highlight: pulse the tile poly's fill so the destination is obvious.
 		Polygon poly = Perspective.getCanvasTilePoly(client, lp);

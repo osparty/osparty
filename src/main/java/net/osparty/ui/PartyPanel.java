@@ -1435,11 +1435,36 @@ class PartyPanel extends JPanel
 
 	private JButton detailTabButton(String text, long memberId, int tab, int selected)
 	{
+		boolean active = tab == selected;
+		Color baseBg = active ? ColorScheme.MEDIUM_GRAY_COLOR : ColorScheme.DARK_GRAY_COLOR;
+		Color border = active ? ColorScheme.BRAND_ORANGE : ColorScheme.MEDIUM_GRAY_COLOR;
+
 		JButton button = new JButton(text);
 		button.setFocusPainted(false);
 		button.setMargin(new Insets(2, 4, 2, 4));
 		button.setFont(FontManager.getRunescapeSmallFont());
-		button.setForeground(tab == selected ? ColorScheme.BRAND_ORANGE : ColorScheme.LIGHT_GRAY_COLOR);
+		button.setForeground(active ? Color.WHITE : ColorScheme.LIGHT_GRAY_COLOR);
+		button.setBackground(baseBg);
+		button.setOpaque(true);
+		button.setContentAreaFilled(true);
+		button.setCursor(new Cursor(Cursor.HAND_CURSOR));
+		button.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createLineBorder(border, 1),
+			BorderFactory.createEmptyBorder(2, 4, 2, 4)));
+		button.addMouseListener(new MouseAdapter()
+		{
+			@Override
+			public void mouseEntered(MouseEvent e)
+			{
+				button.setBackground(baseBg.brighter());
+			}
+
+			@Override
+			public void mouseExited(MouseEvent e)
+			{
+				button.setBackground(baseBg);
+			}
+		});
 		button.addActionListener(e -> {
 			detailTab.put(memberId, tab);
 			refresh();

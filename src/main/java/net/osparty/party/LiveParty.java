@@ -814,17 +814,21 @@ public class LiveParty
 
 	// ---- map pings -----------------------------------------------------------
 
-	/** Broadcast a tile ping in {@code color}, labelled with our name; also shown locally. */
-	public void sendPing(WorldPoint point, Color color)
+	/**
+	 * Broadcast a tile ping in {@code color}, labelled with our name; also shown locally.
+	 *
+	 * @return {@code true} if the ping was sent and shown, {@code false} if we weren't in a state to ping.
+	 */
+	public boolean sendPing(WorldPoint point, Color color)
 	{
 		if (!isConnected() || point == null)
 		{
-			return;
+			return false;
 		}
 		long id = localId();
 		if (id == 0)
 		{
-			return;
+			return false;
 		}
 		String name = localName();
 
@@ -837,18 +841,24 @@ public class LiveParty
 		partyService.send(message);
 
 		addPing(new TilePing(point, name, color, System.currentTimeMillis()));
+		return true;
 	}
 
-	/** Handle an inbound ping from a peer (ignores our own echo, if any). */
-	public void onPing(PingMessage message)
+	/**
+	 * Handle an inbound ping from a peer (ignores our own echo, if any).
+	 *
+	 * @return {@code true} if this was a genuine peer ping that was shown, {@code false} if it was our own echo.
+	 */
+	public boolean onPing(PingMessage message)
 	{
 		if (message.getMemberId() == localId() && localId() != 0)
 		{
-			return;
+			return false;
 		}
 		WorldPoint point = new WorldPoint(message.getWorldX(), message.getWorldY(), message.getPlane());
 		Color color = new Color(message.getColor(), true);
 		addPing(new TilePing(point, message.getName(), color, System.currentTimeMillis()));
+		return true;
 	}
 
 	private void addPing(TilePing ping)
