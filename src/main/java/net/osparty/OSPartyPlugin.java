@@ -1574,15 +1574,16 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	}
 
 	/**
-	 * Selects the live-party implementation behind the {@link LivePartyBackend} seam. Today only the
-	 * RuneLite relay backend exists; the V2 branch is added when {@code LivePartyV2} lands (P1), gated by
-	 * the {@code osparty.partyV2} system property. See PARTY_V2_MIGRATION.md.
+	 * Selects the live-party implementation behind the {@link LivePartyBackend} seam: OSParty's own V2 live
+	 * party when {@code -Dosparty.partyV2=true}, otherwise the RuneLite relay (the default).
+	 * See PARTY_V2_MIGRATION.md §9.1/§12.
 	 */
 	@Provides
 	@javax.inject.Singleton
-	LivePartyBackend provideLivePartyBackend(RuneLiteLivePartyBackend runeLite)
+	LivePartyBackend provideLivePartyBackend(RuneLiteLivePartyBackend runeLite,
+		net.osparty.party.v2.LivePartyV2 v2)
 	{
-		// V2: return Boolean.getBoolean("osparty.partyV2") ? livePartyV2 : runeLite;  (once LivePartyV2 exists)
-		return runeLite;
+		// V2: drop this branch (and the RuneLite backend) once V2 is the default at P6.
+		return Boolean.getBoolean("osparty.partyV2") ? v2 : runeLite;
 	}
 }

@@ -22,8 +22,12 @@ import net.runelite.api.gameval.VarbitID;
 /**
  * Builds a {@link PlayerUpdate} from the local client's live state. Reads item
  * containers and skills, so it must be called on the client thread.
+ *
+ * <p>V2: widened from package-private to public so both {@link LiveParty} (RuneLite relay) and
+ * {@code net.osparty.party.v2.LivePartyV2} reuse the same snapshot logic. Shared by both backends —
+ * stays when the RuneLite relay is removed at P6.
  */
-final class LocalPlayerSync
+public final class LocalPlayerSync
 {
 	/** Varp id for special-attack energy (0-1000). {@code VarPlayer.SPECIAL_ATTACK_PERCENT} is deprecated. */
 	private static final int VARP_SPECIAL_ATTACK_PERCENT = 300;
@@ -48,7 +52,7 @@ final class LocalPlayerSync
 	}
 
 	/** @return a snapshot of the local player, or {@code null} when not logged in. */
-	static PlayerUpdate snapshot(Client client)
+	public static PlayerUpdate snapshot(Client client)
 	{
 		Player local = client.getLocalPlayer();
 		if (local == null || local.getName() == null)

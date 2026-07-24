@@ -75,4 +75,10 @@ tasks.register('runClient', JavaExec) {
     description = 'Runs the RuneLite client with the OSParty plugin loaded'
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'net.osparty.OSPartyPluginTest'
+    // Forward -Dosparty.* from the gradle invocation into the forked client JVM.
+    System.properties.each { k, v ->
+        if (k.toString().startsWith('osparty.')) {
+            systemProperty(k.toString(), v)
+        }
+    }
 }
