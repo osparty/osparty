@@ -26,12 +26,24 @@ import okhttp3.WebSocketListener;
  * durable live state, so reconnection rebuilds the room naturally (PARTY_V2_MIGRATION.md recovery).
  *
  * <p>P1: connects to a single node (owner is always that node). P2 adds node-hint routing: the URL gains an
- * {@code /n/{nodeId}} segment and the socket honours {@code redirect} frames.
+ * {@code /n/{nodeId}} segment and the socket honours {@code redirect} frames. P4 adds {@code ownerPending}:
+ * a room whose owner drained answers with a retry delay rather than an error, and the socket re-announces
+ * after it instead of treating the party as gone — a member reconnects faster than its host re-hosts, and
+ * without this it would arrive to "no room" and silently fall out of the party.
  */
 @Slf4j
 public class PartyV2Socket extends WebSocketListener {
 	private static final long MIN_BACKOFF_MS = 1_000;
 	private static final long MAX_BACKOFF_MS = 30_000;
+
+	/** Retry delay used when an {@code ownerPending} frame does not name one. */
+	private static final long DEFAULT_RETRY_MS = 1_000;
+	/**
+	 * Cap on consecutive {@code ownerPending} retries. The server stops deferring once the room's handover
+	 * window lapses — it answers {@code no room} instead — so this is only a backstop against a server that
+	 * defers forever. Twenty retries covers a handover window several times over.
+	 */
+	private static final int MAX_PENDING_RETRIES = 20;
 
 	private final OkHttpClient client;
 	private final Gson gson;
@@ -49,6 +61,8 @@ public class PartyV2Socket extends WebSocketListener {
 	private volatile boolean connected;
 	private volatile WebSocket webSocket;
 	private int attempt;
+	/** Consecutive {@code ownerPending} deferrals; reset whenever the server actually seats us. */
+	private volatile int pendingRetries;
 
 	@javax.inject.Inject
 	public PartyV2Socket(OkHttpClient httpClient, Gson gson) {
@@ -146,6 +160,7 @@ public class PartyV2Socket extends WebSocketListener {
 	public void onOpen(WebSocket socket, Response response) {
 		connected = true;
 		attempt = 0;
+		pendingRetries = 0;
 		try {
 			onOpen.run();
 		}
@@ -176,6 +191,15 @@ public class PartyV2Socket extends WebSocketListener {
 			clearHintAndReconnect();
 			return;
 		}
+		if ("ownerPending".equals(frame.type)) {
+			// The room is mid-handover: we got here before our host re-claimed it. Wait and re-announce.
+			scheduleReannounce(frame.retryAfterMs);
+			return;
+		}
+		if ("welcome".equals(frame.type)) {
+			// Seated: whatever deferral got us here is over.
+			pendingRetries = 0;
+		}
 		try {
 			listener.accept(frame);
 		}
@@ -194,6 +218,42 @@ public class PartyV2Socket extends WebSocketListener {
 		WebSocket socket = webSocket;
 		if (socket != null) {
 			socket.close(1000, "redirect");
+		}
+	}
+
+	/**
+	 * The room exists but has no owner yet: its old node drained and the host is re-claiming it right now.
+	 * Re-announce after the server's delay rather than reconnecting — this socket is healthy, the room
+	 * simply is not there yet, and reconnecting would only move us to another node with the same answer.
+	 *
+	 * <p>Re-announcing runs the same {@link #onOpen} callback a fresh connection does, so the caller re-sends
+	 * its {@code hello} and its {@code host}/{@code join} exactly as it would after a reconnect.
+	 */
+	private void scheduleReannounce(Long retryAfterMs) {
+		if (closed || pendingRetries >= MAX_PENDING_RETRIES) {
+			return;
+		}
+		pendingRetries++;
+		long delay = retryAfterMs == null || retryAfterMs <= 0 ? DEFAULT_RETRY_MS : retryAfterMs;
+		// Jitter so a whole party retrying together does not arrive as one burst.
+		long jitter = ThreadLocalRandom.current().nextLong(DEFAULT_RETRY_MS / 4);
+		try {
+			reconnects.schedule(this::reannounce, delay + jitter, TimeUnit.MILLISECONDS);
+		}
+		catch (RejectedExecutionException ignored) {
+			// executor shut down by stop()
+		}
+	}
+
+	private void reannounce() {
+		if (closed || !connected) {
+			return;
+		}
+		try {
+			onOpen.run();
+		}
+		catch (Exception e) {
+			log.debug("Party V2 re-announce failed: {}", e.toString());
 		}
 	}
 
@@ -263,6 +323,8 @@ public class PartyV2Socket extends WebSocketListener {
 		public String detail;
 		/** Owner node-hint on a {@code redirect} frame; the socket reconnects to {@code /n/{nodeId}/…}. */
 		public String nodeId;
+		/** How long to wait before re-announcing, on an {@code ownerPending} frame. */
+		public Long retryAfterMs;
 		// Ready check.
 		public Long checkId;
 		public String starter;

@@ -862,7 +862,12 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	private void sendJoin() {
-		socket.send(new JoinFrame(roomKey, currentActivityId, localRole, localLearner, localInvited,
+		// A room rebuilt on a new owner seats everyone from scratch, so a member that was already admitted
+		// has to say so — otherwise every handover dumps the whole party back into the host's applicant
+		// queue to be re-admitted one by one. Admission is client-asserted either way (the server takes
+		// `invited` on trust), so this claims nothing an ordinary reconnect could not already claim.
+		boolean admitted = localInvited || localStatus == Status.MEMBER;
+		socket.send(new JoinFrame(roomKey, currentActivityId, localRole, localLearner, admitted,
 			localName, localAccountHash));
 	}
 
