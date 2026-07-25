@@ -170,6 +170,12 @@ public class PartyV2Socket extends WebSocketListener {
 			redirectTo(frame.nodeId);
 			return;
 		}
+		if ("ownerChanged".equals(frame.type)) {
+			// The owning node is going away (shutdown drain) or already lost the room: drop the stale hint
+			// and reconnect unhinted, landing wherever the gateway sends us.
+			clearHintAndReconnect();
+			return;
+		}
 		try {
 			listener.accept(frame);
 		}
@@ -188,6 +194,16 @@ public class PartyV2Socket extends WebSocketListener {
 		WebSocket socket = webSocket;
 		if (socket != null) {
 			socket.close(1000, "redirect");
+		}
+	}
+
+	/** Forget the owner hint and reconnect, so the next node we reach can claim or resolve the room. */
+	private void clearHintAndReconnect() {
+		nodeHint = null;
+		attempt = 0;
+		WebSocket socket = webSocket;
+		if (socket != null) {
+			socket.close(1000, "owner changed");
 		}
 	}
 
