@@ -92,6 +92,9 @@ public class LivePartyV2 implements LivePartyBackend {
 	private volatile long localAccountHash;
 	private volatile String localName;
 	private volatile int localWorld;
+	/** Identity last announced to the server, so a resolved name/hash is re-sent exactly once. */
+	private volatile String announcedName;
+	private volatile long announcedAccountHash;
 
 	private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
 	private volatile Runnable onEnded;
@@ -138,6 +141,9 @@ public class LivePartyV2 implements LivePartyBackend {
 
 	/** On every (re)connect: re-announce identity, re-assert host/join, and re-send our state next tick. */
 	private void onOpen() {
+		// The server re-seats us from scratch on a reconnect, so our identity has to be announced again.
+		announcedName = localName;
+		announcedAccountHash = localAccountHash;
 		socket.send(new HelloFrame(localAccountHash, localName));
 		if (mode == Mode.HOST) {
 			sendHost();
@@ -237,6 +243,8 @@ public class LivePartyV2 implements LivePartyBackend {
 		ticksSinceLocalBroadcast = 0;
 		pings.clear();
 		clearReadyCheck();
+		announcedName = null;
+		announcedAccountHash = 0;
 	}
 
 	@Override
@@ -380,6 +388,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		}
 		localAccountHash = client.getAccountHash();
 		localWorld = client.getWorld();
+		announceIdentityIfResolved();
 		expireReadyCheck();
 
 		if (!localDirty && vitalsChanged()) {
@@ -417,6 +426,26 @@ public class LivePartyV2 implements LivePartyBackend {
 				fire();
 			}
 		}
+	}
+
+	/**
+	 * Tell the server who we are once the client actually knows. A joiner sends its {@code join} frame from
+	 * the UI, before any tick has run for this party, so its name and account hash are still unresolved
+	 * there; without this the server's roster would keep the member nameless (its live state is opaque),
+	 * which breaks the advertised member list, badges, the block list and host transfer.
+	 */
+	private void announceIdentityIfResolved() {
+		String name = localName;
+		long accountHash = localAccountHash;
+		if ((name == null || name.isEmpty()) && accountHash == 0) {
+			return;
+		}
+		if (java.util.Objects.equals(name, announcedName) && accountHash == announcedAccountHash) {
+			return;
+		}
+		announcedName = name;
+		announcedAccountHash = accountHash;
+		socket.send(new HelloFrame(accountHash, name));
 	}
 
 	private boolean vitalsChanged() {
@@ -666,13 +695,19 @@ public class LivePartyV2 implements LivePartyBackend {
 			}
 		}
 		if (host != null) {
-			out.add(new Member(host.name, accountHashFor(host)));
+			out.add(new Member(nameFor(host), accountHashFor(host)));
 		}
 		others.sort(Comparator.comparingLong(e -> e.memberId));
 		for (PartyV2Socket.RosterEntry entry : others) {
-			out.add(new Member(entry.name, accountHashFor(entry)));
+			out.add(new Member(nameFor(entry), accountHashFor(entry)));
 		}
 		return out;
+	}
+
+	/** The member's live self-reported name, falling back to whatever the roster carries. */
+	private String nameFor(PartyV2Socket.RosterEntry entry) {
+		PlayerUpdate data = playerData.get(entry.memberId);
+		return data != null && data.getName() != null ? data.getName() : entry.name;
 	}
 
 	@Override
