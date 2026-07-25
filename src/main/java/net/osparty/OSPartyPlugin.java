@@ -926,6 +926,21 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	public void setPendingApplicants(java.util.List<Applicant> applicants, Activity activity)
 	{
 		applicantOverlay.setApplicants(applicants, activity);
+		// Badge the sidebar button while applications are waiting, not only for invites: the chat line
+		// announcing an applicant scrolls away, so otherwise nothing points at the panel. Driven by the
+		// live list rather than the one-shot announcement, so the dot lasts as long as the applications do.
+		boolean waiting = applicants != null && !applicants.isEmpty();
+		SwingUtilities.invokeLater(() ->
+		{
+			if (waiting)
+			{
+				flashInviteButton();
+			}
+			else
+			{
+				stopInviteFlash();
+			}
+		});
 	}
 
 	@Override
@@ -1472,7 +1487,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			.panel(panel)
 			.build();
 		navButtonAlert = NavigationButton.builder()
-			.tooltip("OSParty — party invite received")
+			.tooltip("OSParty — needs your attention")
 			.icon(withInviteBadge(navIcon))
 			.priority(priority)
 			.panel(panel)

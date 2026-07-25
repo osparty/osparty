@@ -581,6 +581,18 @@ class PartyPanel extends JPanel
 
 	private void updatePendingApplicants(List<RosterMember> roster, Activity activity)
 	{
+		// Forget anyone no longer in the room, so a player who withdraws and applies again is announced
+		// again. Admit/decline already clear their entry, but a self-withdrawal doesn't pass through here,
+		// and a member id is stable for the life of that player's connection — so without this their second
+		// application is silent.
+		Set<Long> present = new HashSet<>();
+		for (RosterMember member : roster)
+		{
+			present.add(member.getMemberId());
+		}
+		notifiedPending.retainAll(present);
+		autoDeclinedBlocked.retainAll(present);
+
 		List<Applicant> pending = new ArrayList<>();
 		for (RosterMember member : roster)
 		{

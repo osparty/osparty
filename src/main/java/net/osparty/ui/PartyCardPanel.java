@@ -539,6 +539,16 @@ abstract class PartyCardPanel extends JPanel
 		}
 		if (isActive(party))
 		{
+			// Only an applicant still waiting on the host has something to withdraw. Once admitted you're
+			// a member, so say so and leave from the Party tab rather than offering to cancel.
+			if (liveParty.isLocalAdmitted())
+			{
+				button.setText("In this party");
+				button.setEnabled(false);
+				button.setToolTipText("You're in this party — manage it on the Party tab");
+				setReason(party, "", ColorScheme.MEDIUM_GRAY_COLOR);
+				return;
+			}
 			button.setText("Cancel");
 			button.setEnabled(true);
 			button.setToolTipText("Withdraw your application");
