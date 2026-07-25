@@ -35,7 +35,10 @@ public class PartyV2Socket extends WebSocketListener {
 
 	private final OkHttpClient client;
 	private final Gson gson;
-	private final String url;
+	private final HttpUrl base;
+
+	/** Owner node-hint (§3.2): when set, the URL gains an {@code /n/{nodeId}} prefix routing to that pod. */
+	private volatile String nodeHint;
 
 	private volatile ScheduledExecutorService reconnects;
 	private volatile Consumer<Frame> listener = frame -> { };
@@ -54,10 +57,10 @@ public class PartyV2Socket extends WebSocketListener {
 			.readTimeout(Duration.ZERO)
 			.build();
 		this.gson = gson;
-		this.url = buildWsUrl();
+		this.base = resolveBase();
 	}
 
-	private static String buildWsUrl() {
+	private static HttpUrl resolveBase() {
 		String base = System.getProperty("osparty.partyV2Url");
 		if (base == null || base.trim().isEmpty()) {
 			base = PartyApiClient.apiBaseUrl();
@@ -66,7 +69,17 @@ public class PartyV2Socket extends WebSocketListener {
 		if (parsed == null) {
 			throw new IllegalStateException("Invalid Party V2 URL: " + base);
 		}
-		return parsed.newBuilder()
+		return parsed;
+	}
+
+	/** {@code [/n/{nodeId}]/api/v2/ws/party} — the node-hint prefix is added only once a redirect sets it. */
+	private String currentUrl() {
+		HttpUrl.Builder builder = base.newBuilder();
+		String hint = nodeHint;
+		if (hint != null && !hint.isEmpty()) {
+			builder.addPathSegment("n").addPathSegment(hint);
+		}
+		return builder
 			.addPathSegment("api").addPathSegment("v2")
 			.addPathSegment("ws").addPathSegment("party")
 			.build().toString();
@@ -126,7 +139,7 @@ public class PartyV2Socket extends WebSocketListener {
 		if (closed) {
 			return;
 		}
-		webSocket = client.newWebSocket(new Request.Builder().url(url).build(), this);
+		webSocket = client.newWebSocket(new Request.Builder().url(currentUrl()).build(), this);
 	}
 
 	@Override
@@ -153,11 +166,28 @@ public class PartyV2Socket extends WebSocketListener {
 		if (frame == null || frame.type == null) {
 			return;
 		}
+		if ("redirect".equals(frame.type)) {
+			redirectTo(frame.nodeId);
+			return;
+		}
 		try {
 			listener.accept(frame);
 		}
 		catch (Exception e) {
 			log.debug("Party V2 frame handling failed: {}", e.toString());
+		}
+	}
+
+	/** Adopt the owner node-hint and reconnect there (prompt retry, not a backoff — we know where to go). */
+	private void redirectTo(String nodeId) {
+		if (nodeId == null || nodeId.isEmpty() || nodeId.equals(nodeHint)) {
+			return;
+		}
+		nodeHint = nodeId;
+		attempt = 0;
+		WebSocket socket = webSocket;
+		if (socket != null) {
+			socket.close(1000, "redirect");
 		}
 	}
 
@@ -215,6 +245,8 @@ public class PartyV2Socket extends WebSocketListener {
 		public Integer color;
 		public String name;
 		public String detail;
+		/** Owner node-hint on a {@code redirect} frame; the socket reconnects to {@code /n/{nodeId}/…}. */
+		public String nodeId;
 	}
 
 	/** One roster row from a {@code roster} frame. */
