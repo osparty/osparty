@@ -244,6 +244,15 @@ public class RuneLiteLivePartyBackend implements LivePartyBackend
 		delegate.sendJoinPrompt(targetMemberId, kind, friendsChat);
 	}
 
+	/**
+	 * No-op: on the RuneLite relay, spec drains are broadcast by {@code SpecialAttackTracker} straight over
+	 * {@code PartyService}, exactly as before. This seam exists for V2, which has no RuneLite party bus.
+	 */
+	@Override
+	public void sendSpecDrain(int npcIndex, String weapon, int hit, int world)
+	{
+	}
+
 	@Override
 	public void promoteToHost(String hostName)
 	{

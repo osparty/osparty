@@ -5,6 +5,7 @@ import java.util.List;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import net.osparty.enums.SpecWeapon;
+import net.osparty.party.LivePartyBackend;
 import net.osparty.party.SpecDrainMessage;
 import net.runelite.api.Actor;
 import net.runelite.api.Client;
@@ -47,6 +48,8 @@ public class SpecialAttackTracker
 	private final ClientThread clientThread;
 	private final PartyService party;
 	private final DefenceTracker defenceTracker;
+	// V2: the live-party seam, used to broadcast drains when we're not on the RuneLite relay. Goes at P6.
+	private final LivePartyBackend liveParty;
 
 	private int specialPercentage = -1;
 	private int lastHitpointsXp = -1;
@@ -60,12 +63,13 @@ public class SpecialAttackTracker
 
 	@Inject
 	private SpecialAttackTracker(Client client, ClientThread clientThread, PartyService party,
-		DefenceTracker defenceTracker)
+		DefenceTracker defenceTracker, LivePartyBackend liveParty)
 	{
 		this.client = client;
 		this.clientThread = clientThread;
 		this.party = party;
 		this.defenceTracker = defenceTracker;
+		this.liveParty = liveParty;
 	}
 
 	public void reset()
@@ -209,6 +213,12 @@ public class SpecialAttackTracker
 		if (party.isInParty())
 		{
 			party.send(new SpecDrainMessage(npcIndex, weapon, hit, world));
+		}
+		else
+		{
+			// V2: no RuneLite party bus in V2 mode, so the drain goes over the live-party seam instead.
+			// Delete this branch (and keep only the seam call) once the RuneLite relay goes at P6.
+			liveParty.sendSpecDrain(npcIndex, weapon.name(), hit, world);
 		}
 	}
 

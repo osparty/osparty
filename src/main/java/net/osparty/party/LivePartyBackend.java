@@ -103,6 +103,12 @@ public interface LivePartyBackend
 
 	void sendJoinPrompt(long targetMemberId, String kind, String friendsChat);
 
+	/**
+	 * Broadcast a defence-draining special attack we just landed, so every member's defence tracker
+	 * reflects the whole party's draining. {@code weapon} is a {@link net.osparty.enums.SpecWeapon} name.
+	 */
+	void sendSpecDrain(int npcIndex, String weapon, int hit, int world);
+
 	// ---- host transfer ------------------------------------------------------
 	void promoteToHost(String hostName);
 

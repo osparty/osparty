@@ -247,6 +247,20 @@ public class PartyV2Socket extends WebSocketListener {
 		public String detail;
 		/** Owner node-hint on a {@code redirect} frame; the socket reconnects to {@code /n/{nodeId}/…}. */
 		public String nodeId;
+		// Ready check.
+		public Long checkId;
+		public String starter;
+		// Spec drain.
+		public Integer npcIndex;
+		public String weapon;
+		public Integer hit;
+		public Integer world;
+		// Join prompt / host transfer.
+		public String kind;
+		public String friendsChat;
+		public String newHostKey;
+		public String newHostName;
+		public Boolean hostStays;
 	}
 
 	/** One roster row from a {@code roster} frame. */

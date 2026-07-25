@@ -29,6 +29,7 @@ import net.runelite.api.Client;
 import net.runelite.api.Skill;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.EventBus;
 
 /**
  * {@link LivePartyBackend} over OSParty's own live endpoint ({@link PartyV2Socket}), replacing RuneLite's
@@ -54,6 +55,12 @@ public class LivePartyV2 implements LivePartyBackend {
 	private final OSPartyConfig config;
 	private final PartyV2Socket socket;
 	private final Gson gson;
+	/**
+	 * V2 has no RuneLite party bus, so inbound spec drains / join prompts / host-transfer steps are re-posted
+	 * here as the same message objects the RuneLite backend produced. The plugin's existing subscribers
+	 * (defence tracker, panel, FC popup) then run unchanged.
+	 */
+	private final EventBus eventBus;
 
 	private volatile Mode mode = Mode.NONE;
 	private volatile String roomKey;
@@ -90,14 +97,28 @@ public class LivePartyV2 implements LivePartyBackend {
 	private volatile Runnable onEnded;
 	private final List<TilePing> pings = new CopyOnWriteArrayList<>();
 
+	// ---- ready check (one active per party; same semantics as LiveParty) -----
+	private static final long READY_CHECK_TIMEOUT_MS = 30_000;
+	private volatile long readyCheckId;
+	private volatile long readyCheckStartedAt;
+	private volatile String readyCheckStarter;
+	private long readyCheckSeq;
+	private final java.util.Set<Long> readyMembers = ConcurrentHashMap.newKeySet();
+	private final java.util.concurrent.atomic.AtomicBoolean readyAllNotified =
+		new java.util.concurrent.atomic.AtomicBoolean();
+	private volatile Consumer<String> onReadyCheckStarted;
+	private volatile Runnable onAllReady;
+	private volatile Runnable onReadyExpired;
+
 	@Inject
 	private LivePartyV2(Client client, ConfigManager configManager, OSPartyConfig config,
-		PartyV2Socket socket, Gson gson) {
+		PartyV2Socket socket, Gson gson, EventBus eventBus) {
 		this.client = client;
 		this.configManager = configManager;
 		this.config = config;
 		this.socket = socket;
 		this.gson = gson;
+		this.eventBus = eventBus;
 	}
 
 	// ---- lifecycle ----------------------------------------------------------
@@ -215,6 +236,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		localDirty = false;
 		ticksSinceLocalBroadcast = 0;
 		pings.clear();
+		clearReadyCheck();
 	}
 
 	@Override
@@ -256,6 +278,21 @@ public class LivePartyV2 implements LivePartyBackend {
 				break;
 			case "ping":
 				applyPing(frame);
+				break;
+			case "readyStart":
+				applyReadyStart(frame);
+				break;
+			case "ready":
+				applyReady(frame);
+				break;
+			case "specDrain":
+				applySpecDrain(frame);
+				break;
+			case "fcRequest":
+				applyFcRequest(frame);
+				break;
+			case "transferHost":
+				applyTransferHost(frame);
 				break;
 			case "kicked":
 				end();
@@ -343,6 +380,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		}
 		localAccountHash = client.getAccountHash();
 		localWorld = client.getWorld();
+		expireReadyCheck();
 
 		if (!localDirty && vitalsChanged()) {
 			localDirty = true;
@@ -799,9 +837,278 @@ public class LivePartyV2 implements LivePartyBackend {
 		}
 	}
 
-	// ---- P3 (not yet implemented) -------------------------------------------
-	// Ready checks, host transfer, spec drains and friends-chat prompts arrive in P3. The RuneLite inbound
-	// @Subscribe handlers are no-ops in V2 (those events never fire; state comes over the socket).
+	// ---- ready check --------------------------------------------------------
+
+	@Override
+	public void setOnReadyCheckStarted(Consumer<String> onReadyCheckStarted) {
+		this.onReadyCheckStarted = onReadyCheckStarted;
+	}
+
+	@Override
+	public void setOnAllReady(Runnable onAllReady) {
+		this.onAllReady = onAllReady;
+	}
+
+	@Override
+	public void setOnReadyExpired(Runnable onReadyExpired) {
+		this.onReadyExpired = onReadyExpired;
+	}
+
+	/** Start a ready check (anyone in the party may). The starter counts as ready. */
+	@Override
+	public void startReadyCheck() {
+		if (!isConnected() || localMemberId == 0 || onDifferentWorldThanHost()) {
+			return;
+		}
+		long id = (localMemberId << 16) | (++readyCheckSeq & 0xFFFF);
+		beginReadyCheck(id, localName, localMemberId);
+		socket.send(new ReadyStartFrame(id, readyCheckStarter));
+		// Fire locally too: the server doesn't echo our own frame back to us.
+		Consumer<String> cb = onReadyCheckStarted;
+		if (cb != null) {
+			cb.accept(readyCheckStarter);
+		}
+		fire();
+	}
+
+	@Override
+	public void markReady() {
+		// Guard against a stale enabled button: never ready up from another world than the host.
+		if (readyCheckId == 0 || onDifferentWorldThanHost()) {
+			return;
+		}
+		readyMembers.add(localMemberId);
+		socket.send(new ReadyFrame(readyCheckId));
+		checkAllReady();
+		fire();
+	}
+
+	@Override
+	public void onReadyCheck(net.osparty.party.ReadyCheckMessage message) {
+		// No-op in V2: ready checks arrive as socket frames (see applyReadyStart / applyReady).
+	}
+
+	private void applyReadyStart(PartyV2Socket.Frame frame) {
+		if (frame.checkId == null || frame.memberId == null) {
+			return;
+		}
+		beginReadyCheck(frame.checkId, frame.starter, frame.memberId);
+		Consumer<String> cb = onReadyCheckStarted;
+		if (cb != null) {
+			cb.accept(frame.starter);
+		}
+		fire();
+	}
+
+	private void applyReady(PartyV2Socket.Frame frame) {
+		if (frame.checkId == null || frame.memberId == null
+			|| readyCheckId == 0 || frame.checkId != readyCheckId) {
+			return;
+		}
+		readyMembers.add(frame.memberId);
+		checkAllReady();
+		fire();
+	}
+
+	private void beginReadyCheck(long id, String starter, long starterMemberId) {
+		readyCheckId = id;
+		readyCheckStartedAt = System.currentTimeMillis();
+		readyCheckStarter = starter != null ? starter : "Someone";
+		readyAllNotified.set(false);
+		readyMembers.clear();
+		readyMembers.add(starterMemberId);
+	}
+
+	private void clearReadyCheck() {
+		readyCheckId = 0;
+		readyCheckStartedAt = 0;
+		readyCheckStarter = null;
+		readyMembers.clear();
+		readyAllNotified.set(false);
+	}
+
+	/** Fire the all-ready callback once when every (non-pending) member is ready. */
+	private void checkAllReady() {
+		if (readyCheckId == 0) {
+			return;
+		}
+		java.util.Set<Long> required = activeMemberIds();
+		if (required.isEmpty() || !readyMembers.containsAll(required)) {
+			return;
+		}
+		if (readyAllNotified.compareAndSet(false, true)) {
+			Runnable cb = onAllReady;
+			if (cb != null) {
+				cb.run();
+			}
+			clearReadyCheck();
+		}
+	}
+
+	private void expireReadyCheck() {
+		if (readyCheckId == 0) {
+			return;
+		}
+		if (System.currentTimeMillis() - readyCheckStartedAt > READY_CHECK_TIMEOUT_MS) {
+			clearReadyCheck();
+			Runnable cb = onReadyExpired;
+			if (cb != null) {
+				cb.run();
+			}
+			fire();
+		}
+	}
+
+	/** Member ids that must ready up: everyone admitted (host + members), not pending. */
+	private java.util.Set<Long> activeMemberIds() {
+		java.util.Set<Long> ids = new java.util.HashSet<>();
+		for (PartyV2Socket.RosterEntry entry : rosterEntries) {
+			if (!"PENDING".equals(entry.status)) {
+				ids.add(entry.memberId);
+			}
+		}
+		return ids;
+	}
+
+	@Override
+	public LiveParty.ReadyCheckStatus readyCheck() {
+		long id = readyCheckId;
+		if (id == 0) {
+			return null;
+		}
+		java.util.Set<Long> required = activeMemberIds();
+		int ready = 0;
+		for (long memberId : required) {
+			if (readyMembers.contains(memberId)) {
+				ready++;
+			}
+		}
+		// Round up: the check reads "30s" for its whole first second and only hits 0 at expiry.
+		long leftMs = Math.max(0, READY_CHECK_TIMEOUT_MS - (System.currentTimeMillis() - readyCheckStartedAt));
+		long left = (leftMs + 999) / 1000;
+		return new LiveParty.ReadyCheckStatus(readyCheckStarter, ready, required.size(), (int) left,
+			readyMembers.contains(localMemberId));
+	}
+
+	// ---- spec drains --------------------------------------------------------
+
+	/** Broadcast a defence-draining spec so every member's defence tracker sees the whole party's drain. */
+	@Override
+	public void sendSpecDrain(int npcIndex, String weapon, int hit, int world) {
+		if (mode == Mode.NONE) {
+			return;
+		}
+		socket.send(new SpecDrainFrame(npcIndex, weapon, hit, world));
+	}
+
+	private void applySpecDrain(PartyV2Socket.Frame frame) {
+		if (frame.memberId == null || frame.weapon == null) {
+			return;
+		}
+		net.osparty.enums.SpecWeapon weapon;
+		try {
+			weapon = net.osparty.enums.SpecWeapon.valueOf(frame.weapon);
+		}
+		catch (IllegalArgumentException e) {
+			return;
+		}
+		net.osparty.party.SpecDrainMessage message = new net.osparty.party.SpecDrainMessage(
+			frame.npcIndex == null ? -1 : frame.npcIndex, weapon,
+			frame.hit == null ? 0 : frame.hit, frame.world == null ? 0 : frame.world);
+		message.setMemberId(frame.memberId);
+		eventBus.post(message);
+	}
+
+	// ---- friends-chat / join prompts ----------------------------------------
+
+	@Override
+	public void requestFriendsChat(long targetMemberId, String friendsChat) {
+		sendJoinPrompt(targetMemberId, "FC", friendsChat);
+	}
+
+	@Override
+	public void sendJoinPrompt(long targetMemberId, String kind, String friendsChat) {
+		if (mode != Mode.HOST) {
+			return;
+		}
+		socket.send(new FcRequestFrame(targetMemberId, kind, friendsChat));
+	}
+
+	private void applyFcRequest(PartyV2Socket.Frame frame) {
+		net.osparty.party.FcRequestMessage request = new net.osparty.party.FcRequestMessage();
+		// The server only delivers this to its target, so it is always aimed at us.
+		request.setTargetMemberId(localMemberId);
+		request.setHostName(frame.host != null ? frame.host : hostName);
+		request.setKind(frame.kind);
+		request.setFriendsChat(frame.friendsChat);
+		if (frame.memberId != null) {
+			request.setMemberId(frame.memberId);
+		}
+		eventBus.post(request);
+	}
+
+	// ---- host transfer ------------------------------------------------------
+
+	/**
+	 * Take over as host without leaving the room. The server has already moved the authoritative HOST
+	 * status (it does so on COMMIT), so this only flips our local mode; the roster arrives as usual.
+	 */
+	@Override
+	public void promoteToHost(String hostName) {
+		mode = Mode.HOST;
+		this.hostName = hostName;
+		localDirty = true;
+		fire();
+	}
+
+	/** Step down from hosting while staying in the room. */
+	@Override
+	public void demoteToMember() {
+		mode = Mode.MEMBER;
+		fire();
+	}
+
+	@Override
+	public void offerHostTransfer(long targetMemberId, String newHostKey, String newHostName, boolean hostStays) {
+		socket.send(new TransferHostFrame("OFFER", targetMemberId, newHostKey, newHostName, hostStays));
+	}
+
+	@Override
+	public void acceptHostTransfer(long oldHostMemberId) {
+		socket.send(new TransferHostFrame("ACCEPT", oldHostMemberId, null, null, false));
+	}
+
+	@Override
+	public void commitHostTransfer(long targetMemberId, String newHostKey, boolean hostStays) {
+		socket.send(new TransferHostFrame("COMMIT", targetMemberId, newHostKey, null, hostStays));
+	}
+
+	@Override
+	public void abortHostTransfer(long targetMemberId) {
+		socket.send(new TransferHostFrame("ABORT", targetMemberId, null, null, false));
+	}
+
+	private void applyTransferHost(PartyV2Socket.Frame frame) {
+		if (frame.kind == null || frame.memberId == null) {
+			return;
+		}
+		net.osparty.party.HostTransferMessage message = new net.osparty.party.HostTransferMessage();
+		try {
+			message.setKind(net.osparty.party.HostTransferMessage.Kind.valueOf(frame.kind));
+		}
+		catch (IllegalArgumentException e) {
+			return;
+		}
+		// Targeted delivery: the server only sends this to the member it is aimed at.
+		message.setTargetMemberId(localMemberId);
+		message.setNewHostKey(frame.newHostKey);
+		message.setNewHostName(frame.newHostName);
+		message.setHostStays(Boolean.TRUE.equals(frame.hostStays));
+		message.setMemberId(frame.memberId);
+		eventBus.post(message);
+	}
+
+	// ---- P3 remainder -------------------------------------------------------
 
 	@Override
 	public void generatePassphrase(Consumer<String> onGenerated) {
@@ -811,82 +1118,8 @@ public class LivePartyV2 implements LivePartyBackend {
 
 	@Override
 	public void rememberResumedRoster(List<Member> members) {
-		// P3: silent re-admission of members present before a host restart.
-	}
-
-	@Override
-	public void setOnReadyCheckStarted(Consumer<String> onReadyCheckStarted) {
-		// P3
-	}
-
-	@Override
-	public void setOnAllReady(Runnable onAllReady) {
-		// P3
-	}
-
-	@Override
-	public void setOnReadyExpired(Runnable onReadyExpired) {
-		// P3
-	}
-
-	@Override
-	public void startReadyCheck() {
-		// P3
-	}
-
-	@Override
-	public void markReady() {
-		// P3
-	}
-
-	@Override
-	public void onReadyCheck(net.osparty.party.ReadyCheckMessage message) {
-		// P3
-	}
-
-	@Override
-	public LiveParty.ReadyCheckStatus readyCheck() {
-		return null; // P3
-	}
-
-	@Override
-	public void requestFriendsChat(long targetMemberId, String friendsChat) {
-		// P3
-	}
-
-	@Override
-	public void sendJoinPrompt(long targetMemberId, String kind, String friendsChat) {
-		// P3
-	}
-
-	@Override
-	public void promoteToHost(String hostName) {
-		// P3
-	}
-
-	@Override
-	public void demoteToMember() {
-		// P3
-	}
-
-	@Override
-	public void offerHostTransfer(long targetMemberId, String newHostKey, String newHostName, boolean hostStays) {
-		// P3
-	}
-
-	@Override
-	public void acceptHostTransfer(long oldHostMemberId) {
-		// P3
-	}
-
-	@Override
-	public void commitHostTransfer(long targetMemberId, String newHostKey, boolean hostStays) {
-		// P3
-	}
-
-	@Override
-	public void abortHostTransfer(long targetMemberId) {
-		// P3
+		// Not needed in V2: the room lives on the owner node, so a host restart rejoins the existing room
+		// with its roster intact rather than rebuilding it from applicants.
 	}
 
 	@Override
@@ -1048,5 +1281,70 @@ public class LivePartyV2 implements LivePartyBackend {
 
 	private static final class LeaveFrame {
 		final String type = "leave";
+	}
+
+	private static final class ReadyStartFrame {
+		final String type = "readyStart";
+		final long checkId;
+		final String starter;
+
+		ReadyStartFrame(long checkId, String starter) {
+			this.checkId = checkId;
+			this.starter = starter;
+		}
+	}
+
+	private static final class ReadyFrame {
+		final String type = "ready";
+		final long checkId;
+
+		ReadyFrame(long checkId) {
+			this.checkId = checkId;
+		}
+	}
+
+	private static final class SpecDrainFrame {
+		final String type = "specDrain";
+		final int npcIndex;
+		final String weapon;
+		final int hit;
+		final int world;
+
+		SpecDrainFrame(int npcIndex, String weapon, int hit, int world) {
+			this.npcIndex = npcIndex;
+			this.weapon = weapon;
+			this.hit = hit;
+			this.world = world;
+		}
+	}
+
+	private static final class FcRequestFrame {
+		final String type = "fcRequest";
+		final long target;
+		final String kind;
+		final String friendsChat;
+
+		FcRequestFrame(long target, String kind, String friendsChat) {
+			this.target = target;
+			this.kind = kind;
+			this.friendsChat = friendsChat;
+		}
+	}
+
+	private static final class TransferHostFrame {
+		final String type = "transferHost";
+		final String kind;
+		final long target;
+		final String newHostKey;
+		final String newHostName;
+		final boolean hostStays;
+
+		TransferHostFrame(String kind, long target, String newHostKey, String newHostName, boolean hostStays) {
+			this.kind = kind;
+			this.target = target;
+			this.newHostKey = newHostKey;
+			this.newHostName = newHostName;
+			this.hostStays = hostStays;
+		}
 	}
 }
