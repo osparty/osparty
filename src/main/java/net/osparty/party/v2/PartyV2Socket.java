@@ -25,6 +25,11 @@ import okhttp3.WebSocketListener;
  * {@link #onOpen} so the caller re-announces itself and re-sends its current state — the server holds no
  * durable live state, so reconnection rebuilds the room naturally (PARTY_V2_MIGRATION.md recovery).
  *
+ * <p>The connection lives for the duration of a party, not of the plugin: {@link LivePartyV2} starts it on
+ * host/join and stops it on leave. Outside a party there is nothing to relay, and an idle socket would hold
+ * a session on a node for every logged-in user rather than for every user actually in a party. Stopping also
+ * releases the node hint, so the next party is placed on its merits instead of inheriting the last one's.
+ *
  * <p>P1: connects to a single node (owner is always that node). P2 adds node-hint routing: the URL gains an
  * {@code /n/{nodeId}} segment and the socket honours {@code redirect} frames. P4 adds {@code ownerPending}:
  * a room whose owner drained answers with a retry delay rather than an error, and the socket re-announces
@@ -129,13 +134,19 @@ public class PartyV2Socket extends WebSocketListener {
 		closed = true;
 		connected = false;
 		started = false;
+		// The hint belongs to the party we were in, not to us: keeping it would send the next party we host
+		// straight back to the node that owned the last one, which is how one node ends up owning them all.
+		nodeHint = null;
 		if (reconnects != null) {
 			reconnects.shutdownNow();
 		}
 		WebSocket socket = webSocket;
 		if (socket != null) {
-			socket.close(1000, "plugin stopped");
+			socket.close(1000, "party left");
 		}
+		// Drop the reference before the close completes, so this socket's late callbacks are recognised as
+		// stale by isStale() and cannot schedule a reconnect onto a session that has since restarted.
+		webSocket = null;
 	}
 
 	public boolean isConnected() {
@@ -156,11 +167,32 @@ public class PartyV2Socket extends WebSocketListener {
 		webSocket = client.newWebSocket(new Request.Builder().url(currentUrl()).build(), this);
 	}
 
+	/**
+	 * Whether a callback belongs to a socket we have already moved on from. The socket is started and
+	 * stopped repeatedly (once per party), and OkHttp delivers a closing socket's callbacks after
+	 * {@link #stop} returns — so without this, a leave immediately followed by a host would see the old
+	 * socket's {@code onClosed} schedule a reconnect against the new session and open a second connection.
+	 *
+	 * <p>Synchronised on the same monitor as {@link #connect}: the callback can otherwise arrive on a
+	 * connection so fast that {@code webSocket} has not been assigned yet, and a live socket would be
+	 * mistaken for an abandoned one.
+	 */
+	private synchronized boolean isStale(WebSocket socket) {
+		return socket != this.webSocket;
+	}
+
 	@Override
 	public void onOpen(WebSocket socket, Response response) {
-		connected = true;
-		attempt = 0;
-		pendingRetries = 0;
+		synchronized (this) {
+			if (socket != this.webSocket) {
+				socket.close(1000, "superseded");
+				return;
+			}
+			connected = true;
+			attempt = 0;
+			pendingRetries = 0;
+		}
+		// Outside the lock: the callback re-announces the party and must not hold up a concurrent stop().
 		try {
 			onOpen.run();
 		}
@@ -171,6 +203,12 @@ public class PartyV2Socket extends WebSocketListener {
 
 	@Override
 	public void onMessage(WebSocket socket, String text) {
+		// Plain read, not isStale(): this runs per live-state frame, and taking the connect lock on that
+		// path would contend with every other member's traffic. A frame from an abandoned socket is
+		// harmless — it carries no reconnect decision.
+		if (socket != this.webSocket) {
+			return;
+		}
 		Frame frame;
 		try {
 			frame = gson.fromJson(text, Frame.class);
@@ -274,12 +312,18 @@ public class PartyV2Socket extends WebSocketListener {
 
 	@Override
 	public void onClosed(WebSocket socket, int code, String reason) {
+		if (isStale(socket)) {
+			return;
+		}
 		connected = false;
 		scheduleReconnect();
 	}
 
 	@Override
 	public void onFailure(WebSocket socket, Throwable t, Response response) {
+		if (isStale(socket)) {
+			return;
+		}
 		connected = false;
 		if (!closed) {
 			log.debug("Party V2 socket failed ({}); will retry", t.toString());

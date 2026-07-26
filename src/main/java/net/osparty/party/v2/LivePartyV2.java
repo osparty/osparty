@@ -128,11 +128,16 @@ public class LivePartyV2 implements LivePartyBackend {
 
 	// ---- lifecycle ----------------------------------------------------------
 
+	/**
+	 * Wires the socket but does not connect it: there is nothing to relay until we are in a party, and a
+	 * socket held open from plugin start would cost a server session for every logged-in user rather than
+	 * for every user actually partying. {@link #hostParty}/{@link #joinParty} connect; {@link #leave} and
+	 * {@link #end} disconnect.
+	 */
 	@Override
 	public void register() {
 		socket.setListener(this::onFrame);
 		socket.setOnOpen(this::onOpen);
-		socket.start();
 	}
 
 	@Override
@@ -188,6 +193,10 @@ public class LivePartyV2 implements LivePartyBackend {
 		this.localLearner = learner;
 		this.localTeacher = teacher;
 		localDirty = true;
+		// Connect after the mode is set: whether we arrive connected or not, onOpen is what re-sends this
+		// frame, and it reads mode to decide between host and join. sendHost() below covers the case where
+		// the socket is already up (hosting straight after another party).
+		socket.start();
 		sendHost();
 		fire();
 	}
@@ -209,6 +218,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		this.localLearner = learner;
 		this.localInvited = invited;
 		localDirty = true;
+		socket.start();
 		sendJoin();
 		fire();
 	}
@@ -219,12 +229,15 @@ public class LivePartyV2 implements LivePartyBackend {
 			socket.send(new LeaveFrame());
 		}
 		reset();
+		// After the leave frame: OkHttp transmits what is already queued before it sends the close.
+		socket.stop();
 		fire();
 	}
 
 	@Override
 	public void leaveForSwitch() {
-		// The subsequent join re-keys our session server-side; no explicit leave needed.
+		// The subsequent join re-keys our session server-side; no explicit leave needed. The socket stays up
+		// for the same reason — stopping it here would only cost the join a reconnect.
 		reset();
 		fire();
 	}
@@ -395,8 +408,10 @@ public class LivePartyV2 implements LivePartyBackend {
 		fire();
 	}
 
+	/** The room is over (host disbanded, or we were kicked): drop the connection with it. */
 	private void end() {
 		reset();
+		socket.stop();
 		Runnable cb = onEnded;
 		if (cb != null) {
 			cb.run();
