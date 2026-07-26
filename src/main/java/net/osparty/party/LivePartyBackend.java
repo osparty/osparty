@@ -78,6 +78,22 @@ public interface LivePartyBackend
 
 	void markLocalDirty();
 
+	/**
+	 * Our inventory or worn gear changed. Separate from {@link #markLocalDirty} because a backend that sends
+	 * only what changed needs to know <em>what</em> changed — resending 500 bytes of item ids because run
+	 * energy ticked is most of what makes the live stream expensive.
+	 *
+	 * <p>The RuneLite-relay backend ignores the distinction and marks everything dirty, as it always has.
+	 */
+	void markItemsDirty();
+
+	/**
+	 * A skill's <em>real</em> level was reported. Fired for boosts too, so implementations must compare
+	 * against what they last sent rather than trusting the event: a levelled skill is rare, a boosted one is
+	 * constant, and only the former belongs in a live update.
+	 */
+	void markStatsDirty(net.runelite.api.Skill skill, int realLevel);
+
 	void broadcastOffline(String name);
 
 	// ---- host state / actions -----------------------------------------------

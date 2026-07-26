@@ -57,6 +57,7 @@ import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.CommandExecuted;
 import net.runelite.api.events.FakeXpDrop;
 import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.InventoryID;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.HitsplatApplied;
 import net.runelite.api.events.NpcDespawned;
@@ -628,13 +629,20 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Subscribe
 	public void onItemContainerChanged(ItemContainerChanged event)
 	{
-		liveParty.markLocalDirty();
+		// V2: only the two containers a snapshot actually carries. This fires for the bank, the GE and every
+		// other container too, so without the filter a banking trip re-sent the whole snapshot continuously.
+		int id = event.getContainerId();
+		if (id == InventoryID.INVENTORY.getId() || id == InventoryID.EQUIPMENT.getId())
+		{
+			liveParty.markItemsDirty();
+		}
 	}
 
 	@Subscribe
 	public void onStatChanged(StatChanged event)
 	{
-		liveParty.markLocalDirty();
+		// V2: the backend decides whether this is a real level-up or just a boost; boosts arrive constantly.
+		liveParty.markStatsDirty(event.getSkill(), event.getLevel());
 		specTracker.onStatChanged(event);
 	}
 

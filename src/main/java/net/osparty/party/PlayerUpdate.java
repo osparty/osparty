@@ -62,11 +62,16 @@ public class PlayerUpdate extends PartyMemberMessage
 	/** Active spellbook: 0 standard, 1 ancient, 2 lunar, 3 arceuus; {@code -1} when unknown. */
 	private int spellbook = -1;
 
-	/** {@code -1} when unknown. */
-	private int killCount = -1;
+	/**
+	 * {@code -1} when unknown — which is always: nothing has ever populated this. Kept, and kept read, only
+	 * because every reader treats {@code -1} as "go and look it up", and that lookup ({@code KillcountService},
+	 * by name, on the viewer's client) is where the killcount actually comes from. Transient so the two dead
+	 * fields stop costing ~45 bytes on every live update.
+	 */
+	private transient int killCount = -1;
 
-	/** Harder variant (CM/HM/Expert); {@code -1} when unknown/N/A. */
-	private int hardModeKillCount = -1;
+	/** Harder variant (CM/HM/Expert); {@code -1} when unknown/N/A. As dead as {@link #killCount}. */
+	private transient int hardModeKillCount = -1;
 
 	/** Enum name (NORMAL / IRONMAN / ...); null when unknown. */
 	private String accountType;
@@ -91,4 +96,15 @@ public class PlayerUpdate extends PartyMemberMessage
 
 	/** Null when in no friends chat. */
 	private String friendsChatOwner;
+
+	/**
+	 * V2: the sender is deliberately withholding its inventory (and rune pouch), rather than not having sent
+	 * it yet. Receivers merge each update into the last one they held, so an omitted field means "unchanged"
+	 * — without this, turning privacy on would leave peers looking at the last inventory it saw. Boxed and
+	 * left null on the RuneLite-relay path, so V1's wire format is unchanged. Delete with that path at P6.
+	 */
+	private Boolean hideInventory;
+
+	/** V2: as {@link #hideInventory}, for worn equipment. */
+	private Boolean hideGear;
 }

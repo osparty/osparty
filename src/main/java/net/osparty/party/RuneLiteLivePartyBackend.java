@@ -167,6 +167,20 @@ public class RuneLiteLivePartyBackend implements LivePartyBackend
 	}
 
 	@Override
+	public void markItemsDirty()
+	{
+		// The relay carries whole snapshots, so there is no finer state to mark.
+		delegate.markLocalDirty();
+	}
+
+	@Override
+	public void markStatsDirty(net.runelite.api.Skill skill, int realLevel)
+	{
+		// V1 re-sent on any stat change, boosted included; keep that exactly.
+		delegate.markLocalDirty();
+	}
+
+	@Override
 	public void markLocalDirty()
 	{
 		delegate.markLocalDirty();

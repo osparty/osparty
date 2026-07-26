@@ -1,6 +1,8 @@
 package net.osparty.party.v2;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import java.awt.Color;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -48,7 +50,34 @@ public class LivePartyV2 implements LivePartyBackend {
 	private enum Mode { NONE, HOST, MEMBER }
 
 	private static final long ONLINE_TIMEOUT_MS = 20_000;
-	private static final int LOCAL_REBROADCAST_TICKS = 10;
+	/**
+	 * Run energy is reported to the nearest this many points. It drains about one point per tick while
+	 * moving, so reported exactly it makes every moving player dirty every tick whether or not anything
+	 * interesting happened — which is frame <em>count</em>, the one cost the split into vitals/items/profile
+	 * frames does nothing about. Empty and full are always exact; those are the values anyone reads.
+	 */
+	private static final int RUN_ENERGY_STEP = 5;
+
+	/** Fields carried by an {@code items} frame — everything gated by the two privacy toggles. */
+	static final String[] ITEM_FIELDS = {
+		"equipment", "inventory", "inventoryQuantities", "runePouch", "runePouchAmounts", "runePouchNames",
+		"hideInventory", "hideGear",
+	};
+
+	/**
+	 * Fields carried by a {@code profile} frame: identity, caps and self-reported flags. All of it changes
+	 * on login, a world hop, a level-up or a deliberate act — never on a tick.
+	 */
+	static final String[] PROFILE_FIELDS = {
+		"name", "accountHash", "combatLevel", "maxHp", "maxPrayer", "spellbook", "stats", "accountType",
+		"world", "friendsChatOwner", "pbSeconds", "role", "learner", "teacher", "invited", "memberId",
+	};
+	/**
+	 * How often to prove we are still here when we have nothing else to say. Well inside
+	 * {@link #ONLINE_TIMEOUT_MS}, and suppressed whenever any other frame went out in the same window — in
+	 * an active party the state traffic already proves it, so this costs nothing but idle parties.
+	 */
+	private static final long HEARTBEAT_MS = 5_000;
 
 	private final Client client;
 	private final ConfigManager configManager;
@@ -77,6 +106,13 @@ public class LivePartyV2 implements LivePartyBackend {
 
 	// Live per-member snapshots, keyed by server-assigned member id.
 	private final Map<Long, PlayerUpdate> playerData = new ConcurrentHashMap<>();
+	/**
+	 * The merged raw JSON behind each entry in {@link #playerData}. Updates carry only what changed, so a
+	 * frame has to be merged into what we already held rather than replacing it — and merging the JSON
+	 * rather than the deserialised object means a field the sender has not learned about yet still survives,
+	 * which is what lets a new kind of update ship without touching this class.
+	 */
+	private final Map<Long, JsonObject> rawState = new ConcurrentHashMap<>();
 	private final Map<Long, Long> lastSeen = new ConcurrentHashMap<>();
 
 	private volatile long localMemberId;
@@ -87,8 +123,22 @@ public class LivePartyV2 implements LivePartyBackend {
 	private volatile boolean localLearner;
 	private volatile boolean localTeacher;
 	private volatile boolean localInvited;
-	private volatile boolean localDirty;
-	private int ticksSinceLocalBroadcast;
+	// What has changed since we last told anyone. Split three ways because the frames are: vitals move every
+	// tick and cost ~60 bytes, items move rarely and cost ~500, profile barely moves at all.
+	private volatile boolean vitalsDirty;
+	private volatile boolean itemsDirty;
+	private volatile boolean profileDirty;
+
+	// The last values we actually put on the wire, which is what "changed" has to be measured against —
+	// not what the client currently reads, and not what we hold for a peer.
+	private int sentHp = -1;
+	private int sentPrayer = -1;
+	private int sentSpec = -1;
+	private int sentRunEnergy = -1;
+	private int lastSentWorld = -1;
+	private final Map<Skill, Integer> sentRealLevels = new HashMap<>();
+	/** When we last sent anything at all, so the heartbeat only fires in the silence. */
+	private volatile long lastSentAt;
 
 	// Cached local identity (read on the client thread in tick(); used off-thread when (re)sending frames).
 	private volatile long localAccountHash;
@@ -151,19 +201,19 @@ public class LivePartyV2 implements LivePartyBackend {
 		// The server re-seats us from scratch on a reconnect, so our identity has to be announced again.
 		announcedName = localName;
 		announcedAccountHash = localAccountHash;
-		socket.send(new HelloFrame(localAccountHash, localName));
+		send(new HelloFrame(localAccountHash, localName));
 		if (mode == Mode.HOST) {
 			sendHost();
 			// A room rebuilt on a new owner holds no ad settings, so republish ours rather than leaving
 			// every member on the copy it took when it applied.
 			if (partyMeta != null) {
-				socket.send(new MetaFrame(gson.toJsonTree(partyMeta)));
+				send(new MetaFrame(gson.toJsonTree(partyMeta)));
 			}
 		}
 		else if (mode == Mode.MEMBER) {
 			sendJoin();
 		}
-		localDirty = true;
+		markAllDirty();
 	}
 
 	@Override
@@ -192,7 +242,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		this.localRole = role;
 		this.localLearner = learner;
 		this.localTeacher = teacher;
-		localDirty = true;
+		markAllDirty();
 		// Connect after the mode is set: whether we arrive connected or not, onOpen is what re-sends this
 		// frame, and it reads mode to decide between host and join. sendHost() below covers the case where
 		// the socket is already up (hosting straight after another party).
@@ -217,7 +267,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		this.localRole = role;
 		this.localLearner = learner;
 		this.localInvited = invited;
-		localDirty = true;
+		markAllDirty();
 		socket.start();
 		sendJoin();
 		fire();
@@ -226,7 +276,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	@Override
 	public void leave() {
 		if (mode != Mode.NONE) {
-			socket.send(new LeaveFrame());
+			send(new LeaveFrame());
 		}
 		reset();
 		// After the leave frame: OkHttp transmits what is already queued before it sends the close.
@@ -253,6 +303,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		discordUrl = null;
 		partyMeta = null;
 		playerData.clear();
+		rawState.clear();
 		lastSeen.clear();
 		localMemberId = 0;
 		localStatus = null;
@@ -260,8 +311,15 @@ public class LivePartyV2 implements LivePartyBackend {
 		localLearner = false;
 		localTeacher = false;
 		localInvited = false;
-		localDirty = false;
-		ticksSinceLocalBroadcast = 0;
+		vitalsDirty = false;
+		itemsDirty = false;
+		profileDirty = false;
+		sentHp = -1;
+		sentPrayer = -1;
+		sentSpec = -1;
+		sentRunEnergy = -1;
+		lastSentWorld = -1;
+		sentRealLevels.clear();
 		pings.clear();
 		clearReadyCheck();
 		announcedName = null;
@@ -296,7 +354,21 @@ public class LivePartyV2 implements LivePartyBackend {
 				applyRoster(frame);
 				break;
 			case "memberState":
+			case "memberVitals":
+			case "memberItems":
+			case "memberProfile":
 				applyMemberState(frame);
+				break;
+			case "resync":
+				// Someone was just seated with no picture of the room. The owner keeps no live state, so we
+				// are the only copy of ours (PARTY_V2_OPTIMIZATION.md §5.2).
+				markAllDirty();
+				break;
+			case "alive":
+				// A peer with nothing to report. Counts as presence, nothing else.
+				if (frame.memberId != null) {
+					lastSeen.put(frame.memberId, System.currentTimeMillis());
+				}
 				break;
 			case "meta":
 				applyMeta(frame);
@@ -304,6 +376,7 @@ public class LivePartyV2 implements LivePartyBackend {
 			case "memberLeft":
 				if (frame.memberId != null) {
 					playerData.remove(frame.memberId);
+					rawState.remove(frame.memberId);
 					lastSeen.remove(frame.memberId);
 				}
 				fire();
@@ -360,24 +433,91 @@ public class LivePartyV2 implements LivePartyBackend {
 		fire();
 	}
 
+	/**
+	 * Fold a peer's update into what we already knew about them.
+	 *
+	 * <p>An update carries only the fields that changed, so anything it omits must be left alone rather than
+	 * cleared — which is why the merge happens on the raw JSON, before deserialising: an absent field is
+	 * simply one the incoming object does not overwrite. Deserialising first and copying fields across would
+	 * lose that distinction entirely, since an omitted int and a zero look identical by then.
+	 *
+	 * <p>The consequence is that a field can never be cleared by leaving it out, which is exactly what
+	 * privacy used to do — hence {@code hideInventory}/{@code hideGear}, applied after the merge.
+	 */
 	private void applyMemberState(PartyV2Socket.Frame frame) {
 		if (frame.memberId == null || frame.state == null) {
 			return;
 		}
 		PlayerUpdate update;
 		try {
-			update = gson.fromJson(frame.state, PlayerUpdate.class);
+			JsonObject merged = merge(rawState.get(frame.memberId), frame.state);
+			update = gson.fromJson(merged, PlayerUpdate.class);
+			if (update == null) {
+				return;
+			}
+			rawState.put(frame.memberId, merged);
 		}
 		catch (Exception e) {
 			return;
 		}
-		if (update == null) {
-			return;
-		}
+		applyPrivacy(update);
 		update.setMemberId(frame.memberId);
 		playerData.put(frame.memberId, update);
 		lastSeen.put(frame.memberId, System.currentTimeMillis());
 		fire();
+	}
+
+	/**
+	 * Drop what our own privacy settings withhold, and say so.
+	 *
+	 * <p>The flags are always set, both on and off. Omitting them when privacy is off would leave a peer's
+	 * merged copy carrying the {@code true} from when it was on, so unhiding would never take effect.
+	 */
+	private void stripPrivate(PlayerUpdate update) {
+		boolean hideInventory = config.hideInventory();
+		boolean hideGear = config.hideGear();
+		update.setHideInventory(hideInventory);
+		update.setHideGear(hideGear);
+		if (hideInventory) {
+			update.setInventory(null);
+			update.setInventoryQuantities(null);
+			update.setRunePouch(null);
+			update.setRunePouchAmounts(null);
+			update.setRunePouchNames(null);
+		}
+		if (hideGear) {
+			update.setEquipment(null);
+		}
+	}
+
+	/** {@code patch} over {@code base}, without mutating either; null base means the patch is the whole. */
+	static JsonObject merge(JsonObject base, JsonObject patch) {
+		if (base == null) {
+			return patch.deepCopy();
+		}
+		JsonObject merged = base.deepCopy();
+		for (Map.Entry<String, JsonElement> field : patch.entrySet()) {
+			merged.add(field.getKey(), field.getValue());
+		}
+		return merged;
+	}
+
+	/**
+	 * Honour a peer's privacy settings by dropping what they withheld. Nulling the fields (rather than
+	 * blanking them) keeps the panel on its existing "no data" path, which reads as hidden rather than as an
+	 * empty inventory.
+	 */
+	static void applyPrivacy(PlayerUpdate update) {
+		if (Boolean.TRUE.equals(update.getHideInventory())) {
+			update.setInventory(null);
+			update.setInventoryQuantities(null);
+			update.setRunePouch(null);
+			update.setRunePouchAmounts(null);
+			update.setRunePouchNames(null);
+		}
+		if (Boolean.TRUE.equals(update.getHideGear())) {
+			update.setEquipment(null);
+		}
 	}
 
 	private void applyMeta(PartyV2Socket.Frame frame) {
@@ -435,41 +575,26 @@ public class LivePartyV2 implements LivePartyBackend {
 		announceIdentityIfResolved();
 		expireReadyCheck();
 
-		if (!localDirty && vitalsChanged()) {
-			localDirty = true;
+		if (localWorld != lastSentWorld) {
+			profileDirty = true;
 		}
-		if (++ticksSinceLocalBroadcast >= LOCAL_REBROADCAST_TICKS) {
-			// Belt-and-braces resync; the server also snapshots new joiners so this stays infrequent.
-			localDirty = true;
+		if (vitalsChanged()) {
+			vitalsDirty = true;
 		}
-		if (localDirty) {
-			PlayerUpdate update = LocalPlayerSync.snapshot(client);
-			if (update != null) {
-				if (config.hideInventory()) {
-					update.setInventory(null);
-					update.setInventoryQuantities(null);
-					update.setRunePouch(null);
-					update.setRunePouchAmounts(null);
-					update.setRunePouchNames(null);
-				}
-				if (config.hideGear()) {
-					update.setEquipment(null);
-				}
-				update.setPbSeconds(PersonalBests.read(configManager, currentActivityId, capacity));
-				update.setRole(localRole);
-				update.setLearner(localLearner);
-				update.setTeacher(localTeacher);
-				update.setInvited(localInvited);
-				update.setMemberId(localMemberId);
-				if (localMemberId != 0) {
-					playerData.put(localMemberId, update);
-				}
-				socket.send(new StateFrame(update));
-				localDirty = false;
-				ticksSinceLocalBroadcast = 0;
-				fire();
-			}
+		if (vitalsDirty || itemsDirty || profileDirty) {
+			sendLocalState();
 		}
+		// After the state send, so an active party never pays for this: anything we just sent already
+		// proved we are here.
+		if (System.currentTimeMillis() - lastSentAt >= HEARTBEAT_MS) {
+			send(new HeartbeatFrame());
+		}
+	}
+
+	/** Every outbound frame goes through here, so the heartbeat knows when it has nothing to add. */
+	private void send(Object frame) {
+		lastSentAt = System.currentTimeMillis();
+		socket.send(frame);
 	}
 
 	/**
@@ -489,23 +614,151 @@ public class LivePartyV2 implements LivePartyBackend {
 		}
 		announcedName = name;
 		announcedAccountHash = accountHash;
-		socket.send(new HelloFrame(accountHash, name));
+		send(new HelloFrame(accountHash, name));
 	}
 
+	/**
+	 * Whether any vital differs from what we last sent. Measured against the sent values rather than against
+	 * our own stored snapshot, because run energy is reported coarsely: comparing to the exact reading would
+	 * report a change on every tick that the wire would then round away.
+	 */
 	private boolean vitalsChanged() {
-		PlayerUpdate self = playerData.get(localMemberId);
-		if (self == null) {
-			return false;
+		return client.getBoostedSkillLevel(Skill.HITPOINTS) != sentHp
+			|| client.getBoostedSkillLevel(Skill.PRAYER) != sentPrayer
+			|| client.getVarpValue(300) / 10 != sentSpec
+			|| runEnergy() != sentRunEnergy;
+	}
+
+	/** Run energy as reported: rounded to {@link #RUN_ENERGY_STEP}, with empty and full kept exact. */
+	private int runEnergy() {
+		int energy = client.getEnergy() / 100;
+		if (energy <= 0 || energy >= 100) {
+			return energy;
 		}
-		return self.getCurrentHp() != client.getBoostedSkillLevel(Skill.HITPOINTS)
-			|| self.getCurrentPrayer() != client.getBoostedSkillLevel(Skill.PRAYER)
-			|| self.getSpecialPercent() != client.getVarpValue(300) / 10
-			|| self.getRunEnergy() != client.getEnergy() / 100;
+		return energy / RUN_ENERGY_STEP * RUN_ENERGY_STEP;
+	}
+
+	/** Everything must go: a (re)connect, a fresh party, or a peer asking us to say it all again. */
+	private void markAllDirty() {
+		vitalsDirty = true;
+		itemsDirty = true;
+		profileDirty = true;
+	}
+
+	@Override
+	public void markItemsDirty() {
+		itemsDirty = true;
+	}
+
+	@Override
+	public void markStatsDirty(Skill skill, int realLevel) {
+		// Fires on boosts too, which is most of them. Only a real level-up belongs in a profile frame.
+		Integer sent = sentRealLevels.get(skill);
+		if (sent != null && sent == realLevel) {
+			return;
+		}
+		profileDirty = true;
+	}
+
+	/**
+	 * Send whatever changed, as up to three frames.
+	 *
+	 * <p>The whole point of the split is that the common case — a vital moved and nothing else — never
+	 * touches {@link LocalPlayerSync#snapshot}, which reads 28 inventory slots and 23 skill levels to
+	 * produce a payload we would then throw away. Items and profile share one snapshot when both are dirty.
+	 */
+	private void sendLocalState() {
+		JsonObject full = null;
+		if (itemsDirty || profileDirty) {
+			PlayerUpdate update = LocalPlayerSync.snapshot(client);
+			if (update == null) {
+				// Not logged in yet; leave the flags set and try again next tick.
+				return;
+			}
+			stripPrivate(update);
+			update.setRunEnergy(runEnergy());
+			update.setPbSeconds(PersonalBests.read(configManager, currentActivityId, capacity));
+			update.setRole(localRole);
+			update.setLearner(localLearner);
+			update.setTeacher(localTeacher);
+			update.setInvited(localInvited);
+			update.setMemberId(localMemberId);
+			full = gson.toJsonTree(update).getAsJsonObject();
+			if (localMemberId != 0) {
+				// Our own row is merged exactly as a peer's is, so a partial send updates it the same way.
+				JsonObject merged = merge(rawState.get(localMemberId), full);
+				rawState.put(localMemberId, merged);
+				playerData.put(localMemberId, gson.fromJson(merged, PlayerUpdate.class));
+			}
+		}
+		if (vitalsDirty) {
+			send(new VitalsFrame(vitals()));
+			vitalsDirty = false;
+		}
+		if (itemsDirty) {
+			send(new ItemsFrame(project(full, ITEM_FIELDS)));
+			itemsDirty = false;
+		}
+		if (profileDirty) {
+			send(new ProfileFrame(project(full, PROFILE_FIELDS)));
+			profileDirty = false;
+			lastSentWorld = localWorld;
+			rememberRealLevels();
+		}
+		fire();
+	}
+
+	/** The four numbers that actually move, and nothing else. Built without a full snapshot. */
+	private JsonObject vitals() {
+		sentHp = client.getBoostedSkillLevel(Skill.HITPOINTS);
+		sentPrayer = client.getBoostedSkillLevel(Skill.PRAYER);
+		sentSpec = client.getVarpValue(300) / 10;
+		sentRunEnergy = runEnergy();
+		JsonObject out = new JsonObject();
+		out.addProperty("currentHp", sentHp);
+		out.addProperty("currentPrayer", sentPrayer);
+		out.addProperty("specialPercent", sentSpec);
+		out.addProperty("runEnergy", sentRunEnergy);
+		if (localMemberId != 0) {
+			JsonObject merged = merge(rawState.get(localMemberId), out);
+			rawState.put(localMemberId, merged);
+			playerData.put(localMemberId, gson.fromJson(merged, PlayerUpdate.class));
+		}
+		return out;
+	}
+
+	/** Note the levels a profile frame just carried, so a later boost is not mistaken for a level-up. */
+	private void rememberRealLevels() {
+		for (Skill skill : Skill.values()) {
+			try {
+				sentRealLevels.put(skill, client.getRealSkillLevel(skill));
+			}
+			catch (Exception ignored) {
+				// Placeholder/unreleased skills, as in LocalPlayerSync.
+			}
+		}
+	}
+
+	/** The named fields of {@code src}, skipping any it does not carry. */
+	static JsonObject project(JsonObject src, String[] fields) {
+		JsonObject out = new JsonObject();
+		if (src == null) {
+			return out;
+		}
+		for (String field : fields) {
+			JsonElement value = src.get(field);
+			if (value != null) {
+				out.add(field, value);
+			}
+		}
+		return out;
 	}
 
 	@Override
 	public void markLocalDirty() {
-		localDirty = true;
+		// The catch-all, and the only caller is a privacy toggle — which changes what the item frame is
+		// allowed to carry. Marking everything would be safe but would re-send the profile for nothing.
+		itemsDirty = true;
 	}
 
 	@Override
@@ -513,12 +766,15 @@ public class LivePartyV2 implements LivePartyBackend {
 		if (mode == Mode.NONE || localMemberId == 0) {
 			return;
 		}
-		PlayerUpdate update = new PlayerUpdate();
-		update.setName(name);
-		update.setWorld(0);
-		update.setMemberId(localMemberId);
-		playerData.put(localMemberId, update);
-		socket.send(new StateFrame(update));
+		JsonObject offline = new JsonObject();
+		offline.addProperty("name", name);
+		offline.addProperty("world", 0);
+		offline.addProperty("memberId", localMemberId);
+		JsonObject merged = merge(rawState.get(localMemberId), offline);
+		rawState.put(localMemberId, merged);
+		playerData.put(localMemberId, gson.fromJson(merged, PlayerUpdate.class));
+		send(new ProfileFrame(offline));
+		lastSentWorld = 0;
 		fire();
 	}
 
@@ -530,7 +786,7 @@ public class LivePartyV2 implements LivePartyBackend {
 			return;
 		}
 		localRole = role;
-		localDirty = true;
+		profileDirty = true;
 		fire();
 	}
 
@@ -545,7 +801,7 @@ public class LivePartyV2 implements LivePartyBackend {
 			return;
 		}
 		localLearner = learner;
-		localDirty = true;
+		profileDirty = true;
 		fire();
 	}
 
@@ -560,7 +816,7 @@ public class LivePartyV2 implements LivePartyBackend {
 			return;
 		}
 		localTeacher = teacher;
-		localDirty = true;
+		profileDirty = true;
 		fire();
 	}
 
@@ -577,7 +833,7 @@ public class LivePartyV2 implements LivePartyBackend {
 			return;
 		}
 		this.capacity = capacity;
-		socket.send(new CapacityFrame(capacity));
+		send(new CapacityFrame(capacity));
 		fire();
 	}
 
@@ -587,7 +843,7 @@ public class LivePartyV2 implements LivePartyBackend {
 			return;
 		}
 		discordUrl = url;
-		socket.send(new DiscordFrame(url));
+		send(new DiscordFrame(url));
 		fire();
 	}
 
@@ -602,7 +858,7 @@ public class LivePartyV2 implements LivePartyBackend {
 			return;
 		}
 		partyMeta = meta;
-		socket.send(new MetaFrame(gson.toJsonTree(meta)));
+		send(new MetaFrame(gson.toJsonTree(meta)));
 	}
 
 	@Override
@@ -616,7 +872,7 @@ public class LivePartyV2 implements LivePartyBackend {
 			return;
 		}
 		this.locked = locked;
-		socket.send(new LockedFrame(locked));
+		send(new LockedFrame(locked));
 		fire();
 	}
 
@@ -644,21 +900,21 @@ public class LivePartyV2 implements LivePartyBackend {
 		if (mode != Mode.HOST || !canAdmitMore()) {
 			return false;
 		}
-		socket.send(new CommandFrame("ADMIT", memberId, name));
+		send(new CommandFrame("ADMIT", memberId, name));
 		return true;
 	}
 
 	@Override
 	public void kick(long memberId) {
 		if (mode == Mode.HOST) {
-			socket.send(new CommandFrame("KICK", memberId, null));
+			send(new CommandFrame("KICK", memberId, null));
 		}
 	}
 
 	@Override
 	public void reject(long memberId) {
 		if (mode == Mode.HOST) {
-			socket.send(new CommandFrame("REJECT", memberId, null));
+			send(new CommandFrame("REJECT", memberId, null));
 		}
 	}
 
@@ -670,7 +926,7 @@ public class LivePartyV2 implements LivePartyBackend {
 			return;
 		}
 		String name = localName;
-		socket.send(new PingFrame(point.getX(), point.getY(), point.getPlane(), color.getRGB(), name));
+		send(new PingFrame(point.getX(), point.getY(), point.getPlane(), color.getRGB(), name));
 		addPing(new TilePing(point, name, color, System.currentTimeMillis()));
 		fire();
 	}
@@ -915,7 +1171,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	private void sendHost() {
-		socket.send(new HostFrame(roomKey, hostName, currentActivityId, capacity, locked, localRole,
+		send(new HostFrame(roomKey, hostName, currentActivityId, capacity, locked, localRole,
 			localLearner, localTeacher, localAccountHash));
 	}
 
@@ -925,7 +1181,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		// queue to be re-admitted one by one. Admission is client-asserted either way (the server takes
 		// `invited` on trust), so this claims nothing an ordinary reconnect could not already claim.
 		boolean admitted = localInvited || localStatus == Status.MEMBER;
-		socket.send(new JoinFrame(roomKey, currentActivityId, localRole, localLearner, admitted,
+		send(new JoinFrame(roomKey, currentActivityId, localRole, localLearner, admitted,
 			localName, localAccountHash));
 	}
 
@@ -960,7 +1216,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		}
 		long id = (localMemberId << 16) | (++readyCheckSeq & 0xFFFF);
 		beginReadyCheck(id, localName, localMemberId);
-		socket.send(new ReadyStartFrame(id, readyCheckStarter));
+		send(new ReadyStartFrame(id, readyCheckStarter));
 		// Fire locally too: the server doesn't echo our own frame back to us.
 		Consumer<String> cb = onReadyCheckStarted;
 		if (cb != null) {
@@ -976,7 +1232,7 @@ public class LivePartyV2 implements LivePartyBackend {
 			return;
 		}
 		readyMembers.add(localMemberId);
-		socket.send(new ReadyFrame(readyCheckId));
+		send(new ReadyFrame(readyCheckId));
 		checkAllReady();
 		fire();
 	}
@@ -1096,7 +1352,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		if (mode == Mode.NONE) {
 			return;
 		}
-		socket.send(new SpecDrainFrame(npcIndex, weapon, hit, world));
+		send(new SpecDrainFrame(npcIndex, weapon, hit, world));
 	}
 
 	private void applySpecDrain(PartyV2Socket.Frame frame) {
@@ -1129,7 +1385,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		if (mode != Mode.HOST) {
 			return;
 		}
-		socket.send(new FcRequestFrame(targetMemberId, kind, friendsChat));
+		send(new FcRequestFrame(targetMemberId, kind, friendsChat));
 	}
 
 	private void applyFcRequest(PartyV2Socket.Frame frame) {
@@ -1155,7 +1411,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	public void promoteToHost(String hostName) {
 		mode = Mode.HOST;
 		this.hostName = hostName;
-		localDirty = true;
+		profileDirty = true;
 		fire();
 	}
 
@@ -1171,22 +1427,22 @@ public class LivePartyV2 implements LivePartyBackend {
 
 	@Override
 	public void offerHostTransfer(long targetMemberId, String newHostKey, String newHostName, boolean hostStays) {
-		socket.send(new TransferHostFrame("OFFER", targetMemberId, newHostKey, newHostName, hostStays));
+		send(new TransferHostFrame("OFFER", targetMemberId, newHostKey, newHostName, hostStays));
 	}
 
 	@Override
 	public void acceptHostTransfer(long oldHostMemberId) {
-		socket.send(new TransferHostFrame("ACCEPT", oldHostMemberId, null, null, false));
+		send(new TransferHostFrame("ACCEPT", oldHostMemberId, null, null, false));
 	}
 
 	@Override
 	public void commitHostTransfer(long targetMemberId, String newHostKey, boolean hostStays) {
-		socket.send(new TransferHostFrame("COMMIT", targetMemberId, newHostKey, null, hostStays));
+		send(new TransferHostFrame("COMMIT", targetMemberId, newHostKey, null, hostStays));
 	}
 
 	@Override
 	public void abortHostTransfer(long targetMemberId) {
-		socket.send(new TransferHostFrame("ABORT", targetMemberId, null, null, false));
+		send(new TransferHostFrame("ABORT", targetMemberId, null, null, false));
 	}
 
 	private void applyTransferHost(PartyV2Socket.Frame frame) {
@@ -1314,11 +1570,40 @@ public class LivePartyV2 implements LivePartyBackend {
 		}
 	}
 
-	private static final class StateFrame {
-		final String type = "state";
+	/** Proof of life for an idle party; carries nothing else. The server relays it to peers as {@code alive}. */
+	private static final class HeartbeatFrame {
+		final String type = "heartbeat";
+	}
+
+	/**
+	 * The three live-update frames. Separate {@code type}s rather than one frame with a kind field: a client
+	 * that predates the split dispatches on {@code type} and ignores what it does not know, so it sees a peer
+	 * go stale instead of parsing a partial update as a whole one and blanking their gear
+	 * (PARTY_V2_OPTIMIZATION.md §8).
+	 */
+	private static final class VitalsFrame {
+		final String type = "vitals";
 		final Object state;
 
-		StateFrame(Object state) {
+		VitalsFrame(Object state) {
+			this.state = state;
+		}
+	}
+
+	private static final class ItemsFrame {
+		final String type = "items";
+		final Object state;
+
+		ItemsFrame(Object state) {
+			this.state = state;
+		}
+	}
+
+	private static final class ProfileFrame {
+		final String type = "profile";
+		final Object state;
+
+		ProfileFrame(Object state) {
 			this.state = state;
 		}
 	}
