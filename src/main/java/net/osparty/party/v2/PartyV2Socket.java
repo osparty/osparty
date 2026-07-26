@@ -315,6 +315,8 @@ public class PartyV2Socket extends WebSocketListener {
 		public List<RosterEntry> members;
 		/** Opaque live snapshot (a serialised PlayerUpdate); the caller converts it with its own Gson. */
 		public JsonObject state;
+		/** Opaque host ad settings (a serialised PartyMeta), on a {@code meta} frame. */
+		public JsonObject meta;
 		public Integer x;
 		public Integer y;
 		public Integer plane;

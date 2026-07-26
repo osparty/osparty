@@ -14,6 +14,7 @@ import net.osparty.model.Applicant.EquipmentSlot;
 import net.osparty.model.LootRule;
 import net.osparty.model.Member;
 import net.osparty.model.Party;
+import net.osparty.model.PartyMeta;
 import net.osparty.model.Role;
 import net.osparty.party.LiveParty;
 import net.osparty.party.LivePartyBackend;
@@ -393,6 +394,7 @@ class PartyPanel extends JPanel
 		}
 
 		boolean host = partyState.isHost();
+		syncPartyMeta(party, host);
 		Activity activity = Activity.fromId(party.getActivity());
 		String activityName = (activity != null
 			? activity.displayName(party.isHardMode(), party.getInvocation())
@@ -1097,6 +1099,33 @@ class PartyPanel extends JPanel
 			}
 		}
 		return sb.toString();
+	}
+
+	/**
+	 * Keep the ad settings in step with the live room: the host publishes them, everyone else adopts what
+	 * the host published. Our {@link Party} is otherwise the copy taken from the search card when we applied
+	 * (or created it) and is never re-fetched, so a member would keep rendering the description, world,
+	 * requirements and host name as they were at join time however often the host edited them — and after a
+	 * host transfer, every member that wasn't a party to the handshake would keep naming the old host.
+	 */
+	private void syncPartyMeta(Party party, boolean host)
+	{
+		if (!liveParty.isConnected())
+		{
+			return;
+		}
+		if (host)
+		{
+			liveParty.setPartyMeta(PartyMeta.from(party));
+			return;
+		}
+		PartyMeta meta = liveParty.partyMeta();
+		if (meta != null)
+		{
+			// Mutated in place rather than through partyState: the object identity is unchanged, and this
+			// runs inside the render it feeds, so re-firing the state listener would only re-enter refresh().
+			meta.applyTo(party);
+		}
 	}
 
 	/** Fetch the current party's live ad and, if its badges changed, adopt them and re-render. */

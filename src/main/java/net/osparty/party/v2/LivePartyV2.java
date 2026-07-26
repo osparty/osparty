@@ -72,6 +72,8 @@ public class LivePartyV2 implements LivePartyBackend {
 	private volatile List<PartyV2Socket.RosterEntry> rosterEntries = List.of();
 	private volatile String hostName;
 	private volatile String discordUrl;
+	/** The advertised party's settings: ours to publish while hosting, the host's to follow as a member. */
+	private volatile net.osparty.model.PartyMeta partyMeta;
 
 	// Live per-member snapshots, keyed by server-assigned member id.
 	private final Map<Long, PlayerUpdate> playerData = new ConcurrentHashMap<>();
@@ -147,6 +149,11 @@ public class LivePartyV2 implements LivePartyBackend {
 		socket.send(new HelloFrame(localAccountHash, localName));
 		if (mode == Mode.HOST) {
 			sendHost();
+			// A room rebuilt on a new owner holds no ad settings, so republish ours rather than leaving
+			// every member on the copy it took when it applied.
+			if (partyMeta != null) {
+				socket.send(new MetaFrame(gson.toJsonTree(partyMeta)));
+			}
 		}
 		else if (mode == Mode.MEMBER) {
 			sendJoin();
@@ -231,6 +238,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		rosterEntries = List.of();
 		hostName = null;
 		discordUrl = null;
+		partyMeta = null;
 		playerData.clear();
 		lastSeen.clear();
 		localMemberId = 0;
@@ -276,6 +284,9 @@ public class LivePartyV2 implements LivePartyBackend {
 				break;
 			case "memberState":
 				applyMemberState(frame);
+				break;
+			case "meta":
+				applyMeta(frame);
 				break;
 			case "memberLeft":
 				if (frame.memberId != null) {
@@ -353,6 +364,24 @@ public class LivePartyV2 implements LivePartyBackend {
 		update.setMemberId(frame.memberId);
 		playerData.put(frame.memberId, update);
 		lastSeen.put(frame.memberId, System.currentTimeMillis());
+		fire();
+	}
+
+	private void applyMeta(PartyV2Socket.Frame frame) {
+		if (frame.meta == null) {
+			return;
+		}
+		net.osparty.model.PartyMeta meta;
+		try {
+			meta = gson.fromJson(frame.meta, net.osparty.model.PartyMeta.class);
+		}
+		catch (Exception e) {
+			return;
+		}
+		if (meta == null) {
+			return;
+		}
+		partyMeta = meta;
 		fire();
 	}
 
@@ -550,6 +579,20 @@ public class LivePartyV2 implements LivePartyBackend {
 	@Override
 	public String discordInviteUrl() {
 		return discordUrl;
+	}
+
+	@Override
+	public void setPartyMeta(net.osparty.model.PartyMeta meta) {
+		if (mode != Mode.HOST || meta == null || meta.equals(partyMeta)) {
+			return;
+		}
+		partyMeta = meta;
+		socket.send(new MetaFrame(gson.toJsonTree(meta)));
+	}
+
+	@Override
+	public net.osparty.model.PartyMeta partyMeta() {
+		return partyMeta;
 	}
 
 	@Override
@@ -1105,6 +1148,9 @@ public class LivePartyV2 implements LivePartyBackend {
 	@Override
 	public void demoteToMember() {
 		mode = Mode.MEMBER;
+		// Our published ad settings still name us as host; drop them rather than re-applying them over the
+		// handover, and wait for the new host to publish its own.
+		partyMeta = null;
 		fire();
 	}
 
@@ -1307,6 +1353,15 @@ public class LivePartyV2 implements LivePartyBackend {
 
 		LockedFrame(boolean locked) {
 			this.locked = locked;
+		}
+	}
+
+	private static final class MetaFrame {
+		final String type = "setMeta";
+		final Object meta;
+
+		MetaFrame(Object meta) {
+			this.meta = meta;
 		}
 	}
 

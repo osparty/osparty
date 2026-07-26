@@ -91,6 +91,20 @@ public interface LivePartyBackend
 
 	boolean isLocked();
 
+	/**
+	 * Host: publish the advertised party's settings to the room, so members track edits to the ad instead of
+	 * being stuck with the copy they took when they applied. No-op on backends with no channel for it.
+	 */
+	default void setPartyMeta(net.osparty.model.PartyMeta meta)
+	{
+	}
+
+	/** Member: the host's last published ad settings, or null if none have arrived. */
+	default net.osparty.model.PartyMeta partyMeta()
+	{
+		return null;
+	}
+
 	boolean canAdmitMore();
 
 	boolean admit(long memberId, String name);
