@@ -354,10 +354,20 @@ public class LivePartyV2 implements LivePartyBackend {
 				applyRoster(frame);
 				break;
 			case "memberState":
-			case "memberVitals":
-			case "memberItems":
-			case "memberProfile":
-				applyMemberState(frame);
+			case "memberUpdate":
+				if (frame.memberId != null && frame.state != null) {
+					applyState(frame.memberId, frame.state);
+				}
+				break;
+			case "memberUpdates":
+				// One window's worth of everyone else's changes, in the order they happened.
+				if (frame.updates != null) {
+					for (PartyV2Socket.MemberUpdate update : frame.updates) {
+						if (update != null && update.state != null) {
+							applyState(update.memberId, update.state);
+						}
+					}
+				}
 				break;
 			case "resync":
 				// Someone was just seated with no picture of the room. The owner keeps no live state, so we
@@ -444,27 +454,36 @@ public class LivePartyV2 implements LivePartyBackend {
 	 * <p>The consequence is that a field can never be cleared by leaving it out, which is exactly what
 	 * privacy used to do — hence {@code hideInventory}/{@code hideGear}, applied after the merge.
 	 */
-	private void applyMemberState(PartyV2Socket.Frame frame) {
-		if (frame.memberId == null || frame.state == null) {
-			return;
-		}
+	private void applyState(long memberId, JsonObject state) {
 		PlayerUpdate update;
 		try {
-			JsonObject merged = merge(rawState.get(frame.memberId), frame.state);
+			JsonObject merged = merge(rawState.get(memberId), state);
 			update = gson.fromJson(merged, PlayerUpdate.class);
 			if (update == null) {
 				return;
 			}
-			rawState.put(frame.memberId, merged);
+			rawState.put(memberId, merged);
 		}
 		catch (Exception e) {
 			return;
 		}
 		applyPrivacy(update);
-		update.setMemberId(frame.memberId);
-		playerData.put(frame.memberId, update);
-		lastSeen.put(frame.memberId, System.currentTimeMillis());
+		update.setMemberId(memberId);
+		playerData.put(memberId, update);
+		lastSeen.put(memberId, System.currentTimeMillis());
 		fire();
+	}
+
+	/** {@code patch} over {@code base}, without mutating either; null base means the patch is the whole. */
+	static JsonObject merge(JsonObject base, JsonObject patch) {
+		if (base == null) {
+			return patch.deepCopy();
+		}
+		JsonObject merged = base.deepCopy();
+		for (Map.Entry<String, JsonElement> field : patch.entrySet()) {
+			merged.add(field.getKey(), field.getValue());
+		}
+		return merged;
 	}
 
 	/**
@@ -488,18 +507,6 @@ public class LivePartyV2 implements LivePartyBackend {
 		if (hideGear) {
 			update.setEquipment(null);
 		}
-	}
-
-	/** {@code patch} over {@code base}, without mutating either; null base means the patch is the whole. */
-	static JsonObject merge(JsonObject base, JsonObject patch) {
-		if (base == null) {
-			return patch.deepCopy();
-		}
-		JsonObject merged = base.deepCopy();
-		for (Map.Entry<String, JsonElement> field : patch.entrySet()) {
-			merged.add(field.getKey(), field.getValue());
-		}
-		return merged;
 	}
 
 	/**
@@ -691,21 +698,33 @@ public class LivePartyV2 implements LivePartyBackend {
 				playerData.put(localMemberId, gson.fromJson(merged, PlayerUpdate.class));
 			}
 		}
+		JsonObject update = new JsonObject();
 		if (vitalsDirty) {
-			send(new VitalsFrame(vitals()));
-			vitalsDirty = false;
+			addAll(update, vitals());
 		}
 		if (itemsDirty) {
-			send(new ItemsFrame(project(full, ITEM_FIELDS)));
-			itemsDirty = false;
+			addAll(update, project(full, ITEM_FIELDS));
 		}
 		if (profileDirty) {
-			send(new ProfileFrame(project(full, PROFILE_FIELDS)));
-			profileDirty = false;
+			addAll(update, project(full, PROFILE_FIELDS));
 			lastSentWorld = localWorld;
 			rememberRealLevels();
 		}
+		if (update.size() == 0) {
+			return;
+		}
+		send(new UpdateFrame(update));
+		vitalsDirty = false;
+		itemsDirty = false;
+		profileDirty = false;
 		fire();
+	}
+
+	/** Copy every field of {@code src} onto {@code target}, overwriting. */
+	private static void addAll(JsonObject target, JsonObject src) {
+		for (Map.Entry<String, JsonElement> field : src.entrySet()) {
+			target.add(field.getKey(), field.getValue());
+		}
 	}
 
 	/** The four numbers that actually move, and nothing else. Built without a full snapshot. */
@@ -773,7 +792,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		JsonObject merged = merge(rawState.get(localMemberId), offline);
 		rawState.put(localMemberId, merged);
 		playerData.put(localMemberId, gson.fromJson(merged, PlayerUpdate.class));
-		send(new ProfileFrame(offline));
+		send(new UpdateFrame(offline));
 		lastSentWorld = 0;
 		fire();
 	}
@@ -1576,34 +1595,22 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	/**
-	 * The three live-update frames. Separate {@code type}s rather than one frame with a kind field: a client
-	 * that predates the split dispatches on {@code type} and ignores what it does not know, so it sees a peer
-	 * go stale instead of parsing a partial update as a whole one and blanking their gear
-	 * (PARTY_V2_OPTIMIZATION.md §8).
+	 * One live update, carrying whichever parts changed this tick.
+	 *
+	 * <p>The parts are chosen by how often they move — vitals every tick or two, items on a swap, profile
+	 * almost never — but they travel together, because the cost of a frame is dominated by serialising it and
+	 * writing it once per peer, not by its size. Splitting a tick that changed two things into two frames
+	 * measurably raised CPU for no benefit; the saving was always in what the payload leaves out.
+	 *
+	 * <p>Its own {@code type}, not {@code state}: a client from before the split dispatches on type and
+	 * ignores what it does not know, so it sees a peer go stale rather than parsing a partial update as a
+	 * whole one and blanking their gear (PARTY_V2_OPTIMIZATION.md §8).
 	 */
-	private static final class VitalsFrame {
-		final String type = "vitals";
+	private static final class UpdateFrame {
+		final String type = "update";
 		final Object state;
 
-		VitalsFrame(Object state) {
-			this.state = state;
-		}
-	}
-
-	private static final class ItemsFrame {
-		final String type = "items";
-		final Object state;
-
-		ItemsFrame(Object state) {
-			this.state = state;
-		}
-	}
-
-	private static final class ProfileFrame {
-		final String type = "profile";
-		final Object state;
-
-		ProfileFrame(Object state) {
+		UpdateFrame(Object state) {
 			this.state = state;
 		}
 	}

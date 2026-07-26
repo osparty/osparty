@@ -357,6 +357,8 @@ public class PartyV2Socket extends WebSocketListener {
 		public Boolean closed;
 		public String discordUrl;
 		public List<RosterEntry> members;
+		/** Every peer's live update from one aggregation window, on a {@code memberUpdates} frame. */
+		public List<MemberUpdate> updates;
 		/** Opaque live snapshot (a serialised PlayerUpdate); the caller converts it with its own Gson. */
 		public JsonObject state;
 		/** Opaque host ad settings (a serialised PartyMeta), on a {@code meta} frame. */
@@ -385,6 +387,12 @@ public class PartyV2Socket extends WebSocketListener {
 		public String newHostKey;
 		public String newHostName;
 		public Boolean hostStays;
+	}
+
+	/** One member's live update inside a {@code memberUpdates} frame. */
+	public static final class MemberUpdate {
+		public long memberId;
+		public JsonObject state;
 	}
 
 	/** One roster row from a {@code roster} frame. */
