@@ -349,7 +349,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		overlayManager.add(pingArrowOverlay);
 
 		defenceOverlay = new NpcDefenceOverlay(client, defenceTracker, config,
-			ImageUtil.resizeImage(skillIconManager.getSkillImage(Skill.DEFENCE), 16, 16));
+			ImageUtil.resizeImage(skillIconManager.getSkillImage(Skill.DEFENCE), 16, 16),
+			ImageUtil.resizeImage(skillIconManager.getSkillImage(Skill.MAGIC), 16, 16));
 		overlayManager.add(defenceOverlay);
 
 		playerMarkerOverlay = new PlayerMarkerOverlay(client, liveParty, config,

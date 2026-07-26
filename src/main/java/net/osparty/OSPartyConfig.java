@@ -4,6 +4,7 @@ import java.awt.Color;
 
 import net.osparty.enums.BlockedApplicantAction;
 import net.osparty.enums.DefenceOverlayPosition;
+import net.osparty.enums.MagicDefenceDisplay;
 import net.osparty.enums.SceneFontSize;
 import net.runelite.client.config.Alpha;
 import net.runelite.client.config.Config;
@@ -500,7 +501,7 @@ public interface OSPartyConfig extends Config
 	@ConfigItem(
 		keyName = "defenceHpBar",
 		name = "Show next to HP bar",
-		description = "Display a monster's live defence on the scene, next to its health bar, as the party drains it. Needs the \"Special Attack Counter\" plugin enabled.",
+		description = "Display a monster's live defence on the scene, next to its health bar, as the party drains it.",
 		position = 1,
 		section = DEFENCE
 	)
@@ -534,10 +535,22 @@ public interface OSPartyConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "defenceAlwaysShow",
+		name = "Show before any spec",
+		description = "Show the defence of the monster you're attacking straight away, at its starting level, instead of waiting for the first defence-draining special attack to land.",
+		position = 4,
+		section = DEFENCE
+	)
+	default boolean defenceAlwaysShow()
+	{
+		return false;
+	}
+
+	@ConfigItem(
 		keyName = "defenceShowFullLevel",
 		name = "Show full level",
 		description = "For monsters with a minimum defence, show the full level instead of the amount above the minimum.",
-		position = 4,
+		position = 5,
 		section = DEFENCE
 	)
 	default boolean defenceShowFullLevel()
@@ -550,7 +563,7 @@ public interface OSPartyConfig extends Config
 		keyName = "defenceLowThreshold",
 		name = "Low defence threshold",
 		description = "Defence at or below this (above the minimum) is shown in the low-defence colour.",
-		position = 5,
+		position = 6,
 		section = DEFENCE
 	)
 	default int defenceLowThreshold()
@@ -563,7 +576,7 @@ public interface OSPartyConfig extends Config
 		keyName = "defenceHighColor",
 		name = "High defence colour",
 		description = "Colour when defence is above the low threshold.",
-		position = 6,
+		position = 7,
 		section = DEFENCE
 	)
 	default Color defenceHighColor()
@@ -576,7 +589,7 @@ public interface OSPartyConfig extends Config
 		keyName = "defenceLowColor",
 		name = "Low defence colour",
 		description = "Colour when defence is at or below the low threshold.",
-		position = 7,
+		position = 8,
 		section = DEFENCE
 	)
 	default Color defenceLowColor()
@@ -589,7 +602,7 @@ public interface OSPartyConfig extends Config
 		keyName = "defenceCappedColor",
 		name = "Capped defence colour",
 		description = "Colour when defence is fully drained (at the monster's minimum).",
-		position = 8,
+		position = 9,
 		section = DEFENCE
 	)
 	default Color defenceCappedColor()
@@ -601,7 +614,7 @@ public interface OSPartyConfig extends Config
 		keyName = "defenceFontSize",
 		name = "Scene text size",
 		description = "Font size for the on-scene defence display.",
-		position = 9,
+		position = 10,
 		section = DEFENCE
 	)
 	default SceneFontSize defenceFontSize()
@@ -613,7 +626,7 @@ public interface OSPartyConfig extends Config
 		keyName = "defenceTextPlate",
 		name = "Scene text background",
 		description = "Draw a translucent plate behind the scene defence text for legibility.",
-		position = 10,
+		position = 11,
 		section = DEFENCE
 	)
 	default boolean defenceTextPlate()
@@ -624,8 +637,8 @@ public interface OSPartyConfig extends Config
 	@ConfigItem(
 		keyName = "magicDefence",
 		name = "Show magic defence",
-		description = "Also show the monster's live magic defence (as a percentage of its starting value) as the party drains it with the accursed sceptre, Seercull, or Eye of ayak.",
-		position = 11,
+		description = "Also show the monster's live magic defence as the party drains it with the accursed sceptre, Seercull, or Eye of ayak.",
+		position = 12,
 		section = DEFENCE
 	)
 	default boolean magicDefence()
@@ -633,16 +646,40 @@ public interface OSPartyConfig extends Config
 		return true;
 	}
 
+	@ConfigItem(
+		keyName = "magicDefenceDisplay",
+		name = "Magic defence as",
+		description = "Show the magic-defence bonus (the number the Eye of ayak drains), the percentage of the starting magic-defence roll (which also reflects Magic level drains), or both.",
+		position = 13,
+		section = DEFENCE
+	)
+	default MagicDefenceDisplay magicDefenceDisplay()
+	{
+		return MagicDefenceDisplay.BONUS;
+	}
+
 	@Alpha
 	@ConfigItem(
 		keyName = "magicDefenceColor",
 		name = "Magic defence colour",
-		description = "Colour of the magic-defence percentage.",
-		position = 12,
+		description = "Colour of the magic-defence readout.",
+		position = 14,
 		section = DEFENCE
 	)
 	default Color magicDefenceColor()
 	{
 		return new Color(120, 180, 255);
+	}
+
+	@ConfigItem(
+		keyName = "defenceOutsideParty",
+		name = "Track outside a party",
+		description = "Keep tracking your own defence drains when you aren't in a party. Turn this off to only show the defence tracker during party content.",
+		position = 15,
+		section = DEFENCE
+	)
+	default boolean defenceOutsideParty()
+	{
+		return true;
 	}
 }
