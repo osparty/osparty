@@ -135,6 +135,8 @@ public class LivePartyV2 implements LivePartyBackend {
 	private int sentPrayer = -1;
 	private int sentSpec = -1;
 	private int sentRunEnergy = -1;
+	/** Whether the vitals built for the frame being assembled include one that moved down. Set by {@link #vitals}. */
+	private boolean vitalsUrgent;
 	private int lastSentWorld = -1;
 	private final Map<Skill, Integer> sentRealLevels = new HashMap<>();
 	/** When we last sent anything at all, so the heartbeat only fires in the silence. */
@@ -674,6 +676,9 @@ public class LivePartyV2 implements LivePartyBackend {
 	 * <p>The whole point of the split is that the common case — a vital moved and nothing else — never
 	 * touches {@link LocalPlayerSync#snapshot}, which reads 28 inventory slots and 23 skill levels to
 	 * produce a payload we would then throw away. Items and profile share one snapshot when both are dirty.
+	 *
+	 * <p>The frame also says whether it wants relaying promptly. Only a vital that moved down does — see
+	 * {@link #vitals()} — so an inventory change or a level-up rides the owner node's idle window.
 	 */
 	private void sendLocalState() {
 		JsonObject full = null;
@@ -700,8 +705,10 @@ public class LivePartyV2 implements LivePartyBackend {
 			}
 		}
 		JsonObject update = new JsonObject();
+		boolean urgent = false;
 		if (vitalsDirty) {
 			addAll(update, vitals());
+			urgent = vitalsUrgent;
 		}
 		if (itemsDirty) {
 			addAll(update, project(full, ITEM_FIELDS));
@@ -714,7 +721,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		if (update.size() == 0) {
 			return;
 		}
-		send(new UpdateFrame(update));
+		send(new UpdateFrame(update, urgent));
 		vitalsDirty = false;
 		itemsDirty = false;
 		profileDirty = false;
@@ -730,9 +737,17 @@ public class LivePartyV2 implements LivePartyBackend {
 
 	/** The four numbers that actually move, and nothing else. Built without a full snapshot. */
 	private JsonObject vitals() {
-		sentHp = client.getBoostedSkillLevel(Skill.HITPOINTS);
-		sentPrayer = client.getBoostedSkillLevel(Skill.PRAYER);
-		sentSpec = client.getVarpValue(300) / 10;
+		int hp = client.getBoostedSkillLevel(Skill.HITPOINTS);
+		int prayer = client.getBoostedSkillLevel(Skill.PRAYER);
+		int spec = client.getVarpValue(300) / 10;
+		// A vital moving down is damage taken, prayer drained or a spec spent — the moments a peer reacts to,
+		// and the only ones worth interrupting the owner node's idle window for. Everything that moves up
+		// (regen, restores, spec recharging) can travel with the next round. The first send after a reset
+		// compares against -1, so a reconnect is never mistaken for a drop.
+		vitalsUrgent = hp < sentHp || prayer < sentPrayer || spec < sentSpec;
+		sentHp = hp;
+		sentPrayer = prayer;
+		sentSpec = spec;
 		sentRunEnergy = runEnergy();
 		JsonObject out = new JsonObject();
 		out.addProperty("currentHp", sentHp);
@@ -793,7 +808,9 @@ public class LivePartyV2 implements LivePartyBackend {
 		JsonObject merged = merge(rawState.get(localMemberId), offline);
 		rawState.put(localMemberId, merged);
 		playerData.put(localMemberId, gson.fromJson(merged, PlayerUpdate.class));
-		send(new UpdateFrame(offline));
+		// Urgent: rare, and a peer showing someone as still present after they logged out is the kind of
+		// staleness the idle window is not allowed to cause.
+		send(new UpdateFrame(offline, true));
 		lastSentWorld = 0;
 		fire();
 	}
@@ -1610,9 +1627,22 @@ public class LivePartyV2 implements LivePartyBackend {
 	private static final class UpdateFrame {
 		final String type = "update";
 		final Object state;
+		/**
+		 * Ask the owner node to relay this one without waiting out its idle window. Null when it can wait, so
+		 * the field is simply absent from the ordinary frame.
+		 *
+		 * <p>A field of the frame rather than of {@link #state}: the server must stay blind to what a member
+		 * is reporting, and this tells it only how soon the report is wanted.
+		 */
+		final Boolean urgent;
 
 		UpdateFrame(Object state) {
+			this(state, false);
+		}
+
+		UpdateFrame(Object state, boolean urgent) {
 			this.state = state;
+			this.urgent = urgent ? Boolean.TRUE : null;
 		}
 	}
 
