@@ -23,7 +23,6 @@ import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.util.Set;
 import java.util.function.Consumer;
-import java.util.function.IntConsumer;
 import java.util.function.IntFunction;
 import java.util.function.IntSupplier;
 import java.util.function.LongSupplier;
@@ -143,7 +142,7 @@ public class OSPartyPanel extends PluginPanel
 		HostApplicationHandler hostApplicationHandler, Supplier<String> friendsChatOwnerSupplier,
 		IntSupplier worldSupplier, ItemManager itemManager, LiveParty liveParty,
 		RuneWatchService runeWatchService, Supplier<AccountType> accountTypeSupplier,
-		KillcountService killcountService, SkillIconManager skillIconManager, IntConsumer worldHopper,
+		KillcountService killcountService, SkillIconManager skillIconManager,
 		Supplier<int[]> mapRegionsSupplier, IntFunction<WorldRegion> worldRegionResolver,
 		Supplier<String> coxLayoutSupplier, ConfigManager configManager, Gson gson,
 		WorldPinger worldPinger, IntFunction<String> worldAddressResolver,
@@ -189,7 +188,7 @@ public class OSPartyPanel extends PluginPanel
 		createPanel.setJoinByCodeHandler(searchPanel::joinByCode);
 		partyPanel = new PartyPanel(partyService, playerNameSupplier,
 			hostApplicationHandler, partyState, itemManager, liveParty, runeWatchService, killcountService,
-			skillIconManager, worldSupplier, worldHopper, friendsChatOwnerSupplier, coxLayoutSupplier,
+			skillIconManager, worldSupplier, friendsChatOwnerSupplier, coxLayoutSupplier,
 			config, configManager, favoritesService, blockListService, spriteManager,
 			() -> discordLinked, this::startDiscordLink, accountHashSupplier, hostTransferHandler);
 		historyPanel = new HistoryPanel(historyService, favoritesService, blockListService);
