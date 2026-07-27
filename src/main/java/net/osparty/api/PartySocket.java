@@ -450,6 +450,22 @@ public class PartySocket extends WebSocketListener
 	}
 
 	/**
+	 * Report an advertisement for moderator review.
+	 *
+	 * <p>Fire-and-forget, and deliberately unacknowledged. The server silently rate-limits reports,
+	 * and an ack that distinguished "recorded" from "throttled" would tell an abuser exactly which
+	 * of their reports landed. The UI confirms to the reporter unconditionally.
+	 */
+	public void reportParty(String id)
+	{
+		if (id == null || !connected)
+		{
+			return;
+		}
+		send(gson.toJson(new ReportFrame(id)));
+	}
+
+	/**
 	 * Member self-service: grant our per-user access to the party's voice channel before opening the
 	 * invite. {@code onGranted} fires on the ack; {@code onError} if refused or offline.
 	 */
@@ -1177,6 +1193,22 @@ public class PartySocket extends WebSocketListener
 			this.id = id;
 			this.key = key;
 			this.accountHash = accountHash;
+		}
+	}
+
+	/**
+	 * Outbound report of an advertisement. Carries only the party id: the server attributes it to us
+	 * from the identity already registered by {@code identify}, and there is nothing further to say,
+	 * since moderators judge the advertisement itself.
+	 */
+	private static final class ReportFrame
+	{
+		final String type = "report";
+		final String id;
+
+		ReportFrame(String id)
+		{
+			this.id = id;
 		}
 	}
 

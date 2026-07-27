@@ -113,6 +113,12 @@ public interface PartyService
 	void kickVoiceMember(String partyId, String hostKey, long accountHash);
 
 	/**
+	 * Report an advertisement for moderator review. Fire-and-forget and unacknowledged: the server
+	 * rate-limits reports silently, so callers should confirm to the player regardless.
+	 */
+	void reportParty(String partyId);
+
+	/**
 	 * Member action: request per-user access to the party's voice channel, then open the invite.
 	 * {@code onGranted} fires on success; {@code onError} if refused or offline.
 	 */

@@ -21,6 +21,7 @@ import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -82,6 +83,13 @@ abstract class PartyCardPanel extends JPanel
 	protected final Map<String, JLabel> reasonLabels = new HashMap<>();
 	protected final Map<String, JPanel> rolePickers = new HashMap<>();
 	private final Map<String, Long> cooldownExpiry = new HashMap<>();
+	/**
+	 * Advertisements reported during this client session, so the menu item can show itself as
+	 * already used rather than letting someone report the same advert repeatedly. Not persisted:
+	 * ads live about 90 seconds, so anything that survives a restart is a different advert. The
+	 * server enforces its own limits regardless — this is purely so the UI tells the truth.
+	 */
+	private final Set<String> reportedPartyIds = new HashSet<>();
 	private Timer uiTimer;
 
 	// ---- KC status ----------------------------------------------------------
@@ -896,6 +904,32 @@ abstract class PartyCardPanel extends JPanel
 				onBlockChanged.run();
 			});
 			menu.add(blockItem);
+			any = true;
+		}
+
+		// Reporting sends someone's advert to human moderators, so it sits apart from the
+		// personal-preference items above it, and never appears on your own ad.
+		if (!self)
+		{
+			if (any)
+			{
+				menu.addSeparator();
+			}
+			boolean reported = reportedPartyIds.contains(party.getId());
+			JMenuItem reportItem = new JMenuItem(reported ? "Already reported" : "Report advertisement");
+			reportItem.setEnabled(!reported);
+			reportItem.addActionListener(e -> {
+				if (reportedPartyIds.contains(party.getId()) || !ReportConfirm.confirm(this, host))
+				{
+					return;
+				}
+				reportedPartyIds.add(party.getId());
+				partyService.reportParty(party.getId());
+				// Confirmed unconditionally: the server rate-limits silently and never acknowledges,
+				// precisely so nobody can learn which of their reports got through.
+				setStatus("Report sent. A moderator will review it.");
+			});
+			menu.add(reportItem);
 			any = true;
 		}
 
