@@ -3,26 +3,12 @@ package net.osparty.ui;
 import java.awt.Component;
 import javax.swing.JOptionPane;
 
-/**
- * Confirmation for reporting an advertisement. Modelled on {@link BlockConfirm}: reporting is a
- * one-click action sitting next to Favourite and Block in the same menu, and it sends a player's
- * advertisement to human moderators, so it is worth one deliberate click.
- *
- * <p>The wording sets expectations that the feature genuinely cannot meet: the reporter is told
- * nothing about the outcome, ever, because reports are reviewed asynchronously and any feedback
- * would also tell an abuser which of their reports landed.
- */
 final class ReportConfirm
 {
 	private ReportConfirm()
 	{
 	}
 
-	/**
-	 * Ask the user to confirm reporting {@code name}'s advertisement.
-	 *
-	 * @return true if the user confirmed and the caller should send the report.
-	 */
 	static boolean confirm(Component parent, String name)
 	{
 		String who = escape(name == null ? "this player" : name);
@@ -44,7 +30,6 @@ final class ReportConfirm
 		return choice == JOptionPane.OK_OPTION;
 	}
 
-	/** Neutralise the few HTML-significant characters, since the label renders as HTML. */
 	private static String escape(String s)
 	{
 		return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");

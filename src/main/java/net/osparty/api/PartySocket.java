@@ -449,13 +449,6 @@ public class PartySocket extends WebSocketListener
 		send(gson.toJson(new KickVoiceFrame(id, key, accountHash)));
 	}
 
-	/**
-	 * Report an advertisement for moderator review.
-	 *
-	 * <p>Fire-and-forget, and deliberately unacknowledged. The server silently rate-limits reports,
-	 * and an ack that distinguished "recorded" from "throttled" would tell an abuser exactly which
-	 * of their reports landed. The UI confirms to the reporter unconditionally.
-	 */
 	public void reportParty(String id)
 	{
 		if (id == null || !connected)
@@ -1196,11 +1189,6 @@ public class PartySocket extends WebSocketListener
 		}
 	}
 
-	/**
-	 * Outbound report of an advertisement. Carries only the party id: the server attributes it to us
-	 * from the identity already registered by {@code identify}, and there is nothing further to say,
-	 * since moderators judge the advertisement itself.
-	 */
 	private static final class ReportFrame
 	{
 		final String type = "report";

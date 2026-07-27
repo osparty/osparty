@@ -112,10 +112,6 @@ public interface PartyService
 	 */
 	void kickVoiceMember(String partyId, String hostKey, long accountHash);
 
-	/**
-	 * Report an advertisement for moderator review. Fire-and-forget and unacknowledged: the server
-	 * rate-limits reports silently, so callers should confirm to the player regardless.
-	 */
 	void reportParty(String partyId);
 
 	/**
