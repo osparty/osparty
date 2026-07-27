@@ -153,10 +153,17 @@ public class PartyV2Socket extends WebSocketListener {
 		return connected && !closed;
 	}
 
+	/**
+	 * Send one frame as a binary message carrying UTF-8 JSON.
+	 *
+	 * <p>Binary rather than text in both directions: it saves the server a UTF-8 pass per frame per
+	 * recipient, which measured as a fifth of its CPU, and it costs this side nothing — the bytes exist
+	 * either way. The payload is the same JSON; only the opcode differs.
+	 */
 	public void send(Object frame) {
 		WebSocket socket = webSocket;
 		if (socket != null && connected) {
-			socket.send(gson.toJson(frame));
+			socket.send(okio.ByteString.encodeUtf8(gson.toJson(frame)));
 		}
 	}
 
@@ -199,6 +206,12 @@ public class PartyV2Socket extends WebSocketListener {
 		catch (Exception e) {
 			log.debug("Party V2 onOpen callback failed: {}", e.toString());
 		}
+	}
+
+	/** The server sends binary; the text overload stays for anything that has not caught up. */
+	@Override
+	public void onMessage(WebSocket socket, okio.ByteString bytes) {
+		onMessage(socket, bytes.utf8());
 	}
 
 	@Override
