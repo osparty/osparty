@@ -519,20 +519,23 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			playerName = local.getName();
 		}
 
-		// Once per login: offer to resume a party we were hosting before a restart.
-		if (playerName != null && !rejoinChecked)
-		{
-			rejoinChecked = true;
-			attemptRejoin(playerName);
-		}
-
 		world = client.getWorld();
 		mapRegions = client.getMapRegions();
 		accountType = client.getAccountType();
 		accountHash = client.getAccountHash();
 
 		// Register our identity so friends can route party invites to us (only re-sent on change).
+		// Deliberately before the rejoin lookup below: the server answers some lookups differently
+		// depending on whether it can tell the asker is the ad's own host, and frames are processed
+		// in order on one socket, so identifying first makes the very first lookup a recognised one.
 		maybeIdentify();
+
+		// Once per login: offer to resume a party we were hosting before a restart.
+		if (playerName != null && !rejoinChecked)
+		{
+			rejoinChecked = true;
+			attemptRejoin(playerName);
+		}
 
 		FriendsChatManager fcm = client.getFriendsChatManager();
 		friendsChatOwner = fcm != null ? fcm.getOwner() : null;
