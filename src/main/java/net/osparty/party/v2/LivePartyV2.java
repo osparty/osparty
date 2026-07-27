@@ -360,10 +360,12 @@ public class LivePartyV2 implements LivePartyBackend {
 				}
 				break;
 			case "memberUpdates":
-				// One window's worth of everyone else's changes, in the order they happened.
+				// One window's worth of the room's changes, in the order they happened. The owner sends the
+				// same frame to everyone rather than tailoring one per member, so our own updates are in
+				// here too — skipping them is cheaper for the server than excluding them was.
 				if (frame.updates != null) {
 					for (PartyV2Socket.MemberUpdate update : frame.updates) {
-						if (update != null && update.state != null) {
+						if (update != null && update.state != null && update.memberId != localMemberId) {
 							applyState(update.memberId, update.state);
 						}
 					}
