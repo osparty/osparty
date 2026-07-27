@@ -21,6 +21,7 @@ import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -82,6 +83,7 @@ abstract class PartyCardPanel extends JPanel
 	protected final Map<String, JLabel> reasonLabels = new HashMap<>();
 	protected final Map<String, JPanel> rolePickers = new HashMap<>();
 	private final Map<String, Long> cooldownExpiry = new HashMap<>();
+	private final Set<String> reportedPartyIds = new HashSet<>();
 	private Timer uiTimer;
 
 	// ---- KC status ----------------------------------------------------------
@@ -896,6 +898,28 @@ abstract class PartyCardPanel extends JPanel
 				onBlockChanged.run();
 			});
 			menu.add(blockItem);
+			any = true;
+		}
+
+		if (!self)
+		{
+			if (any)
+			{
+				menu.addSeparator();
+			}
+			boolean reported = reportedPartyIds.contains(party.getId());
+			JMenuItem reportItem = new JMenuItem(reported ? "Already reported" : "Report advertisement");
+			reportItem.setEnabled(!reported);
+			reportItem.addActionListener(e -> {
+				if (reportedPartyIds.contains(party.getId()) || !ReportConfirm.confirm(this, host))
+				{
+					return;
+				}
+				reportedPartyIds.add(party.getId());
+				partyService.reportParty(party.getId());
+				setStatus("Report sent. A moderator will review it.");
+			});
+			menu.add(reportItem);
 			any = true;
 		}
 

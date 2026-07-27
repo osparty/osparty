@@ -519,13 +519,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			playerName = local.getName();
 		}
 
-		// Once per login: offer to resume a party we were hosting before a restart.
-		if (playerName != null && !rejoinChecked)
-		{
-			rejoinChecked = true;
-			attemptRejoin(playerName);
-		}
-
 		world = client.getWorld();
 		mapRegions = client.getMapRegions();
 		accountType = client.getAccountType();
@@ -533,6 +526,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		// Register our identity so friends can route party invites to us (only re-sent on change).
 		maybeIdentify();
+
+		// Once per login: offer to resume a party we were hosting before a restart.
+		if (playerName != null && !rejoinChecked)
+		{
+			rejoinChecked = true;
+			attemptRejoin(playerName);
+		}
 
 		FriendsChatManager fcm = client.getFriendsChatManager();
 		friendsChatOwner = fcm != null ? fcm.getOwner() : null;

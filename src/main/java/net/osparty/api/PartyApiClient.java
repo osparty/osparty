@@ -197,6 +197,12 @@ public class PartyApiClient implements PartyService
 	}
 
 	@Override
+	public void reportParty(String partyId)
+	{
+		partySocket.reportParty(partyId);
+	}
+
+	@Override
 	public void requestVoiceAccess(String partyId, long accountHash, Runnable onGranted, Consumer<Throwable> onError)
 	{
 		partySocket.requestVoiceAccess(partyId, accountHash, onGranted, onError);

@@ -112,6 +112,8 @@ public interface PartyService
 	 */
 	void kickVoiceMember(String partyId, String hostKey, long accountHash);
 
+	void reportParty(String partyId);
+
 	/**
 	 * Member action: request per-user access to the party's voice channel, then open the invite.
 	 * {@code onGranted} fires on success; {@code onError} if refused or offline.
