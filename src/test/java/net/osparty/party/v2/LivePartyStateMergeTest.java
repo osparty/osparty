@@ -23,11 +23,11 @@ public class LivePartyStateMergeTest
 	@Test
 	public void patchLeavesFieldsItDoesNotMention()
 	{
-		JsonObject full = gson.toJsonTree(snapshot()).getAsJsonObject();
+		JsonObject full = LivePartyV2.toWire(gson.toJsonTree(snapshot()).getAsJsonObject());
 		JsonObject vitals = new JsonObject();
 		vitals.addProperty("hp", 31);
 
-		PlayerUpdate merged = gson.fromJson(LivePartyV2.merge(full, vitals), PlayerUpdate.class);
+		PlayerUpdate merged = gson.fromJson(LivePartyV2.fromWire(LivePartyV2.merge(full, vitals)), PlayerUpdate.class);
 
 		assertEquals(31, merged.getCurrentHp());
 		// Everything the patch was silent about survives it.
@@ -43,7 +43,7 @@ public class LivePartyStateMergeTest
 		JsonObject vitals = new JsonObject();
 		vitals.addProperty("hp", 12);
 
-		PlayerUpdate merged = gson.fromJson(LivePartyV2.merge(null, vitals), PlayerUpdate.class);
+		PlayerUpdate merged = gson.fromJson(LivePartyV2.fromWire(LivePartyV2.merge(null, vitals)), PlayerUpdate.class);
 
 		assertEquals(12, merged.getCurrentHp());
 		assertNull(merged.getName());
@@ -52,7 +52,7 @@ public class LivePartyStateMergeTest
 	@Test
 	public void mergingDoesNotMutateEitherSide()
 	{
-		JsonObject base = gson.toJsonTree(snapshot()).getAsJsonObject();
+		JsonObject base = LivePartyV2.toWire(gson.toJsonTree(snapshot()).getAsJsonObject());
 		JsonObject patch = new JsonObject();
 		patch.addProperty("wd", 420);
 
@@ -103,13 +103,13 @@ public class LivePartyStateMergeTest
 		PlayerUpdate hiding = snapshot();
 		hiding.setHideGear(true);
 		hiding.setEquipment(null);
-		JsonObject held = gson.toJsonTree(hiding).getAsJsonObject();
+		JsonObject held = LivePartyV2.toWire(gson.toJsonTree(hiding).getAsJsonObject());
 
 		PlayerUpdate showing = snapshot();
 		showing.setHideGear(false);
-		JsonObject patch = gson.toJsonTree(showing).getAsJsonObject();
+		JsonObject patch = LivePartyV2.toWire(gson.toJsonTree(showing).getAsJsonObject());
 
-		PlayerUpdate merged = gson.fromJson(LivePartyV2.merge(held, patch), PlayerUpdate.class);
+		PlayerUpdate merged = gson.fromJson(LivePartyV2.fromWire(LivePartyV2.merge(held, patch)), PlayerUpdate.class);
 		LivePartyV2.applyPrivacy(merged);
 
 		assertArrayEquals(new int[]{4151, 11802}, merged.getEquipment());
@@ -135,7 +135,7 @@ public class LivePartyStateMergeTest
 		moved.addProperty("5", 12695);
 		patch.add("iv", moved);
 
-		PlayerUpdate merged = gson.fromJson(LivePartyV2.merge(held, patch), PlayerUpdate.class);
+		PlayerUpdate merged = gson.fromJson(LivePartyV2.fromWire(LivePartyV2.merge(held, patch)), PlayerUpdate.class);
 
 		assertEquals(385, merged.getInventory()[0]);
 		assertEquals(-1, merged.getInventory()[1]);
@@ -156,7 +156,7 @@ public class LivePartyStateMergeTest
 		quantities.addProperty("2", 40);
 		state.add("iq", quantities);
 
-		PlayerUpdate read = gson.fromJson(state, PlayerUpdate.class);
+		PlayerUpdate read = gson.fromJson(LivePartyV2.fromWire(state), PlayerUpdate.class);
 
 		assertEquals(385, read.getInventory()[2]);
 		assertEquals(-1, read.getInventory()[0]);
@@ -195,7 +195,7 @@ public class LivePartyStateMergeTest
 	@Test
 	public void projectionTakesOnlyItsOwnFields()
 	{
-		JsonObject full = gson.toJsonTree(snapshot()).getAsJsonObject();
+		JsonObject full = LivePartyV2.toWire(gson.toJsonTree(snapshot()).getAsJsonObject());
 
 		JsonObject items = LivePartyV2.project(full, LivePartyV2.ITEM_FIELDS);
 		assertTrue(items.has("iv"));
@@ -220,7 +220,7 @@ public class LivePartyStateMergeTest
 	@Test
 	public void killcountNeverReachesTheWire()
 	{
-		JsonObject full = gson.toJsonTree(snapshot()).getAsJsonObject();
+		JsonObject full = LivePartyV2.toWire(gson.toJsonTree(snapshot()).getAsJsonObject());
 
 		assertFalse(full.has("killCount"));
 		assertFalse(full.has("hardModeKillCount"));

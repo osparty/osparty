@@ -65,6 +65,32 @@ public class LivePartyV2 implements LivePartyBackend {
 	 * a shark was eaten. These three go out as an object of the slots that changed, which peers accumulate
 	 * (see {@link #merge}); the rune pouch keeps its array, being three entries at most and rarely touched.
 	 */
+	/**
+	 * Long field name to short wire name, for everything a live frame can carry.
+	 *
+	 * <p>The translation lives here rather than on {@link PlayerUpdate} because that class is also
+	 * registered with RuneLite's own party relay, whose wire this plugin does not own and must not move: a
+	 * renamed field would make an updated client invisible to every peer that had not updated. Shortening
+	 * buys nothing there in any case — that relay is RuneLite's server. It buys a great deal here.
+	 */
+	private static final Map<String, String> TO_WIRE = Map.ofEntries(
+		Map.entry("name", "n"), Map.entry("accountHash", "ah"), Map.entry("combatLevel", "cl"),
+		Map.entry("equipment", "eq"), Map.entry("inventory", "iv"), Map.entry("inventoryQuantities", "iq"),
+		Map.entry("runePouch", "rp"), Map.entry("runePouchAmounts", "ra"), Map.entry("runePouchNames", "rn"),
+		Map.entry("stats", "sk"), Map.entry("currentHp", "hp"), Map.entry("maxHp", "mh"),
+		Map.entry("currentPrayer", "pr"), Map.entry("maxPrayer", "mp"), Map.entry("specialPercent", "sp"),
+		Map.entry("runEnergy", "re"), Map.entry("spellbook", "sb"), Map.entry("accountType", "at"),
+		Map.entry("role", "ro"), Map.entry("learner", "ln"), Map.entry("teacher", "te"),
+		Map.entry("invited", "in"), Map.entry("pbSeconds", "pb"), Map.entry("world", "wd"),
+		Map.entry("friendsChatOwner", "fc"), Map.entry("hideInventory", "hi"), Map.entry("hideGear", "hg"));
+
+	/** The same the other way, for reading a peer's frame back into a {@link PlayerUpdate}. */
+	private static final Map<String, String> FROM_WIRE = TO_WIRE.entrySet().stream()
+		.collect(java.util.stream.Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
+
+	/** How many slots each sparse item field expands back to. */
+	private static final Map<String, Integer> SLOT_LENGTHS = Map.of("iv", 28, "iq", 28, "eq", 14);
+
 	private static final java.util.Set<String> SLOT_FIELDS = java.util.Set.of("iv", "iq", "eq");
 	/**
 	 * What a slot holds when the frame does not mention it, matching {@link net.osparty.party.SlotMap}: an
@@ -488,7 +514,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		PlayerUpdate update;
 		try {
 			JsonObject merged = merge(rawState.get(memberId), state);
-			update = gson.fromJson(merged, PlayerUpdate.class);
+			update = gson.fromJson(fromWire(merged), PlayerUpdate.class);
 			if (update == null) {
 				return;
 			}
@@ -778,12 +804,14 @@ public class LivePartyV2 implements LivePartyBackend {
 			update.setTeacher(localTeacher);
 			update.setInvited(localInvited);
 			update.setMemberId(localMemberId);
-			full = gson.toJsonTree(update).getAsJsonObject();
+			// Onto the wire names here, once: everything downstream — the projections, the merge, our own
+			// stored copy — speaks the short form, and only PlayerUpdate itself needs the long one back.
+			full = toWire(gson.toJsonTree(update).getAsJsonObject());
 			if (localMemberId != 0) {
 				// Our own row is merged exactly as a peer's is, so a partial send updates it the same way.
 				JsonObject merged = merge(rawState.get(localMemberId), full);
 				rawState.put(localMemberId, merged);
-				playerData.put(localMemberId, gson.fromJson(merged, PlayerUpdate.class));
+				playerData.put(localMemberId, gson.fromJson(fromWire(merged), PlayerUpdate.class));
 			}
 		}
 		JsonObject update = new JsonObject();
@@ -859,6 +887,61 @@ public class LivePartyV2 implements LivePartyBackend {
 	 */
 	private final Map<String, int[]> sentSlots = new java.util.concurrent.ConcurrentHashMap<>();
 
+	/** Rename a whole snapshot's fields to their wire names. Fields with no short name are left alone. */
+	static JsonObject toWire(JsonObject src) {
+		JsonObject out = new JsonObject();
+		for (Map.Entry<String, JsonElement> field : src.entrySet()) {
+			out.add(TO_WIRE.getOrDefault(field.getKey(), field.getKey()), field.getValue());
+		}
+		return out;
+	}
+
+	/**
+	 * Turn an accumulated wire snapshot back into something {@link PlayerUpdate} can be read from: long
+	 * names again, and the sparse item fields expanded to the fixed-length arrays a caller indexes by slot.
+	 */
+	static JsonObject fromWire(JsonObject src) {
+		JsonObject out = new JsonObject();
+		for (Map.Entry<String, JsonElement> field : src.entrySet()) {
+			String key = field.getKey();
+			JsonElement value = field.getValue();
+			if (SLOT_FIELDS.contains(key) && value.isJsonObject()) {
+				value = expandSlots(key, value.getAsJsonObject());
+			}
+			out.add(FROM_WIRE.getOrDefault(key, key), value);
+		}
+		return out;
+	}
+
+	/**
+	 * A slot map back to its array. Slots nobody mentioned take the absent value — an empty inventory or
+	 * equipment slot, or a stack of one, which is what an ordinary non-stackable item has and so the single
+	 * most common value on the wire.
+	 */
+	private static com.google.gson.JsonArray expandSlots(String field, JsonObject slots) {
+		int length = SLOT_LENGTHS.get(field);
+		int absent = SLOT_ABSENT.get(field);
+		int[] values = new int[length];
+		java.util.Arrays.fill(values, absent);
+		for (Map.Entry<String, JsonElement> slot : slots.entrySet()) {
+			try {
+				int index = Integer.parseInt(slot.getKey());
+				if (index >= 0 && index < length) {
+					values[index] = slot.getValue().getAsInt();
+				}
+			}
+			catch (RuntimeException ignored) {
+				// A key that is not a slot number, or a value that is not one: skip it rather than lose
+				// the rest of the inventory to one bad entry.
+			}
+		}
+		com.google.gson.JsonArray out = new com.google.gson.JsonArray(length);
+		for (int value : values) {
+			out.add(value);
+		}
+		return out;
+	}
+
 	/** Copy every field of {@code src} onto {@code target}, overwriting. */
 	private static void addAll(JsonObject target, JsonObject src) {
 		for (Map.Entry<String, JsonElement> field : src.entrySet()) {
@@ -890,7 +973,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		if (localMemberId != 0) {
 			JsonObject merged = merge(rawState.get(localMemberId), out);
 			rawState.put(localMemberId, merged);
-			playerData.put(localMemberId, gson.fromJson(merged, PlayerUpdate.class));
+			playerData.put(localMemberId, gson.fromJson(fromWire(merged), PlayerUpdate.class));
 		}
 		return out;
 	}
@@ -940,7 +1023,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		offline.addProperty("memberId", localMemberId);
 		JsonObject merged = merge(rawState.get(localMemberId), offline);
 		rawState.put(localMemberId, merged);
-		playerData.put(localMemberId, gson.fromJson(merged, PlayerUpdate.class));
+		playerData.put(localMemberId, gson.fromJson(fromWire(merged), PlayerUpdate.class));
 		// Urgent: rare, and a peer showing someone as still present after they logged out is the kind of
 		// staleness the idle window is not allowed to cause.
 		send(new UpdateFrame(offline, true));
