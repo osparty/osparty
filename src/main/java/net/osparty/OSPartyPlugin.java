@@ -1608,11 +1608,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		net.osparty.api.ServerCapabilities capabilities)
 	{
 		// Ask the server before choosing, so one plugin release works against a deployment that serves the
-		// live party and against one that does not. A forced -Dosparty.partyV2=true still wins, for testing
-		// against something the probe cannot see.
+		// live party and against one that does not. -Dosparty.partyV2=true forces the answer rather than
+		// this choice, so the socket and the backend cannot disagree about which world they are in.
 		capabilities.probe();
-		boolean useV2 = Boolean.getBoolean("osparty.partyV2")
-			|| (capabilities.partyV2() && capabilities.mergedSocket());
+		boolean useV2 = capabilities.partyV2() && capabilities.mergedSocket();
 		// Once, at startup, and never again: this seam is injected across the UI, and swapping it under a
 		// party in progress would leave half the plugin talking to a backend the other half had left.
 		return useV2 ? v2 : runeLite;

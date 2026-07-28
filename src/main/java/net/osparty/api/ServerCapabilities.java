@@ -58,6 +58,16 @@ public class ServerCapabilities {
 			return;
 		}
 		probed = true;
+		// A forced answer, for pointing a development client at something the probe cannot see. It has to
+		// set both: the live party is not usable without the connection that carries it, and forcing only
+		// the backend would select V2 over a socket with no live channel — which fails silently, the worst
+		// way for a test override to be wrong.
+		if (Boolean.getBoolean("osparty.partyV2")) {
+			partyV2 = true;
+			mergedSocket = true;
+			log.info("Server capabilities forced by -Dosparty.partyV2");
+			return;
+		}
 		String url = PartyApiClient.apiBaseUrl() + "/api/v1/capabilities";
 		try (Response response = client.newCall(new Request.Builder().url(url).get().build()).execute()) {
 			if (!response.isSuccessful() || response.body() == null) {
