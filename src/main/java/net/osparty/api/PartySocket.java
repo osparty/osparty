@@ -34,6 +34,12 @@ import okhttp3.WebSocketListener;
  * The plugin's single, session-long WebSocket to the party API: search reads and host writes both
  * run over it, and the open connection is the host ad's keep-alive. Reconnects with jittered backoff,
  * re-subscribing and resuming the hosted ad on each (re)connect.
+ *
+ * <p>It is also the only connection the plugin opens. The live party ({@link net.osparty.party.v2.LivePartyV2})
+ * used to bring up a second socket for the duration of a party, which doubled what the gateway had to carry
+ * for exactly the users doing the most; it now rides here as a second channel, tagged per frame with
+ * {@link Mux}. This class owns the connection, the backoff and the node hint, and knows nothing about what
+ * the live channel says — it hands those frames to whoever registered as {@link LiveChannel}.
  */
 @Slf4j
 @Singleton
@@ -44,7 +50,35 @@ public class PartySocket extends WebSocketListener
 
 	private final OkHttpClient client;
 	private final Gson gson;
-	private final String url;
+	private final HttpUrl base;
+
+	/**
+	 * The pod the live party wants this connection on, or null for "anywhere".
+	 *
+	 * <p>A live party lives in the memory of one node, so its members have to reach that node. Discovery does
+	 * not care where it lands — the board is the same everywhere — which is why the hint can be set and
+	 * dropped underneath it. What moving costs the board is one delta: the reconnect re-subscribes with
+	 * {@link #boardSeq}, so the parties we already hold are not sent again.
+	 */
+	private volatile String nodeHint;
+	/** The live party, while there is one. Registered on host/join and dropped on leave. */
+	private volatile LiveChannel live;
+
+	/**
+	 * The live party's half of this connection. Implemented by {@link net.osparty.party.v2.PartyV2Socket},
+	 * which keeps every bit of protocol and reconnect-semantics knowledge on its own side of this seam.
+	 */
+	public interface LiveChannel
+	{
+		/** The connection came up (or came back). The live party re-announces itself and resends state. */
+		void onLiveOpen();
+
+		/** One live frame, as JSON. */
+		void onLiveFrame(String json);
+
+		/** The connection went away. A reconnect is already scheduled; nothing to do but note it. */
+		void onLiveClosed();
+	}
 
 	private final Map<String, Party> parties = new LinkedHashMap<>();
 	// Recreated on each start(): stop() shuts the executor down for good.
@@ -110,20 +144,31 @@ public class PartySocket extends WebSocketListener
 			.readTimeout(Duration.ZERO)
 			.build();
 		this.gson = gson;
-		this.url = buildWsUrl();
-	}
-
-	private static String buildWsUrl()
-	{
-		// OkHttp upgrades the https URL to a WebSocket; path mirrors WebSocketConfig.WS_PATH.
-		HttpUrl base = HttpUrl.parse(PartyApiClient.apiBaseUrl());
-		if (base == null)
+		// OkHttp upgrades the https URL to a WebSocket.
+		HttpUrl parsed = HttpUrl.parse(PartyApiClient.apiBaseUrl());
+		if (parsed == null)
 		{
 			throw new IllegalStateException("Invalid API base URL: " + PartyApiClient.apiBaseUrl());
 		}
-		return base.newBuilder()
-			.addPathSegment("api").addPathSegment("v1")
-			.addPathSegment("ws").addPathSegment("parties")
+		this.base = parsed;
+	}
+
+	/**
+	 * {@code [/n/{nodeId}]/api/ws} — the merged endpoint, optionally pinned to the pod that owns our party.
+	 *
+	 * <p>The hint prefix appears only once a live party asks for it. Without one the gateway round-robins,
+	 * which is what a client not in a party wants.
+	 */
+	private String currentUrl()
+	{
+		HttpUrl.Builder builder = base.newBuilder();
+		String hint = nodeHint;
+		if (hint != null && !hint.isEmpty())
+		{
+			builder.addPathSegment("n").addPathSegment(hint);
+		}
+		return builder
+			.addPathSegment("api").addPathSegment("ws")
 			.build().toString();
 	}
 
@@ -151,6 +196,10 @@ public class PartySocket extends WebSocketListener
 		closed = true;
 		connected = false;
 		started = false;
+		// A hint outlives nothing: the party it belonged to is over, and a restart should be placed on its
+		// own merits rather than inheriting where the last session happened to end up.
+		nodeHint = null;
+		live = null;
 		if (reconnects != null)
 		{
 			reconnects.shutdownNow();
@@ -190,7 +239,91 @@ public class PartySocket extends WebSocketListener
 		{
 			return;
 		}
-		webSocket = client.newWebSocket(new Request.Builder().url(url).build(), this);
+		webSocket = client.newWebSocket(new Request.Builder().url(currentUrl()).build(), this);
+	}
+
+	// --- Live-party channel ---
+
+	/**
+	 * Register (or, with null, drop) the live party's half of this connection.
+	 *
+	 * <p>Registering does not open anything: the connection is already up, and the live party simply starts
+	 * being told about it. If it is up right now, the callback fires immediately, because the caller expects
+	 * the same "announce yourself" moment it would get from a fresh socket.
+	 */
+	public void setLiveChannel(LiveChannel channel)
+	{
+		this.live = channel;
+		if (channel != null && isConnected())
+		{
+			fireLiveOpen(channel);
+		}
+	}
+
+	/**
+	 * Move this connection to a named pod, because that is where our party lives.
+	 *
+	 * <p>An immediate reconnect rather than a backoff: we know exactly where to go, and every moment spent
+	 * elsewhere is a moment the party cannot relay. The board survives it — the re-subscribe asks only for
+	 * what changed while we were away.
+	 */
+	public synchronized void moveTo(String nodeId)
+	{
+		if (nodeId == null || nodeId.isEmpty() || nodeId.equals(nodeHint))
+		{
+			return;
+		}
+		nodeHint = nodeId;
+		reconnectForMove("node hint");
+	}
+
+	/**
+	 * Forget the pod hint. Reconnects only if asked — leaving a party is not a reason to move, since any node
+	 * serves the board equally well and the next party will send us wherever it lives anyway.
+	 *
+	 * @param reconnect whether to go somewhere else now, as when the node we are pinned to is going away
+	 */
+	public synchronized void clearNodeHint(boolean reconnect)
+	{
+		if (nodeHint == null && !reconnect)
+		{
+			return;
+		}
+		nodeHint = null;
+		if (reconnect)
+		{
+			reconnectForMove("owner changed");
+		}
+	}
+
+	/** The pod this connection is pinned to, or null if it is free to land anywhere. */
+	public String nodeHint()
+	{
+		return nodeHint;
+	}
+
+	private void reconnectForMove(String reason)
+	{
+		attempt = 0;
+		WebSocket socket = webSocket;
+		if (socket != null)
+		{
+			// onClosed schedules the reconnect, which picks up the new URL.
+			socket.close(1000, reason);
+		}
+		else if (started && !closed)
+		{
+			connect();
+		}
+	}
+
+	/** Send one live-party frame. Silently dropped while disconnected, as the live socket always was. */
+	public void sendLive(String json)
+	{
+		if (connected)
+		{
+			sendTagged(Mux.LIVE, json);
+		}
 	}
 
 	// --- Search read ---
@@ -528,18 +661,80 @@ public class PartySocket extends WebSocketListener
 		{
 			send(gson.toJson(new IdentifyFrame(identityHash, identityName)));
 		}
+		// Last, and only if a party is in progress: the live half re-announces itself over the same
+		// connection. The server holds no durable live state, so a reconnect is how a room is rebuilt.
+		LiveChannel channel = live;
+		if (channel != null)
+		{
+			fireLiveOpen(channel);
+		}
+	}
+
+	private void fireLiveOpen(LiveChannel channel)
+	{
+		try
+		{
+			channel.onLiveOpen();
+		}
+		catch (Exception e)
+		{
+			log.debug("Live re-announce failed: {}", e.toString());
+		}
 	}
 
 	/**
-	 * A gzipped frame — the snapshot and the batches, which are the only ones big enough to be worth
-	 * compressing and the only ones the server shares between clients. Everything else stays text.
+	 * Every frame the server sends: the channel tag, then either JSON or a gzip stream of it.
+	 *
+	 * <p>The board's snapshot and batches are compressed — they are the only frames big enough to be worth it
+	 * and the only ones the server shares between clients, so it deflates each one once for everybody — while
+	 * small directed replies are not. Which is which is read off the gzip magic rather than announced, since
+	 * the alternative is a second flag saying what the first two bytes already say.
 	 */
 	@Override
 	public void onMessage(WebSocket socket, okio.ByteString bytes)
 	{
-		String text;
+		if (bytes.size() < 2)
+		{
+			return;
+		}
+		byte tag = bytes.getByte(0);
+		byte[] payload = bytes.substring(1).toByteArray();
+		// gzip magic. The board compresses its shared frames; nothing else does.
+		if (payload.length > 1 && payload[0] == (byte) 0x1f && payload[1] == (byte) 0x8b)
+		{
+			payload = inflate(payload);
+			if (payload == null)
+			{
+				return;
+			}
+		}
+		String text = new String(payload, java.nio.charset.StandardCharsets.UTF_8);
+		if (tag == Mux.LIVE)
+		{
+			LiveChannel channel = live;
+			if (channel != null)
+			{
+				try
+				{
+					channel.onLiveFrame(text);
+				}
+				catch (Exception e)
+				{
+					log.debug("Live frame handling failed: {}", e.toString());
+				}
+			}
+			return;
+		}
+		if (tag == Mux.BOARD)
+		{
+			onMessage(socket, text);
+		}
+	}
+
+	private static byte[] inflate(byte[] compressed)
+	{
 		try (java.util.zip.GZIPInputStream in = new java.util.zip.GZIPInputStream(
-			new java.io.ByteArrayInputStream(bytes.toByteArray()));
+			new java.io.ByteArrayInputStream(compressed));
 			java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream())
 		{
 			byte[] buffer = new byte[8192];
@@ -547,14 +742,13 @@ public class PartySocket extends WebSocketListener
 			{
 				out.write(buffer, 0, read);
 			}
-			text = new String(out.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+			return out.toByteArray();
 		}
 		catch (Exception e)
 		{
 			log.debug("Failed to inflate a compressed frame: {}", e.toString());
-			return;
+			return null;
 		}
-		onMessage(socket, text);
 	}
 
 	@Override
@@ -667,6 +861,7 @@ public class PartySocket extends WebSocketListener
 	public void onClosed(WebSocket socket, int code, String reason)
 	{
 		connected = false;
+		fireLiveClosed();
 		scheduleReconnect();
 	}
 
@@ -684,7 +879,25 @@ public class PartySocket extends WebSocketListener
 		{
 			log.debug("Party socket failed ({}); will retry", t.toString());
 		}
+		fireLiveClosed();
 		scheduleReconnect();
+	}
+
+	private void fireLiveClosed()
+	{
+		LiveChannel channel = live;
+		if (channel == null)
+		{
+			return;
+		}
+		try
+		{
+			channel.onLiveClosed();
+		}
+		catch (Exception e)
+		{
+			log.debug("Live close handling failed: {}", e.toString());
+		}
 	}
 
 	/** Apply a {@code batch} frame's created/updated/removed changes under one lock, then a single re-emit. */
@@ -1006,11 +1219,22 @@ public class PartySocket extends WebSocketListener
 
 	private void send(String json)
 	{
+		sendTagged(Mux.BOARD, json);
+	}
+
+	/** One frame on one channel: the tag byte, then UTF-8 JSON, as a binary message. */
+	private void sendTagged(byte tag, String json)
+	{
 		WebSocket socket = webSocket;
-		if (socket != null)
+		if (socket == null)
 		{
-			socket.send(json);
+			return;
 		}
+		byte[] payload = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+		byte[] framed = new byte[payload.length + 1];
+		framed[0] = tag;
+		System.arraycopy(payload, 0, framed, 1, payload.length);
+		socket.send(okio.ByteString.of(framed));
 	}
 
 	/**
