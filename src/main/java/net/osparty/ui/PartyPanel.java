@@ -20,6 +20,7 @@ import net.osparty.party.LiveParty.RosterMember;
 import net.osparty.party.LiveParty.Status;
 import net.osparty.party.PlayerUpdate;
 import net.osparty.model.RuneWatchCase;
+import net.osparty.util.DiscordLink;
 import net.osparty.service.RuneWatchService;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -81,7 +82,6 @@ import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
 import net.runelite.client.util.AsyncBufferedImage;
 import net.runelite.client.util.ImageUtil;
-import net.runelite.client.util.LinkBrowser;
 
 /** "Party" tab: the live party the player is in; roster/gear/stats come from {@link LiveParty}. */
 @lombok.extern.slf4j.Slf4j
@@ -2302,12 +2302,12 @@ class PartyPanel extends JPanel
 		long accountHash = accountHashSupplier != null ? accountHashSupplier.getAsLong() : 0;
 		if (accountHash == 0 || accountHash == -1 || party == null)
 		{
-			LinkBrowser.browse(url);
+			DiscordLink.open(url);
 			return;
 		}
 		partyService.requestVoiceAccess(party.getId(), accountHash,
-			() -> SwingUtilities.invokeLater(() -> LinkBrowser.browse(url)),
-			err -> SwingUtilities.invokeLater(() -> LinkBrowser.browse(url)));
+			() -> SwingUtilities.invokeLater(() -> DiscordLink.open(url)),
+			err -> SwingUtilities.invokeLater(() -> DiscordLink.open(url)));
 	}
 
 	/** The "authorize first" button shown in place of create/join when the local account isn't linked. */
