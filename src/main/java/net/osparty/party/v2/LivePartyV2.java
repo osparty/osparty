@@ -591,7 +591,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		if (vitalsChanged()) {
 			vitalsDirty = true;
 		}
-		if (vitalsDirty || itemsDirty || profileDirty) {
+		if ((vitalsDirty || itemsDirty || profileDirty) && dueThisTick()) {
 			sendLocalState();
 		}
 		// After the state send, so an active party never pays for this: anything we just sent already
@@ -599,6 +599,28 @@ public class LivePartyV2 implements LivePartyBackend {
 		if (System.currentTimeMillis() - lastSentAt >= HEARTBEAT_MS) {
 			send(new HeartbeatFrame());
 		}
+	}
+
+	/**
+	 * Whether a non-urgent update may go out this tick.
+	 *
+	 * <p>One member's tick owes a frame to every other member, so what a party costs the server grows with
+	 * the square of its size. Past six members that is worth spending a little staleness on: an eight-man
+	 * sends every second tick, a twelve-man every sixth. Borrowed from RuneLite's own party plugin, which
+	 * has no server-side aggregation and so has always had to do this in the client.
+	 *
+	 * <p>Aggregation on our side batches the fan-out but cannot remove the inbound frame; this can, which
+	 * is why both are worth having. Anything urgent — damage taken, prayer drained, a spec spent — ignores
+	 * this entirely, so nothing anyone reacts to is ever delayed by it.
+	 */
+	private boolean dueThisTick() {
+		if (itemsDirty || profileDirty || vitalsDropped()) {
+			// Items and profile are rare by construction; holding them back saves nothing worth having.
+			return true;
+		}
+		int members = rosterEntries.size();
+		int every = Math.max(1, members - 6);
+		return every == 1 || client.getTickCount() % every == 0;
 	}
 
 	/** Every outbound frame goes through here, so the heartbeat knows when it has nothing to add. */
@@ -637,6 +659,19 @@ public class LivePartyV2 implements LivePartyBackend {
 			|| client.getBoostedSkillLevel(Skill.PRAYER) != sentPrayer
 			|| client.getVarpValue(300) / 10 != sentSpec
 			|| runEnergy() != sentRunEnergy;
+	}
+
+	/**
+	 * Whether a vital has moved down since the last send, without disturbing anything.
+	 *
+	 * <p>Read before deciding whether a tick may be skipped, which is why it cannot be the flag
+	 * {@link #vitals()} sets — that one is a record of the frame being built, and by then the decision has
+	 * been made.
+	 */
+	private boolean vitalsDropped() {
+		return client.getBoostedSkillLevel(Skill.HITPOINTS) < sentHp
+			|| client.getBoostedSkillLevel(Skill.PRAYER) < sentPrayer
+			|| client.getVarpValue(300) / 10 < sentSpec;
 	}
 
 	/** Run energy as reported: rounded to {@link #RUN_ENERGY_STEP}, with empty and full kept exact. */
