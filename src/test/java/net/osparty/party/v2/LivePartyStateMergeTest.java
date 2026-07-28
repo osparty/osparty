@@ -116,6 +116,55 @@ public class LivePartyStateMergeTest
 	}
 
 	/**
+	 * An items frame carries the slots that moved, not the inventory. The merge has to accumulate them, or a
+	 * peer would end up holding only the last thing that changed and nothing else.
+	 */
+	@Test
+	public void slotPatchesAccumulateInsteadOfReplacing()
+	{
+		JsonObject held = new JsonObject();
+		JsonObject baseline = new JsonObject();
+		baseline.addProperty("0", 385);
+		baseline.addProperty("1", 2434);
+		held.add("iv", baseline);
+
+		JsonObject patch = new JsonObject();
+		JsonObject moved = new JsonObject();
+		// One slot emptied, one filled. Everything else must survive untouched.
+		moved.addProperty("1", -1);
+		moved.addProperty("5", 12695);
+		patch.add("iv", moved);
+
+		PlayerUpdate merged = gson.fromJson(LivePartyV2.merge(held, patch), PlayerUpdate.class);
+
+		assertEquals(385, merged.getInventory()[0]);
+		assertEquals(-1, merged.getInventory()[1]);
+		assertEquals(12695, merged.getInventory()[5]);
+		// Padded to the full inventory, so a caller can index by slot without checking.
+		assertEquals(28, merged.getInventory().length);
+	}
+
+	/** A slot nobody has mentioned is empty, and an unmentioned quantity is a single item. */
+	@Test
+	public void unmentionedSlotsTakeTheirDefault()
+	{
+		JsonObject state = new JsonObject();
+		JsonObject inventory = new JsonObject();
+		inventory.addProperty("2", 385);
+		state.add("iv", inventory);
+		JsonObject quantities = new JsonObject();
+		quantities.addProperty("2", 40);
+		state.add("iq", quantities);
+
+		PlayerUpdate read = gson.fromJson(state, PlayerUpdate.class);
+
+		assertEquals(385, read.getInventory()[2]);
+		assertEquals(-1, read.getInventory()[0]);
+		assertEquals(40, read.getInventoryQuantities()[2]);
+		assertEquals(1, read.getInventoryQuantities()[0]);
+	}
+
+	/**
 	 * The three frame kinds must not overlap. If a field rode in two of them, which value a receiver ends up
 	 * with would depend on the order the frames happened to arrive.
 	 */

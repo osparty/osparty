@@ -37,14 +37,17 @@ public class PlayerUpdate extends PartyMemberMessage
 
 	/** In {@link net.osparty.model.Applicant.EquipmentSlot} order; {@code <= 0} = empty. */
 	@SerializedName(value = "eq", alternate = "equipment")
+	@com.google.gson.annotations.JsonAdapter(SlotMap.Equipment.class)
 	private int[] equipment;
 
 	/** 28 ids in slot order; {@code <= 0} = empty. */
 	@SerializedName(value = "iv", alternate = "inventory")
+	@com.google.gson.annotations.JsonAdapter(SlotMap.Inventory.class)
 	private int[] inventory;
 
 	/** Stack size for each inventory slot, parallel to {@link #inventory}; {@code 0} when empty/unknown. */
 	@SerializedName(value = "iq", alternate = "inventoryQuantities")
+	@com.google.gson.annotations.JsonAdapter(SlotMap.Quantities.class)
 	private int[] inventoryQuantities;
 
 	/** Resolved rune item ids inside the carried rune pouch; {@code null} when none is carried. */

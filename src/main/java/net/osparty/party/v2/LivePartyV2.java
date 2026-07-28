@@ -59,6 +59,20 @@ public class LivePartyV2 implements LivePartyBackend {
 	 */
 	private static final int RUN_ENERGY_STEP = 5;
 
+	/**
+	 * The item fields sent slot by slot rather than whole. An items frame used to carry all 28 inventory
+	 * slots, all 28 quantities and all 14 worn slots whenever any one of them moved — some 570 bytes to say
+	 * a shark was eaten. These three go out as an object of the slots that changed, which peers accumulate
+	 * (see {@link #merge}); the rune pouch keeps its array, being three entries at most and rarely touched.
+	 */
+	private static final java.util.Set<String> SLOT_FIELDS = java.util.Set.of("iv", "iq", "eq");
+	/**
+	 * What a slot holds when the frame does not mention it, matching {@link net.osparty.party.SlotMap}: an
+	 * empty inventory or equipment slot, and a stack of one — which is what an ordinary non-stackable item
+	 * has, and so the single most common value on the wire.
+	 */
+	private static final Map<String, Integer> SLOT_ABSENT = Map.of("iv", -1, "iq", 1, "eq", -1);
+
 	/** Fields carried by an {@code items} frame — everything gated by the two privacy toggles. */
 	static final String[] ITEM_FIELDS = {
 		"eq", "iv", "iq", "rp", "ra", "rn", "hi", "hg",
@@ -485,6 +499,19 @@ public class LivePartyV2 implements LivePartyBackend {
 		}
 		JsonObject merged = base.deepCopy();
 		for (Map.Entry<String, JsonElement> field : patch.entrySet()) {
+			JsonElement held = merged.get(field.getKey());
+			// The slot maps are the one place a patch describes part of a field rather than all of it: an
+			// items frame carries the inventory slots that moved, not the inventory. Everything else is
+			// whole, so replacing is right for it and merging would leave stale keys behind forever.
+			if (SLOT_FIELDS.contains(field.getKey())
+				&& held != null && held.isJsonObject() && field.getValue().isJsonObject()) {
+				JsonObject slots = held.getAsJsonObject().deepCopy();
+				for (Map.Entry<String, JsonElement> slot : field.getValue().getAsJsonObject().entrySet()) {
+					slots.add(slot.getKey(), slot.getValue());
+				}
+				merged.add(field.getKey(), slots);
+				continue;
+			}
 			merged.add(field.getKey(), field.getValue());
 		}
 		return merged;
@@ -685,10 +712,17 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	/** Everything must go: a (re)connect, a fresh party, or a peer asking us to say it all again. */
+	/**
+	 * Everything has to go out again, and whole. Every caller is a moment where somebody holds nothing of
+	 * ours — a fresh party, a reconnect, or a resync for a member who has just been seated — so the slot
+	 * baseline goes with the flags: sending them a difference against a picture they never received would
+	 * leave them looking at an inventory made of gaps.
+	 */
 	private void markAllDirty() {
 		vitalsDirty = true;
 		itemsDirty = true;
 		profileDirty = true;
+		sentSlots.clear();
 	}
 
 	@Override
@@ -747,7 +781,9 @@ public class LivePartyV2 implements LivePartyBackend {
 			urgent = vitalsUrgent;
 		}
 		if (itemsDirty) {
-			addAll(update, project(full, ITEM_FIELDS));
+			JsonObject items = project(full, ITEM_FIELDS);
+			sparsify(items);
+			addAll(update, items);
 		}
 		if (profileDirty) {
 			addAll(update, project(full, PROFILE_FIELDS));
@@ -763,6 +799,53 @@ public class LivePartyV2 implements LivePartyBackend {
 		profileDirty = false;
 		fire();
 	}
+
+	/**
+	 * Rewrite the whole-array item fields as the slots that actually moved.
+	 *
+	 * <p>An items frame is sent because one thing changed — a shark eaten, a brew sipped — and used to carry
+	 * every slot of all three arrays to say so. Peers merge these fields slot by slot ({@link #merge}), so
+	 * only the difference has to travel.
+	 *
+	 * <p>A slot that changed <em>to</em> its absent value is still named: absent means the default only until
+	 * a value has been seen, after which the peer holds the old one and has to be told it is gone. Without a
+	 * baseline — the first send of a party, and the first after a resync — everything is named except the
+	 * slots already at their default, which is the same picture written the short way.
+	 */
+	private void sparsify(JsonObject items) {
+		for (String field : SLOT_FIELDS) {
+			JsonElement value = items.get(field);
+			if (value == null || !value.isJsonArray()) {
+				// Withheld by a privacy toggle, or already sparse. Either way there is nothing to compare.
+				sentSlots.remove(field);
+				continue;
+			}
+			com.google.gson.JsonArray array = value.getAsJsonArray();
+			int[] current = new int[array.size()];
+			for (int i = 0; i < current.length; i++) {
+				current[i] = array.get(i).getAsInt();
+			}
+			int[] previous = sentSlots.put(field, current);
+			int absent = SLOT_ABSENT.get(field);
+			JsonObject changed = new JsonObject();
+			for (int i = 0; i < current.length; i++) {
+				boolean send = previous == null || previous.length != current.length
+					? current[i] != absent
+					: current[i] != previous[i];
+				if (send) {
+					changed.addProperty(Integer.toString(i), current[i]);
+				}
+			}
+			items.add(field, changed);
+		}
+	}
+
+	/**
+	 * Everything we have to compare against to send only what moved. Cleared whenever the next frame has to
+	 * carry the whole picture: a reconnect, or a resync for somebody who has just been seated and holds
+	 * nothing of ours.
+	 */
+	private final Map<String, int[]> sentSlots = new java.util.concurrent.ConcurrentHashMap<>();
 
 	/** Copy every field of {@code src} onto {@code target}, overwriting. */
 	private static void addAll(JsonObject target, JsonObject src) {
