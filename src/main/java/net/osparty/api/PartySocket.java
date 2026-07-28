@@ -134,6 +134,8 @@ public class PartySocket extends WebSocketListener
 	private volatile String hostingKey;
 	private volatile HostPending pendingHost;
 	private volatile String lastSentPatch;
+	/** The node last stamped onto our own advertisement, so the stamp is sent once rather than per update. */
+	private volatile String publishedNode;
 
 	@Inject
 	PartySocket(OkHttpClient httpClient, Gson gson)
@@ -199,6 +201,7 @@ public class PartySocket extends WebSocketListener
 		// A hint outlives nothing: the party it belonged to is over, and a restart should be placed on its
 		// own merits rather than inheriting where the last session happened to end up.
 		nodeHint = null;
+		publishedNode = null;
 		live = null;
 		if (reconnects != null)
 		{
@@ -314,6 +317,27 @@ public class PartySocket extends WebSocketListener
 		else if (started && !closed)
 		{
 			connect();
+		}
+	}
+
+	/**
+	 * Tell the board which pod our live room is on, so joiners can reach it without a redirect.
+	 *
+	 * <p>Only meaningful while hosting, and sent as an ordinary ad patch — one small frame, once, when the
+	 * room is placed or moves. The server cannot work this out for itself: a host on an older plugin holds
+	 * two sockets whose pods need not agree, so the node is ours to report.
+	 */
+	public void publishLiveNode(String node)
+	{
+		if (node == null || node.isEmpty() || node.equals(publishedNode))
+		{
+			return;
+		}
+		publishedNode = node;
+		String id = hostingId;
+		if (id != null && connected)
+		{
+			send(gson.toJson(new UpdateFrame(id, hostingKey, java.util.Map.of("node", node))));
 		}
 	}
 

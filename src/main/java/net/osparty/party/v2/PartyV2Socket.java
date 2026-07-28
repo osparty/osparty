@@ -112,6 +112,16 @@ public class PartyV2Socket implements PartySocket.LiveChannel {
 		}
 	}
 
+	/** Move the shared connection to the pod an advertisement named, before we try to join its room. */
+	public void hintNode(String node) {
+		connection.moveTo(node);
+	}
+
+	/** Stamp the pod our room was placed on onto our own advertisement, so joiners arrive there directly. */
+	public void publishNode(String node) {
+		connection.publishLiveNode(node);
+	}
+
 	/** Whether live frames can reach the server right now. */
 	public boolean isConnected() {
 		return started && connection.isConnected();

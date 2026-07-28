@@ -46,6 +46,11 @@ public class Party
 	private int minKillCount;
 	private int minHardModeKillCount;
 	private boolean privateParty;
+	/**
+	 * The pod the host's live room is on, reported by the host. Null on an ad from a plugin that predates
+	 * it, in which case joining costs a redirect exactly as it always did.
+	 */
+	private String node;
 	private String inviteCode;
 	private String lootRule;
 	private boolean ironmanOnly;

@@ -46,6 +46,16 @@ public interface LivePartyBackend
 	void hostParty(String passphrase, String hostName, String activityId, int capacity,
 		boolean locked, String role, boolean learner, boolean teacher);
 
+	/**
+	 * Where the party we are about to join keeps its live room, if the advertisement said.
+	 *
+	 * <p>Called before {@link #joinParty}, so the connection can move to that pod first rather than landing
+	 * anywhere and being redirected off it. A default no-op: only the V2 backend is node-affine, and an
+	 * advertisement that does not name a node simply leaves this unsaid.
+	 */
+	default void hintLiveNode(String node) {
+	}
+
 	void joinParty(String passphrase, String activityId, int teamSize, String role, boolean learner);
 
 	void joinParty(String passphrase, String activityId, int teamSize, String role, boolean learner,

@@ -510,6 +510,9 @@ abstract class PartyCardPanel extends JPanel
 			updateAllButtons();
 			return;
 		}
+		// Before joining, not after: the room lives on one pod, and moving the connection there first turns
+		// a redirect-and-reconnect into an ordinary join. Silently skipped when the ad does not say.
+		liveParty.hintLiveNode(party.getNode());
 		liveParty.joinParty(passphrase, party.getActivity(), party.getCapacity(), role, learner, invited);
 		partyState.setMember(party);
 		String roleSuffix = role != null ? " as " + Role.displayNameOf(role) : "";

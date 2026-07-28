@@ -234,6 +234,13 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	@Override
+	public void hintLiveNode(String node) {
+		if (node != null && !node.isEmpty()) {
+			socket.hintNode(node);
+		}
+	}
+
+	@Override
 	public void addListener(Runnable listener) {
 		listeners.add(listener);
 	}
@@ -365,6 +372,11 @@ public class LivePartyV2 implements LivePartyBackend {
 			case "welcome":
 				localMemberId = frame.memberId == null ? 0 : frame.memberId;
 				localStatus = parseStatus(frame.status);
+				// Where our room ended up. A host puts it on its advertisement so joiners reach this pod
+				// directly instead of landing anywhere and being redirected off it.
+				if (mode == Mode.HOST && frame.nodeId != null) {
+					socket.publishNode(frame.nodeId);
+				}
 				fire();
 				break;
 			case "roster":
