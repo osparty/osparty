@@ -63,6 +63,12 @@ public class PartySocket extends WebSocketListener
 	private final List<Consumer<List<Party>>> searchListeners = new CopyOnWriteArrayList<>();
 	// Activity to scope the live list to (null = all). Kept across reconnects so onOpen re-sends it.
 	private volatile String subscribeActivity;
+	/**
+	 * The highest board revision applied. Offered back on the next subscribe so a reconnect costs the
+	 * handful of advertisements that moved rather than all of them — which matters most exactly when it
+	 * hurts most, during a deploy, when every client reconnects at once.
+	 */
+	private volatile long boardSeq;
 	// One-shot lookups awaiting a directed byCode/byHost reply, keyed by the echoed code/host.
 	private final Map<String, Consumer<Party>> pendingByCode = new ConcurrentHashMap<>();
 	private final Map<String, Consumer<Party>> pendingByHost = new ConcurrentHashMap<>();
@@ -575,6 +581,8 @@ public class PartySocket extends WebSocketListener
 					parties.clear();
 					putAll(frame.parties);
 				}
+				// A snapshot means the server declined to resume us, so this is the new baseline.
+				boardSeq = frame.seq == null ? 0 : frame.seq;
 				emitSearch();
 				break;
 			case "created":
@@ -600,6 +608,10 @@ public class PartySocket extends WebSocketListener
 				break;
 			case "batch":
 				applyBatch(frame);
+				if (frame.seq != null && frame.seq > boardSeq)
+				{
+					boardSeq = frame.seq;
+				}
 				break;
 			case "hosted":
 				handleHosted(frame.party);
@@ -1020,6 +1032,13 @@ public class PartySocket extends WebSocketListener
 			frame.put("activity", activity);
 		}
 		frame.put("compress", true);
+		long since = boardSeq;
+		if (since > 0)
+		{
+			// We still hold the board, so ask only for the difference. The server answers with a batch if it
+			// can still work out what we missed, and with a whole board if we have been away too long.
+			frame.put("since", since);
+		}
 		return gson.toJson(frame);
 	}
 
@@ -1051,6 +1070,8 @@ public class PartySocket extends WebSocketListener
 		String type;
 		long version;
 		Party[] parties;
+		// Board revision this frame is current to; absent from a server that predates resume.
+		Long seq;
 		Party party;
 		String id;
 		String detail;
