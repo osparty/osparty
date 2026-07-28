@@ -25,7 +25,7 @@ public class LivePartyStateMergeTest
 	{
 		JsonObject full = gson.toJsonTree(snapshot()).getAsJsonObject();
 		JsonObject vitals = new JsonObject();
-		vitals.addProperty("currentHp", 31);
+		vitals.addProperty("hp", 31);
 
 		PlayerUpdate merged = gson.fromJson(LivePartyV2.merge(full, vitals), PlayerUpdate.class);
 
@@ -41,7 +41,7 @@ public class LivePartyStateMergeTest
 	public void patchWithNoPriorStateIsTheWholePicture()
 	{
 		JsonObject vitals = new JsonObject();
-		vitals.addProperty("currentHp", 12);
+		vitals.addProperty("hp", 12);
 
 		PlayerUpdate merged = gson.fromJson(LivePartyV2.merge(null, vitals), PlayerUpdate.class);
 
@@ -54,12 +54,12 @@ public class LivePartyStateMergeTest
 	{
 		JsonObject base = gson.toJsonTree(snapshot()).getAsJsonObject();
 		JsonObject patch = new JsonObject();
-		patch.addProperty("world", 420);
+		patch.addProperty("wd", 420);
 
 		LivePartyV2.merge(base, patch);
 
-		assertEquals(301, base.get("world").getAsInt());
-		assertFalse(patch.has("name"));
+		assertEquals(301, base.get("wd").getAsInt());
+		assertFalse(patch.has("n"));
 	}
 
 	/**
@@ -130,7 +130,7 @@ public class LivePartyStateMergeTest
 			}
 		}
 		// The vitals frame is built by hand rather than projected, so check it against both lists.
-		for (String vital : new String[]{"currentHp", "currentPrayer", "specialPercent", "runEnergy"})
+		for (String vital : new String[]{"hp", "pr", "sp", "re"})
 		{
 			for (String other : LivePartyV2.ITEM_FIELDS)
 			{
@@ -149,15 +149,15 @@ public class LivePartyStateMergeTest
 		JsonObject full = gson.toJsonTree(snapshot()).getAsJsonObject();
 
 		JsonObject items = LivePartyV2.project(full, LivePartyV2.ITEM_FIELDS);
-		assertTrue(items.has("inventory"));
-		assertTrue(items.has("equipment"));
-		assertFalse(items.has("stats"));
-		assertFalse(items.has("currentHp"));
+		assertTrue(items.has("iv"));
+		assertTrue(items.has("eq"));
+		assertFalse(items.has("sk"));
+		assertFalse(items.has("hp"));
 
 		JsonObject profile = LivePartyV2.project(full, LivePartyV2.PROFILE_FIELDS);
-		assertTrue(profile.has("name"));
-		assertTrue(profile.has("world"));
-		assertFalse(profile.has("inventory"));
+		assertTrue(profile.has("n"));
+		assertTrue(profile.has("wd"));
+		assertFalse(profile.has("iv"));
 	}
 
 	/** A projection of nothing is empty rather than a crash — a snapshot can be null before login. */

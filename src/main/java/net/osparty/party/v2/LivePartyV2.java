@@ -60,8 +60,7 @@ public class LivePartyV2 implements LivePartyBackend {
 
 	/** Fields carried by an {@code items} frame — everything gated by the two privacy toggles. */
 	static final String[] ITEM_FIELDS = {
-		"equipment", "inventory", "inventoryQuantities", "runePouch", "runePouchAmounts", "runePouchNames",
-		"hideInventory", "hideGear",
+		"eq", "iv", "iq", "rp", "ra", "rn", "hi", "hg",
 	};
 
 	/**
@@ -69,8 +68,9 @@ public class LivePartyV2 implements LivePartyBackend {
 	 * on login, a world hop, a level-up or a deliberate act — never on a tick.
 	 */
 	static final String[] PROFILE_FIELDS = {
-		"name", "accountHash", "combatLevel", "maxHp", "maxPrayer", "spellbook", "stats", "accountType",
-		"world", "friendsChatOwner", "pbSeconds", "role", "learner", "teacher", "invited", "memberId",
+		"n", "ah", "cl", "mh", "mp", "sb", "sk", "at", "wd", "fc", "pb", "ro", "ln", "te", "in",
+		// memberId is inherited from RuneLite's PartyMemberMessage, so it keeps its name.
+		"memberId",
 	};
 	/**
 	 * How often to prove we are still here when we have nothing else to say. Well inside
@@ -784,11 +784,13 @@ public class LivePartyV2 implements LivePartyBackend {
 		sentPrayer = prayer;
 		sentSpec = spec;
 		sentRunEnergy = runEnergy();
+		// Short keys, matching PlayerUpdate's @SerializedName: this frame is four small integers and was
+		// mostly the words describing them.
 		JsonObject out = new JsonObject();
-		out.addProperty("currentHp", sentHp);
-		out.addProperty("currentPrayer", sentPrayer);
-		out.addProperty("specialPercent", sentSpec);
-		out.addProperty("runEnergy", sentRunEnergy);
+		out.addProperty("hp", sentHp);
+		out.addProperty("pr", sentPrayer);
+		out.addProperty("sp", sentSpec);
+		out.addProperty("re", sentRunEnergy);
 		if (localMemberId != 0) {
 			JsonObject merged = merge(rawState.get(localMemberId), out);
 			rawState.put(localMemberId, merged);
@@ -837,8 +839,8 @@ public class LivePartyV2 implements LivePartyBackend {
 			return;
 		}
 		JsonObject offline = new JsonObject();
-		offline.addProperty("name", name);
-		offline.addProperty("world", 0);
+		offline.addProperty("n", name);
+		offline.addProperty("wd", 0);
 		offline.addProperty("memberId", localMemberId);
 		JsonObject merged = merge(rawState.get(localMemberId), offline);
 		rawState.put(localMemberId, merged);
