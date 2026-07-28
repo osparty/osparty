@@ -1604,9 +1604,17 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Provides
 	@javax.inject.Singleton
 	LivePartyBackend provideLivePartyBackend(RuneLiteLivePartyBackend runeLite,
-		net.osparty.party.v2.LivePartyV2 v2)
+		net.osparty.party.v2.LivePartyV2 v2,
+		net.osparty.api.ServerCapabilities capabilities)
 	{
-		// V2: drop this branch (and the RuneLite backend) once V2 is the default at P6.
-		return Boolean.getBoolean("osparty.partyV2") ? v2 : runeLite;
+		// Ask the server before choosing, so one plugin release works against a deployment that serves the
+		// live party and against one that does not. A forced -Dosparty.partyV2=true still wins, for testing
+		// against something the probe cannot see.
+		capabilities.probe();
+		boolean useV2 = Boolean.getBoolean("osparty.partyV2")
+			|| (capabilities.partyV2() && capabilities.mergedSocket());
+		// Once, at startup, and never again: this seam is injected across the UI, and swapping it under a
+		// party in progress would leave half the plugin talking to a backend the other half had left.
+		return useV2 ? v2 : runeLite;
 	}
 }

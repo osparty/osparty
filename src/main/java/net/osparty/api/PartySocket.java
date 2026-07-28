@@ -47,10 +47,18 @@ public class PartySocket extends WebSocketListener
 {
 	private static final long MIN_BACKOFF_MS = 1_000;
 	private static final long MAX_BACKOFF_MS = 30_000;
+	/**
+	 * Refused upgrades on the merged endpoint before giving up on it for the session. More than one, so a
+	 * single pod mid-deploy does not move a client off it for good.
+	 */
+	private static final int MERGED_FAILURES_BEFORE_FALLBACK = 3;
 
 	private final OkHttpClient client;
 	private final Gson gson;
 	private final HttpUrl base;
+	private final ServerCapabilities capabilities;
+	/** Consecutive failures on the merged endpoint, so a server that stopped serving it is noticed. */
+	private int mergedFailures;
 
 	/**
 	 * The pod the live party wants this connection on, or null for "anywhere".
@@ -138,8 +146,9 @@ public class PartySocket extends WebSocketListener
 	private volatile String publishedNode;
 
 	@Inject
-	PartySocket(OkHttpClient httpClient, Gson gson)
+	PartySocket(OkHttpClient httpClient, Gson gson, ServerCapabilities capabilities)
 	{
+		this.capabilities = capabilities;
 		// A WebSocket must not inherit the REST read timeout; the ping keeps it alive.
 		this.client = httpClient.newBuilder()
 			.pingInterval(Duration.ofSeconds(20))
@@ -164,6 +173,15 @@ public class PartySocket extends WebSocketListener
 	private String currentUrl()
 	{
 		HttpUrl.Builder builder = base.newBuilder();
+		if (!merged())
+		{
+			// The endpoint every version of this service has served. No node hint on it: it carries
+			// discovery alone, and discovery is the same on every pod.
+			return builder
+				.addPathSegment("api").addPathSegment("v1")
+				.addPathSegment("ws").addPathSegment("parties")
+				.build().toString();
+		}
 		String hint = nodeHint;
 		if (hint != null && !hint.isEmpty())
 		{
@@ -172,6 +190,12 @@ public class PartySocket extends WebSocketListener
 		return builder
 			.addPathSegment("api").addPathSegment("ws")
 			.build().toString();
+	}
+
+	/** Whether this connection carries both protocols, which decides both the endpoint and the framing. */
+	private boolean merged()
+	{
+		return capabilities.mergedSocket();
 	}
 
 	/** Open the connection (once). Called when the plugin starts. */
@@ -344,7 +368,9 @@ public class PartySocket extends WebSocketListener
 	/** Send one live-party frame. Silently dropped while disconnected, as the live socket always was. */
 	public void sendLive(String json)
 	{
-		if (connected)
+		// Nowhere to put it on a legacy connection: that endpoint carries discovery only, and a live party
+		// there runs over RuneLite's relay instead. LivePartyV2 is never the backend in that case.
+		if (connected && merged())
 		{
 			sendTagged(Mux.LIVE, json);
 		}
@@ -672,6 +698,7 @@ public class PartySocket extends WebSocketListener
 	{
 		connected = true;
 		attempt = 0;
+		mergedFailures = 0;
 		if (!searchListeners.isEmpty())
 		{
 			send(subscribeFrame());
@@ -717,12 +744,22 @@ public class PartySocket extends WebSocketListener
 	@Override
 	public void onMessage(WebSocket socket, okio.ByteString bytes)
 	{
-		if (bytes.size() < 2)
+		byte tag = Mux.BOARD;
+		byte[] payload;
+		if (merged())
 		{
-			return;
+			if (bytes.size() < 2)
+			{
+				return;
+			}
+			tag = bytes.getByte(0);
+			payload = bytes.substring(1).toByteArray();
 		}
-		byte tag = bytes.getByte(0);
-		byte[] payload = bytes.substring(1).toByteArray();
+		else
+		{
+			// The legacy endpoint sends binary for one reason only: a gzipped board frame.
+			payload = bytes.toByteArray();
+		}
 		// gzip magic. The board compresses its shared frames; nothing else does.
 		if (payload.length > 1 && payload[0] == (byte) 0x1f && payload[1] == (byte) 0x8b)
 		{
@@ -903,8 +940,36 @@ public class PartySocket extends WebSocketListener
 		{
 			log.debug("Party socket failed ({}); will retry", t.toString());
 		}
+		noteMergedFailure(response);
 		fireLiveClosed();
 		scheduleReconnect();
+	}
+
+	/**
+	 * Notice a merged endpoint that has stopped existing.
+	 *
+	 * <p>The capability was true when we asked, but a server can turn the live party off underneath a
+	 * running client — a rollback, or a node that came back on the old configuration. Without this the
+	 * client would keep dialling a path that now answers 404 until the user restarted, so a rollback would
+	 * strand precisely the people who had updated. A refused upgrade is what that looks like: the server
+	 * answered, it just does not know the path.
+	 */
+	private void noteMergedFailure(Response response)
+	{
+		if (closed || !merged())
+		{
+			return;
+		}
+		if (response == null)
+		{
+			// No answer at all is a network problem, not a server that dropped the endpoint.
+			return;
+		}
+		if (++mergedFailures >= MERGED_FAILURES_BEFORE_FALLBACK)
+		{
+			capabilities.fallBackToLegacy();
+			mergedFailures = 0;
+		}
 	}
 
 	private void fireLiveClosed()
@@ -1246,12 +1311,22 @@ public class PartySocket extends WebSocketListener
 		sendTagged(Mux.BOARD, json);
 	}
 
-	/** One frame on one channel: the tag byte, then UTF-8 JSON, as a binary message. */
+	/**
+	 * One frame on one channel: the tag byte, then UTF-8 JSON, as a binary message.
+	 *
+	 * <p>On a connection that is not merged there is no other channel to distinguish, and the endpoint
+	 * predates the tag entirely — so the frame goes out as the text the server has always read.
+	 */
 	private void sendTagged(byte tag, String json)
 	{
 		WebSocket socket = webSocket;
 		if (socket == null)
 		{
+			return;
+		}
+		if (!merged())
+		{
+			socket.send(json);
 			return;
 		}
 		byte[] payload = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
