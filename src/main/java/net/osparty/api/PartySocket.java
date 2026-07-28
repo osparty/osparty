@@ -524,6 +524,33 @@ public class PartySocket extends WebSocketListener
 		}
 	}
 
+	/**
+	 * A gzipped frame — the snapshot and the batches, which are the only ones big enough to be worth
+	 * compressing and the only ones the server shares between clients. Everything else stays text.
+	 */
+	@Override
+	public void onMessage(WebSocket socket, okio.ByteString bytes)
+	{
+		String text;
+		try (java.util.zip.GZIPInputStream in = new java.util.zip.GZIPInputStream(
+			new java.io.ByteArrayInputStream(bytes.toByteArray()));
+			java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream())
+		{
+			byte[] buffer = new byte[8192];
+			for (int read = in.read(buffer); read > 0; read = in.read(buffer))
+			{
+				out.write(buffer, 0, read);
+			}
+			text = new String(out.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+		}
+		catch (Exception e)
+		{
+			log.debug("Failed to inflate a compressed frame: {}", e.toString());
+			return;
+		}
+		onMessage(socket, text);
+	}
+
 	@Override
 	public void onMessage(WebSocket socket, String text)
 	{
@@ -974,16 +1001,25 @@ public class PartySocket extends WebSocketListener
 		}
 	}
 
+	/**
+	 * The subscribe frame, which is also where we tell the server we can read compressed frames.
+	 *
+	 * <p>The board and the batches that follow it are the largest things this plugin receives — a snapshot
+	 * is every advertisement there is — and they are repetitive JSON, so they gzip several-fold. The server
+	 * compresses each shared frame once and sends it to everyone who asked, so this costs it nothing per
+	 * client; on this side it is one inflate on a background thread. Saying nothing keeps the text frames,
+	 * which is what every earlier version of this plugin does.
+	 */
 	private String subscribeFrame()
 	{
-		String activity = subscribeActivity;
-		if (activity == null)
-		{
-			return gson.toJson(Collections.singletonMap("type", "subscribe"));
-		}
-		Map<String, String> frame = new LinkedHashMap<>();
+		Map<String, Object> frame = new LinkedHashMap<>();
 		frame.put("type", "subscribe");
-		frame.put("activity", activity);
+		String activity = subscribeActivity;
+		if (activity != null)
+		{
+			frame.put("activity", activity);
+		}
+		frame.put("compress", true);
 		return gson.toJson(frame);
 	}
 
