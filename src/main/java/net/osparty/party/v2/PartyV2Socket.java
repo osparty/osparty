@@ -2,6 +2,7 @@ package net.osparty.party.v2;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.google.gson.annotations.SerializedName;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -220,7 +221,9 @@ public class PartyV2Socket implements PartySocket.LiveChannel {
 
 	/** An incoming server frame; only the fields relevant to {@link #type} are populated. Mirrors Outbound. */
 	public static final class Frame {
+		@SerializedName("t")
 		public String type;
+		@SerializedName("m")
 		public Long memberId;
 		public String status;
 		public String host;
@@ -230,8 +233,10 @@ public class PartyV2Socket implements PartySocket.LiveChannel {
 		public String discordUrl;
 		public List<RosterEntry> members;
 		/** Every peer's live update from one aggregation window, on a {@code memberUpdates} frame. */
+		@SerializedName("u")
 		public List<MemberUpdate> updates;
 		/** Opaque live snapshot (a serialised PlayerUpdate); the caller converts it with its own Gson. */
+		@SerializedName("s")
 		public JsonObject state;
 		/** Opaque host ad settings (a serialised PartyMeta), on a {@code meta} frame. */
 		public JsonObject meta;
@@ -264,11 +269,13 @@ public class PartyV2Socket implements PartySocket.LiveChannel {
 	/** One member's live update inside a {@code memberUpdates} frame. */
 	public static final class MemberUpdate {
 		public long memberId;
+		@SerializedName("s")
 		public JsonObject state;
 	}
 
 	/** One roster row from a {@code roster} frame. */
 	public static final class RosterEntry {
+		@SerializedName("m")
 		public long memberId;
 		public String name;
 		public long accountHash;

@@ -3,6 +3,7 @@ package net.osparty.party.v2;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.annotations.SerializedName;
 import java.awt.Color;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -361,7 +362,7 @@ public class LivePartyV2 implements LivePartyBackend {
 					applyState(frame.memberId, frame.state);
 				}
 				break;
-			case "memberUpdates":
+			case "mu":
 				// One window's worth of everyone else's changes, in the order they happened. The owner
 				// already leaves our own out; the id check is belt and braces, not a filter we rely on.
 				if (frame.updates != null) {
@@ -1586,6 +1587,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	// ---- outbound frame shapes (Gson omits nulls) ---------------------------
 
 	private static final class HelloFrame {
+		@SerializedName("t")
 		final String type = "hello";
 		final long accountHash;
 		final String name;
@@ -1597,6 +1599,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	private static final class HostFrame {
+		@SerializedName("t")
 		final String type = "host";
 		final String room;
 		final String hostName;
@@ -1623,6 +1626,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	private static final class JoinFrame {
+		@SerializedName("t")
 		final String type = "join";
 		final String room;
 		final String activityId;
@@ -1646,6 +1650,7 @@ public class LivePartyV2 implements LivePartyBackend {
 
 	/** Proof of life for an idle party; carries nothing else. The server relays it to peers as {@code alive}. */
 	private static final class HeartbeatFrame {
+		@SerializedName("t")
 		final String type = "heartbeat";
 	}
 
@@ -1662,7 +1667,9 @@ public class LivePartyV2 implements LivePartyBackend {
 	 * whole one and blanking their gear (PARTY_V2_OPTIMIZATION.md §8).
 	 */
 	private static final class UpdateFrame {
+		@SerializedName("t")
 		final String type = "update";
+		@SerializedName("s")
 		final Object state;
 		/**
 		 * Ask the owner node to relay this one without waiting out its idle window. Null when it can wait, so
@@ -1671,6 +1678,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		 * <p>A field of the frame rather than of {@link #state}: the server must stay blind to what a member
 		 * is reporting, and this tells it only how soon the report is wanted.
 		 */
+		@SerializedName("g")
 		final Boolean urgent;
 
 		UpdateFrame(Object state) {
@@ -1684,6 +1692,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	private static final class PingFrame {
+		@SerializedName("t")
 		final String type = "ping";
 		final int x;
 		final int y;
@@ -1701,6 +1710,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	private static final class CommandFrame {
+		@SerializedName("t")
 		final String type = "command";
 		final String action;
 		final long target;
@@ -1714,6 +1724,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	private static final class CapacityFrame {
+		@SerializedName("t")
 		final String type = "setCapacity";
 		final int capacity;
 
@@ -1723,6 +1734,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	private static final class LockedFrame {
+		@SerializedName("t")
 		final String type = "setLocked";
 		final boolean locked;
 
@@ -1732,6 +1744,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	private static final class MetaFrame {
+		@SerializedName("t")
 		final String type = "setMeta";
 		final Object meta;
 
@@ -1741,6 +1754,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	private static final class DiscordFrame {
+		@SerializedName("t")
 		final String type = "setDiscord";
 		final String url;
 
@@ -1750,10 +1764,12 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	private static final class LeaveFrame {
+		@SerializedName("t")
 		final String type = "leave";
 	}
 
 	private static final class ReadyStartFrame {
+		@SerializedName("t")
 		final String type = "readyStart";
 		final long checkId;
 		final String starter;
@@ -1765,6 +1781,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	private static final class ReadyFrame {
+		@SerializedName("t")
 		final String type = "ready";
 		final long checkId;
 
@@ -1774,6 +1791,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	private static final class SpecDrainFrame {
+		@SerializedName("t")
 		final String type = "specDrain";
 		final int npcIndex;
 		final String weapon;
@@ -1789,6 +1807,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	private static final class FcRequestFrame {
+		@SerializedName("t")
 		final String type = "fcRequest";
 		final long target;
 		final String kind;
@@ -1802,6 +1821,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	private static final class TransferHostFrame {
+		@SerializedName("t")
 		final String type = "transferHost";
 		final String kind;
 		final long target;
