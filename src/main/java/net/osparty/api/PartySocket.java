@@ -638,6 +638,15 @@ public class PartySocket extends WebSocketListener
 		send(gson.toJson(new KickVoiceFrame(id, key, accountHash)));
 	}
 
+	public void reportParty(String id)
+	{
+		if (id == null || !connected)
+		{
+			return;
+		}
+		send(gson.toJson(new ReportFrame(id)));
+	}
+
 	/**
 	 * Member self-service: grant our per-user access to the party's voice channel before opening the
 	 * invite. {@code onGranted} fires on the ack; {@code onError} if refused or offline.
@@ -1557,6 +1566,17 @@ public class PartySocket extends WebSocketListener
 			this.id = id;
 			this.key = key;
 			this.accountHash = accountHash;
+		}
+	}
+
+	private static final class ReportFrame
+	{
+		final String type = "report";
+		final String id;
+
+		ReportFrame(String id)
+		{
+			this.id = id;
 		}
 	}
 

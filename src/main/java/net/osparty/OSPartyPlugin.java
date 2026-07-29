@@ -54,7 +54,6 @@ import net.runelite.api.Player;
 import net.runelite.api.Skill;
 import net.runelite.api.Tile;
 import net.runelite.api.coords.WorldPoint;
-import net.runelite.api.events.CommandExecuted;
 import net.runelite.api.events.FakeXpDrop;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.InventoryID;
@@ -70,9 +69,7 @@ import net.runelite.api.events.StatChanged;
 import net.runelite.api.vars.AccountType;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
-import net.runelite.api.World;
 import net.runelite.client.audio.AudioPlayer;
-import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.config.Keybind;
 import net.runelite.client.input.KeyListener;
@@ -91,7 +88,6 @@ import net.runelite.client.party.events.UserJoin;
 import net.runelite.client.party.events.UserPart;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
-import net.runelite.client.plugins.PluginManager;
 import net.runelite.client.task.Schedule;
 import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
@@ -170,9 +166,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private InfoBoxManager infoBoxManager;
 
 	@Inject
-	private PluginManager pluginManager;
-
-	@Inject
 	private ConfigManager configManager;
 
 	@Inject
@@ -180,9 +173,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 	@Inject
 	private net.osparty.api.PartySocket partySocket;
-
-	@Inject
-	private EventBus eventBus;
 
 	@Inject
 	private FavoritesService favoritesService;
@@ -388,7 +378,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		panel = new OSPartyPanel(partyService, config, this::getPlayerName, this,
 			this::getFriendsChatOwner, this::getCurrentWorld, itemManager, liveParty, runeWatchService,
-			this::getAccountType, killcountService, skillIconManager, this::hopTo, this::getMapRegions,
+			this::getAccountType, killcountService, skillIconManager, this::getMapRegions,
 			this::regionForWorld, this::getCoxLayout, configManager, gson,
 			worldPinger, this::worldAddressForNum, this::getFriendNames, favoritesService, blockListService,
 			this::getAccountHash, spriteManager, partyHistoryService, this::gameMessage);
@@ -532,13 +522,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			playerName = local.getName();
 		}
 
-		// Once per login: offer to resume a party we were hosting before a restart.
-		if (playerName != null && !rejoinChecked)
-		{
-			rejoinChecked = true;
-			attemptRejoin(playerName);
-		}
-
 		world = client.getWorld();
 		mapRegions = client.getMapRegions();
 		accountType = client.getAccountType();
@@ -546,6 +529,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		// Register our identity so friends can route party invites to us (only re-sent on change).
 		maybeIdentify();
+
+		// Once per login: offer to resume a party we were hosting before a restart.
+		if (playerName != null && !rejoinChecked)
+		{
+			rejoinChecked = true;
+			attemptRejoin(playerName);
+		}
 
 		FriendsChatManager fcm = client.getFriendsChatManager();
 		friendsChatOwner = fcm != null ? fcm.getOwner() : null;
@@ -871,64 +861,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		return accountHash;
 	}
 
-
-	public void hopTo(int worldNum)
-	{
-		if (worldNum <= 0 || client.getWorld() == worldNum)
-		{
-			return;
-		}
-
-		WorldResult worlds = worldService.getWorlds();
-		net.runelite.http.api.worlds.World target = worlds != null ? worlds.findWorld(worldNum) : null;
-		if (target == null)
-		{
-			gameMessage("Could not find world " + worldNum + " to hop to.");
-			return;
-		}
-
-		if (client.getGameState() == GameState.LOGIN_SCREEN)
-		{
-			clientThread.invoke(() -> client.changeWorld(toRsWorld(target)));
-			return;
-		}
-
-		if (!isPluginEnabled("World Hopper"))
-		{
-			gameMessage("Enable RuneLite's World Hopper plugin to hop to a party member's world.");
-			return;
-		}
-
-		// Fire World Hopper's ::hop command; it validates the world, opens the
-		// switcher and performs the hop the same way a manual ::hop would.
-		clientThread.invoke(() ->
-			eventBus.post(new CommandExecuted("hop", new String[]{Integer.toString(worldNum)})));
-	}
-
-	/** @return true if a RuneLite plugin with this display name is present and running. */
-	private boolean isPluginEnabled(String name)
-	{
-		for (Plugin plugin : pluginManager.getPlugins())
-		{
-			if (name.equals(plugin.getName()))
-			{
-				return pluginManager.isPluginEnabled(plugin);
-			}
-		}
-		return false;
-	}
-
-	private World toRsWorld(net.runelite.http.api.worlds.World source)
-	{
-		World rsWorld = client.createWorld();
-		rsWorld.setActivity(source.getActivity());
-		rsWorld.setAddress(source.getAddress());
-		rsWorld.setId(source.getId());
-		rsWorld.setPlayerCount(source.getPlayers());
-		rsWorld.setLocation(source.getLocation());
-		rsWorld.setTypes(WorldUtil.toWorldTypes(source.getTypes()));
-		return rsWorld;
-	}
 
 	@Override
 	public void setPendingApplicants(java.util.List<Applicant> applicants, Activity activity)

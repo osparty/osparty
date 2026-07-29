@@ -52,7 +52,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.IntConsumer;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 import javax.swing.BorderFactory;
@@ -117,7 +116,6 @@ class PartyPanel extends JPanel
 	private final SkillIconManager skillIcons;
 	private final SpriteManager spriteManager;
 	private final IntSupplier currentWorld;
-	private final IntConsumer worldHopper;
 	private final Supplier<String> friendsChatOwnerSupplier;
 	private final Supplier<String> coxLayoutSupplier;
 	private final OSPartyConfig config;
@@ -200,7 +198,7 @@ class PartyPanel extends JPanel
 	PartyPanel(PartyService partyService, Supplier<String> playerNameSupplier,
                HostApplicationHandler hostApplicationHandler, PartyState partyState, ItemManager itemManager,
                LivePartyBackend liveParty, RuneWatchService runeWatch, KillcountService killcounts,
-               SkillIconManager skillIcons, IntSupplier currentWorld, IntConsumer worldHopper,
+               SkillIconManager skillIcons, IntSupplier currentWorld,
                Supplier<String> friendsChatOwnerSupplier, Supplier<String> coxLayoutSupplier,
                OSPartyConfig config, ConfigManager configManager, FavoritesService favoritesService,
                BlockListService blockListService, SpriteManager spriteManager,
@@ -222,7 +220,6 @@ class PartyPanel extends JPanel
 		this.skillIcons = skillIcons;
 		this.spriteManager = spriteManager;
 		this.currentWorld = currentWorld;
-		this.worldHopper = worldHopper;
 		this.friendsChatOwnerSupplier = friendsChatOwnerSupplier;
 		this.coxLayoutSupplier = coxLayoutSupplier;
 		this.config = config;
@@ -1230,21 +1227,7 @@ class PartyPanel extends JPanel
 		}
 		// Kick / kick-and-block moved to the row's right-click menu (see memberMenu).
 
-		// Hop to the member's world (any viewer) when it differs from ours.
 		PlayerUpdate data = member.getData();
-		int world = data != null ? data.getWorld() : 0;
-		int mine = currentWorld.getAsInt();
-		if (world > 0 && mine > 0 && mine != world)
-		{
-			JButton hop = smallButton("Hop to");
-			hop.setToolTipText("Hop to world " + world);
-			hop.addActionListener(e -> {
-				worldHopper.accept(world);
-				setStatus("Hopping to world " + world + "…");
-			});
-			wrap.add(hop);
-			any = true;
-		}
 
 		// Per-activity join prompt: CoX = host's FC, ToB = notice board, ToA = Grouping Obelisk.
 		// Never for a pending applicant — they aren't in the party yet, so there's nothing to join.

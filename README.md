@@ -231,6 +231,7 @@ Messages are JSON frames with a `type`. Client-to-server frames:
 | `getDiscordLink` | `accountHash` | Look up the account's Discord link status |
 | `unlinkDiscord` | `accountHash` | Remove the account's Discord binding |
 | `setBadgeVisibility` | `accountHash`, `visible` | Show or hide the caller's own role badges |
+| `report` | `id` | Report an advertisement for moderator review. Deliberately never acknowledged: the server rate-limits reports silently, and a reply would reveal which ones got through |
 
 Server-to-client frames:
 
