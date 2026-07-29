@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import javax.inject.Inject;
 import javax.inject.Singleton;
+import net.osparty.OSPartyConfig;
 import net.osparty.enums.SpecWeapon;
 import net.osparty.party.LivePartyBackend;
 import net.osparty.party.SpecDrainMessage;
@@ -50,6 +51,7 @@ public class SpecialAttackTracker
 	private final DefenceTracker defenceTracker;
 	// V2: the live-party seam, used to broadcast drains when we're not on the RuneLite relay. Goes at P6.
 	private final LivePartyBackend liveParty;
+	private final OSPartyConfig config;
 
 	private int specialPercentage = -1;
 	private int lastHitpointsXp = -1;
@@ -63,13 +65,14 @@ public class SpecialAttackTracker
 
 	@Inject
 	private SpecialAttackTracker(Client client, ClientThread clientThread, PartyService party,
-		DefenceTracker defenceTracker, LivePartyBackend liveParty)
+		DefenceTracker defenceTracker, LivePartyBackend liveParty, OSPartyConfig config)
 	{
 		this.client = client;
 		this.clientThread = clientThread;
 		this.party = party;
 		this.defenceTracker = defenceTracker;
 		this.liveParty = liveParty;
+		this.config = config;
 	}
 
 	public void reset()
@@ -175,8 +178,20 @@ public class SpecialAttackTracker
 		}
 		else if (tick == hitsplatTick)
 		{
+			if (specWeapon == SpecWeapon.TONALZTICS_OF_RALOS)
+			{
+				// Two glaives, so two hitsplats. The drain depends on how many of them
+				// landed rather than on the damage, so report the count as the hit.
+				if (hitsplats.size() >= 2)
+				{
+					Hitsplat last = hitsplats.get(hitsplats.size() - 1);
+					Hitsplat secondToLast = hitsplats.get(hitsplats.size() - 2);
+					int landed = Math.min(last.getAmount(), 1) + Math.min(secondToLast.getAmount(), 1);
+					recordDrain(specWeapon, landed, specTarget);
+				}
+			}
 			// The weapon hitsplat is last, after same-tick splats from venge/thralls.
-			if (!hitsplats.isEmpty())
+			else if (!hitsplats.isEmpty())
 			{
 				recordDrain(specWeapon, hitsplats.get(hitsplats.size() - 1).getAmount(), specTarget);
 			}
@@ -206,11 +221,17 @@ public class SpecialAttackTracker
 
 	private void recordDrain(SpecWeapon weapon, int hit, NPC target)
 	{
+		boolean inParty = party.isInParty();
+		if (!inParty && !config.defenceOutsideParty())
+		{
+			return;
+		}
+
 		int world = client.getWorld();
 		int npcIndex = target.getIndex();
 		defenceTracker.queue(weapon, npcIndex, hit, world);
 
-		if (party.isInParty())
+		if (inParty)
 		{
 			party.send(new SpecDrainMessage(npcIndex, weapon, hit, world));
 		}

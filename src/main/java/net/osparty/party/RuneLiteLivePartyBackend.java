@@ -334,15 +334,15 @@ public class RuneLiteLivePartyBackend implements LivePartyBackend
 	}
 
 	@Override
-	public void sendPing(WorldPoint point, Color color)
+	public boolean sendPing(WorldPoint point, Color color)
 	{
-		delegate.sendPing(point, color);
+		return delegate.sendPing(point, color);
 	}
 
 	@Override
-	public void onPing(PingMessage message)
+	public boolean onPing(PingMessage message)
 	{
-		delegate.onPing(message);
+		return delegate.onPing(message);
 	}
 
 	@Override

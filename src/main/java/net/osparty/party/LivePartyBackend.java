@@ -174,9 +174,9 @@ public interface LivePartyBackend
 	LiveParty.ReadyCheckStatus readyCheck();
 
 	// ---- map pings ----------------------------------------------------------
-	void sendPing(WorldPoint point, Color color);
+	boolean sendPing(WorldPoint point, Color color);
 
-	void onPing(PingMessage message);
+	boolean onPing(PingMessage message);
 
 	List<TilePing> activePings();
 

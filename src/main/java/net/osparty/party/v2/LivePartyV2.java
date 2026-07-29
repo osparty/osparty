@@ -1174,14 +1174,15 @@ public class LivePartyV2 implements LivePartyBackend {
 	// ---- map pings ----------------------------------------------------------
 
 	@Override
-	public void sendPing(WorldPoint point, Color color) {
+	public boolean sendPing(WorldPoint point, Color color) {
 		if (mode == Mode.NONE || point == null) {
-			return;
+			return false;
 		}
 		String name = localName;
 		send(new PingFrame(point.getX(), point.getY(), point.getPlane(), color.getRGB(), name));
 		addPing(new TilePing(point, name, color, System.currentTimeMillis()));
 		fire();
+		return true;
 	}
 
 	@Override
@@ -1748,8 +1749,10 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	@Override
-	public void onPing(net.osparty.party.PingMessage message) {
-		// No-op in V2: pings arrive as socket frames (see applyPing).
+	public boolean onPing(net.osparty.party.PingMessage message) {
+		// No-op in V2: pings arrive as socket frames (see applyPing), and applyPing is what decides
+		// whether one is worth a sound. Nothing reaches this path, so nothing is ever accepted here.
+		return false;
 	}
 
 	@Override

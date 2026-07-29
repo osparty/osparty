@@ -2,6 +2,7 @@ package net.osparty.ui;
 
 import net.osparty.OSPartyConfig;
 import net.osparty.enums.DefenceOverlayPosition;
+import net.osparty.enums.MagicDefenceDisplay;
 import net.osparty.tools.DefenceTracker;
 import net.osparty.tools.DefenceTracker.DefenceState;
 import java.awt.Color;
@@ -28,13 +29,16 @@ public class NpcDefenceOverlay extends Overlay
 	private final DefenceTracker tracker;
 	private final OSPartyConfig config;
 	private final BufferedImage icon;
+	private final BufferedImage magicIcon;
 
-	public NpcDefenceOverlay(Client client, DefenceTracker tracker, OSPartyConfig config, BufferedImage icon)
+	public NpcDefenceOverlay(Client client, DefenceTracker tracker, OSPartyConfig config, BufferedImage icon,
+		BufferedImage magicIcon)
 	{
 		this.client = client;
 		this.tracker = tracker;
 		this.config = config;
 		this.icon = icon;
+		this.magicIcon = magicIcon;
 		setPosition(OverlayPosition.DYNAMIC);
 		setLayer(OverlayLayer.ABOVE_SCENE);
 	}
@@ -60,24 +64,7 @@ public class NpcDefenceOverlay extends Overlay
 		graphics.setFont(config.defenceFontSize().font());
 		FontMetrics fm = graphics.getFontMetrics();
 
-		long shown = config.defenceShowFullLevel()
-			? state.getCurrent()
-			: state.getCurrent() - state.getMin();
-		shown = Math.max(0, shown);
-		long drained = Math.max(0, state.getBase() - state.getCurrent());
-
-		String levelStr = Long.toString(shown);
-		String drainStr = Long.toString(drained);
-		boolean showDrain = drained > 0;
-
-		int iconW = icon != null ? icon.getWidth() : 0;
-		int iconH = icon != null ? icon.getHeight() : 0;
-		int levelW = fm.stringWidth(levelStr);
-		int arrowW = 7;
-		int drainBlockW = showDrain ? (GAP + arrowW + 2 + fm.stringWidth(drainStr)) : 0;
-		int totalW = iconW + GAP + levelW + drainBlockW;
-
-		// Anchor on the npc at the chosen position's height, then lay the row out centred on it.
+		// Anchor on the npc at the chosen position's height, then lay each row out centred on it.
 		DefenceOverlayPosition position = config.defenceHpBarPosition();
 		int zOffset = (int) (npc.getLogicalHeight() * position.getHeightFactor()) + position.getHeightOffset();
 		Point anchor = npc.getCanvasTextLocation(graphics, "", zOffset);
@@ -85,32 +72,86 @@ public class NpcDefenceOverlay extends Overlay
 		{
 			return null;
 		}
-		int x = anchor.getX() - totalW / 2 + position.getXNudge();
+		int centreX = anchor.getX() + position.getXNudge();
 		int baseline = anchor.getY();
+
+		long shown = config.defenceShowFullLevel()
+			? state.getCurrent()
+			: state.getCurrent() - state.getMin();
+		long drained = Math.max(0, state.getBase() - state.getCurrent());
+		drawRow(graphics, fm, centreX, baseline, icon, Long.toString(Math.max(0, shown)), colorFor(state),
+			drained > 0 ? Long.toString(drained) : null);
+
+		if (config.magicDefence())
+		{
+			String magicStr = magicText(state);
+			if (magicStr != null)
+			{
+				// Only the bonus readout has a drain to count off; the percentage is
+				// already relative to where the monster started.
+				long magicDrained = Math.max(0, state.getMagicBaseDef() - state.getMagicDef());
+				boolean showDrain = magicDrained > 0 && config.magicDefenceDisplay() != MagicDefenceDisplay.PERCENT;
+				drawRow(graphics, fm, centreX, baseline + fm.getHeight(), magicIcon, magicStr,
+					config.magicDefenceColor(), showDrain ? Long.toString(magicDrained) : null);
+			}
+		}
+		return null;
+	}
+
+	/** @return the magic-defence text for the configured mode, or null to draw nothing. */
+	private String magicText(DefenceState state)
+	{
+		long percent = state.getMagicBaseRoll() > 0
+			? Math.max(0, Math.round(state.getMagicRoll() * 100.0 / state.getMagicBaseRoll()))
+			: 100;
+		switch (config.magicDefenceDisplay())
+		{
+			case BONUS:
+				return Long.toString(state.getMagicDef());
+			case PERCENT:
+				return percent < 100 ? percent + "%" : null;
+			case BOTH:
+				return percent < 100
+					? state.getMagicDef() + "  " + percent + "%"
+					: Long.toString(state.getMagicDef());
+			default:
+				return null;
+		}
+	}
+
+	/** One centred {@code [icon] value ↓drain} row. */
+	private void drawRow(Graphics2D graphics, FontMetrics fm, int centreX, int baseline, BufferedImage image,
+		String text, Color color, String drain)
+	{
+		int iconW = image != null ? image.getWidth() : 0;
+		int iconH = image != null ? image.getHeight() : 0;
+		int textW = fm.stringWidth(text);
+		int arrowW = 7;
+		int drainBlockW = drain != null ? (GAP + arrowW + 2 + fm.stringWidth(drain)) : 0;
+		int totalW = iconW + GAP + textW + drainBlockW;
+		int x = centreX - totalW / 2;
 
 		if (config.defenceTextPlate())
 		{
 			graphics.setColor(new Color(0, 0, 0, 150));
 			graphics.fillRect(x - 2, baseline - fm.getAscent() - 1, totalW + 4, fm.getHeight() + 2);
 		}
-
-		if (icon != null)
+		if (image != null)
 		{
-			graphics.drawImage(icon, x, baseline - iconH + 2, null);
+			graphics.drawImage(image, x, baseline - iconH + 2, null);
 		}
+
 		int cursor = x + iconW + GAP;
+		OverlayUtil.renderTextLocation(graphics, new Point(cursor, baseline), text, color);
+		cursor += textW;
 
-		OverlayUtil.renderTextLocation(graphics, new Point(cursor, baseline), levelStr, colorFor(state));
-		cursor += levelW;
-
-		if (showDrain)
+		if (drain != null)
 		{
 			cursor += GAP;
 			drawDownArrow(graphics, cursor, baseline, arrowW, fm.getAscent());
 			cursor += arrowW + 2;
-			OverlayUtil.renderTextLocation(graphics, new Point(cursor, baseline), drainStr, DRAIN_COLOR);
+			OverlayUtil.renderTextLocation(graphics, new Point(cursor, baseline), drain, DRAIN_COLOR);
 		}
-		return null;
 	}
 
 	/** A small filled down-pointing triangle (the in-game font lacks an arrow glyph). */

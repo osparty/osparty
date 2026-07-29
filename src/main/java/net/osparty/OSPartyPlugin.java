@@ -24,6 +24,7 @@ import net.osparty.ui.DefenceInfoBox;
 import net.osparty.ui.NpcDefenceOverlay;
 import net.osparty.ui.PlayerMarkerOverlay;
 import net.osparty.ui.ReadyCheckOverlay;
+import net.osparty.ui.PingArrowOverlay;
 import net.osparty.ui.TilePingOverlay;
 import com.google.inject.Provides;
 import java.awt.BasicStroke;
@@ -52,6 +53,7 @@ import net.runelite.api.GameState;
 import net.runelite.api.MenuAction;
 import net.runelite.api.Player;
 import net.runelite.api.Skill;
+import net.runelite.api.SoundEffectID;
 import net.runelite.api.Tile;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.FakeXpDrop;
@@ -210,6 +212,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private FcRequestOverlay fcRequestOverlay;
 	private ReadyCheckOverlay readyCheckOverlay;
 	private TilePingOverlay tilePingOverlay;
+	private PingArrowOverlay pingArrowOverlay;
 	private NpcDefenceOverlay defenceOverlay;
 	private PlayerMarkerOverlay playerMarkerOverlay;
 	private DefenceInfoBox defenceBox;
@@ -335,8 +338,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		tilePingOverlay = new TilePingOverlay(client, liveParty, config);
 		overlayManager.add(tilePingOverlay);
 
+		pingArrowOverlay = new PingArrowOverlay(client, liveParty, config);
+		overlayManager.add(pingArrowOverlay);
+
 		defenceOverlay = new NpcDefenceOverlay(client, defenceTracker, config,
-			ImageUtil.resizeImage(skillIconManager.getSkillImage(Skill.DEFENCE), 16, 16));
+			ImageUtil.resizeImage(skillIconManager.getSkillImage(Skill.DEFENCE), 16, 16),
+			ImageUtil.resizeImage(skillIconManager.getSkillImage(Skill.MAGIC), 16, 16));
 		overlayManager.add(defenceOverlay);
 
 		playerMarkerOverlay = new PlayerMarkerOverlay(client, liveParty, config,
@@ -421,6 +428,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		overlayManager.remove(fcRequestOverlay);
 		overlayManager.remove(readyCheckOverlay);
 		overlayManager.remove(tilePingOverlay);
+		overlayManager.remove(pingArrowOverlay);
 		overlayManager.remove(defenceOverlay);
 		overlayManager.remove(playerMarkerOverlay);
 		if (defenceBox != null)
@@ -439,6 +447,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		fcRequestOverlay = null;
 		readyCheckOverlay = null;
 		tilePingOverlay = null;
+		pingArrowOverlay = null;
 		defenceOverlay = null;
 		playerMarkerOverlay = null;
 		panel = null;
@@ -670,7 +679,16 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Subscribe
 	public void onPingMessage(PingMessage event)
 	{
-		liveParty.onPing(event);
+		if (liveParty.onPing(event) && config.pingSound())
+		{
+			playPingSound();
+		}
+	}
+
+	/** Play the RuneScape-native tile-ping "tink", matching RuneLite's own party plugin. */
+	private void playPingSound()
+	{
+		clientThread.invoke(() -> client.playSoundEffect(SoundEffectID.SMITH_ANVIL_TINK));
 	}
 
 	/** Broadcast a ping at the tile under the cursor (client thread). Called from the mouse listener. */
@@ -683,9 +701,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 				return;
 			}
 			WorldPoint point = tile.getWorldLocation();
-			if (point != null)
+			if (point != null && liveParty.sendPing(point, config.pingColor()) && config.pingSound())
 			{
-				liveParty.sendPing(point, config.pingColor());
+				client.playSoundEffect(SoundEffectID.SMITH_ANVIL_TINK);
 			}
 		});
 	}
