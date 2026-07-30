@@ -1499,7 +1499,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	 */
 	@Provides
 	@javax.inject.Singleton
-	LivePartyBackend provideLivePartyBackend(net.osparty.party.v2.LivePartyV2 liveParty)
+	LivePartyBackend provideLivePartyBackend(net.osparty.party.LiveParty liveParty)
 	{
 		return liveParty;
 	}

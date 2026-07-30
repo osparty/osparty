@@ -11,7 +11,7 @@ import net.runelite.api.coords.WorldPoint;
  * The plugin's view of the live party, independent of transport. The UI, overlays and trackers talk to
  * this seam rather than to the implementation behind it.
  *
- * <p>One implementation: {@code LivePartyV2}, OSParty's own node-affine, server-authoritative live party
+ * <p>One implementation: {@link LiveParty}, OSParty's own node-affine, server-authoritative live party
  * (see PARTY_V2_MIGRATION.md). The seam remains because everything above it is written against an
  * interface and mocks one in tests — not because there is still a choice to make. RuneLite's built-in P2P
  * party relay was the other implementation and is gone.

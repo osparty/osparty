@@ -9,7 +9,7 @@ import lombok.NoArgsConstructor;
  * stats. Every member sends their own, and only the parts that changed.
  *
  * <p>This is the plugin's own shape, not a wire format. Frames carry the short names in
- * {@code LivePartyV2.TO_WIRE}, and {@code toWire}/{@code fromWire} translate at that boundary — a peer
+ * {@code LiveParty.TO_WIRE}, and {@code toWire}/{@code fromWire} translate at that boundary — a peer
  * running a different version of this plugin reads the frame by those short names, so they are what
  * cannot move. The field names here can.
  */

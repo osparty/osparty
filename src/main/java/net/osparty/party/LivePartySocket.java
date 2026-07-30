@@ -1,4 +1,4 @@
-package net.osparty.party.v2;
+package net.osparty.party;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
@@ -14,7 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.osparty.api.PartySocket;
 
 /**
- * The plugin's live-party channel. Frame semantics live in {@link LivePartyV2}; what this class owns is the
+ * The plugin's live-party channel. Frame semantics live in {@link LiveParty}; what this class owns is the
  * live half of the protocol that is not about a party — announcing on (re)connect, following the server to
  * the node that holds the room, and waiting out a handover.
  *
@@ -35,7 +35,7 @@ import net.osparty.api.PartySocket;
  * would arrive to "no room" and silently fall out of the party.
  */
 @Slf4j
-public class PartyV2Socket implements PartySocket.LiveChannel {
+public class LivePartySocket implements PartySocket.LiveChannel {
 	/** Retry delay used when an {@code ownerPending} frame does not name one. */
 	private static final long DEFAULT_RETRY_MS = 1_000;
 	/**
@@ -58,7 +58,7 @@ public class PartyV2Socket implements PartySocket.LiveChannel {
 	private volatile int pendingRetries;
 
 	@javax.inject.Inject
-	public PartyV2Socket(PartySocket connection, Gson gson) {
+	public LivePartySocket(PartySocket connection, Gson gson) {
 		this.connection = connection;
 		this.gson = gson;
 	}
@@ -87,7 +87,7 @@ public class PartyV2Socket implements PartySocket.LiveChannel {
 		pendingRetries = 0;
 		if (retries == null || retries.isShutdown()) {
 			retries = Executors.newSingleThreadScheduledExecutor(r -> {
-				Thread t = new Thread(r, "osparty-v2-retry");
+				Thread t = new Thread(r, "osparty-live-retry");
 				t.setDaemon(true);
 				return t;
 			});
@@ -187,7 +187,7 @@ public class PartyV2Socket implements PartySocket.LiveChannel {
 			listener.accept(frame);
 		}
 		catch (Exception e) {
-			log.debug("Party V2 frame handling failed: {}", e.toString());
+			log.debug("Live party frame handling failed: {}", e.toString());
 		}
 	}
 
@@ -225,7 +225,7 @@ public class PartyV2Socket implements PartySocket.LiveChannel {
 			onOpen.run();
 		}
 		catch (Exception e) {
-			log.debug("Party V2 announce failed: {}", e.toString());
+			log.debug("Live party announce failed: {}", e.toString());
 		}
 	}
 

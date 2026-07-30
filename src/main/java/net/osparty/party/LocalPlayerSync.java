@@ -23,7 +23,6 @@ import net.runelite.api.gameval.VarbitID;
  * Builds a {@link PlayerUpdate} from the local client's live state. Reads item
  * containers and skills, so it must be called on the client thread.
  *
- * <p>Public so {@code net.osparty.party.v2.LivePartyV2} can read it from its own package.
  */
 public final class LocalPlayerSync
 {

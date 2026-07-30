@@ -35,7 +35,7 @@ import okhttp3.WebSocketListener;
  * run over it, and the open connection is the host ad's keep-alive. Reconnects with jittered backoff,
  * re-subscribing and resuming the hosted ad on each (re)connect.
  *
- * <p>It is also the only connection the plugin opens. The live party ({@link net.osparty.party.v2.LivePartyV2})
+ * <p>It is also the only connection the plugin opens. The live party ({@link net.osparty.party.LiveParty})
  * used to bring up a second socket for the duration of a party, which doubled what the gateway had to carry
  * for exactly the users doing the most; it now rides here as a second channel, tagged per frame with
  * {@link Mux}. This class owns the connection, the backoff and the node hint, and knows nothing about what
@@ -65,7 +65,7 @@ public class PartySocket extends WebSocketListener
 	private volatile LiveChannel live;
 
 	/**
-	 * The live party's half of this connection. Implemented by {@link net.osparty.party.v2.PartyV2Socket},
+	 * The live party's half of this connection. Implemented by {@link net.osparty.party.LivePartySocket},
 	 * which keeps every bit of protocol and reconnect-semantics knowledge on its own side of this seam.
 	 */
 	public interface LiveChannel
