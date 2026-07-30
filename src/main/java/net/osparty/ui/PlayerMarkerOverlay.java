@@ -1,8 +1,8 @@
 package net.osparty.ui;
 
 import net.osparty.OSPartyConfig;
-import net.osparty.party.LiveParty;
-import net.osparty.party.LiveParty.Marker;
+import net.osparty.party.PartyMarker;
+import net.osparty.party.PlayerNames;
 import net.osparty.party.LivePartyBackend;
 import java.awt.Color;
 import java.awt.Dimension;
@@ -55,7 +55,7 @@ public class PlayerMarkerOverlay extends Overlay
 		{
 			return null;
 		}
-		Map<String, Marker> markers = liveParty.learnerMarkers();
+		Map<String, PartyMarker> markers = liveParty.learnerMarkers();
 		if (markers.isEmpty())
 		{
 			return null;
@@ -67,8 +67,8 @@ public class PlayerMarkerOverlay extends Overlay
 			{
 				continue;
 			}
-			Marker marker = markers.get(LiveParty.normalizeName(player.getName()));
-			if (marker == null || marker == Marker.NONE)
+			PartyMarker marker = markers.get(PlayerNames.normalize(player.getName()));
+			if (marker == null || marker == PartyMarker.NONE)
 			{
 				continue;
 			}
@@ -78,15 +78,15 @@ public class PlayerMarkerOverlay extends Overlay
 			}
 			if (icons)
 			{
-				drawTileIcon(graphics, player, marker == Marker.TEACHER ? teacherIcon : learnerIcon);
+				drawTileIcon(graphics, player, marker == PartyMarker.TEACHER ? teacherIcon : learnerIcon);
 			}
 		}
 		return null;
 	}
 
-	private Color colorFor(Marker marker)
+	private Color colorFor(PartyMarker marker)
 	{
-		return marker == Marker.TEACHER ? config.teacherColor() : config.learnerColor();
+		return marker == PartyMarker.TEACHER ? config.teacherColor() : config.learnerColor();
 	}
 
 	private void drawTile(Graphics2D graphics, Player player, Color color)

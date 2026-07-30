@@ -16,11 +16,11 @@ import net.osparty.model.Member;
 import net.osparty.model.Party;
 import net.osparty.model.PartyMeta;
 import net.osparty.model.Role;
-import net.osparty.party.LiveParty;
 import net.osparty.party.LivePartyBackend;
-import net.osparty.party.LiveParty.RosterMember;
-import net.osparty.party.LiveParty.Status;
+import net.osparty.party.RosterMember;
+import net.osparty.party.PartyStatus;
 import net.osparty.party.PlayerUpdate;
+import net.osparty.party.ReadyCheckStatus;
 import net.osparty.model.RuneWatchCase;
 import net.osparty.service.RuneWatchService;
 import java.awt.BorderLayout;
@@ -85,7 +85,7 @@ import net.runelite.client.util.AsyncBufferedImage;
 import net.runelite.client.util.ImageUtil;
 import net.runelite.client.util.LinkBrowser;
 
-/** "Party" tab: the live party the player is in; roster/gear/stats come from {@link LiveParty}. */
+/** "Party" tab: the live party the player is in; roster/gear/stats come from {@link LivePartyBackend}. */
 @lombok.extern.slf4j.Slf4j
 class PartyPanel extends JPanel
 {
@@ -303,7 +303,7 @@ class PartyPanel extends JPanel
 			return 1;
 		}
 		int count = (int) liveParty.roster().stream()
-			.filter(m -> m.getStatus() != Status.PENDING).count();
+			.filter(m -> m.getStatus() != PartyStatus.PENDING).count();
 		return Math.max(1, count);
 	}
 
@@ -344,7 +344,7 @@ class PartyPanel extends JPanel
 		{
 			return null;
 		}
-		// From the live roster (P2P), so a member who picked a role after joining isn't stuck in "Needs".
+		// From the live roster, so a member who picked a role after joining isn't stuck in "Needs".
 		List<String> needed = liveParty.neededRoles(party.getRequiredRoles());
 		if (needed == null || needed.isEmpty())
 		{
@@ -432,7 +432,7 @@ class PartyPanel extends JPanel
 		}
 
 		int admitted = roster == null ? 0
-			: (int) roster.stream().filter(m -> m.getStatus() != Status.PENDING).count();
+			: (int) roster.stream().filter(m -> m.getStatus() != PartyStatus.PENDING).count();
 
 		// Push live occupancy to the ad on change.
 		if (host && admitted > 0 && admitted != lastReportedSize)
@@ -529,7 +529,7 @@ class PartyPanel extends JPanel
 			for (RosterMember member : roster)
 			{
 				// Real synced applicants go in their own section below; ignore data-less ghosts.
-				if (member.getStatus() == Status.PENDING && !member.isLocal())
+				if (member.getStatus() == PartyStatus.PENDING && !member.isLocal())
 				{
 					if (member.getData() != null)
 					{
@@ -548,7 +548,7 @@ class PartyPanel extends JPanel
 				content.add(sectionLabel("Pending applicants"));
 				for (RosterMember member : roster)
 				{
-					if (member.getStatus() == Status.PENDING && !member.isLocal() && member.getData() != null)
+					if (member.getStatus() == PartyStatus.PENDING && !member.isLocal() && member.getData() != null)
 					{
 						seenIds.add(member.getMemberId());
 						content.add(memberEntry(party, activity, member, true, hostName));
@@ -595,7 +595,7 @@ class PartyPanel extends JPanel
 		List<Applicant> pending = new ArrayList<>();
 		for (RosterMember member : roster)
 		{
-			if (member.getStatus() != Status.PENDING || member.getData() == null)
+			if (member.getStatus() != PartyStatus.PENDING || member.getData() == null)
 			{
 				continue;
 			}
@@ -712,12 +712,12 @@ class PartyPanel extends JPanel
 	private JPanel buildMemberEntry(Party party, Activity activity, RosterMember member, boolean host,
 		String hostName)
 	{
-		Status status = member.getStatus();
+		PartyStatus status = member.getStatus();
 		boolean isExpanded = expanded.contains(member.getMemberId());
 
 		JPanel entry = cappedPanel(new BorderLayout(0, 4));
 		entry.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		if (status == Status.HOST)
+		if (status == PartyStatus.HOST)
 		{
 			// Mark the host with an orange outline (the panel's BRAND_ORANGE accent), not a crown in
 			// front of the name — the crown pushed long (12-char) names with icons off the row.
@@ -745,10 +745,10 @@ class PartyPanel extends JPanel
 		dot.setToolTipText(online ? "Online" : "Offline");
 
 		// Host is marked by the entry's orange outline (above); name is orange too, no "(host)" text.
-		String tag = status == Status.PENDING ? " (pending)" : "";
+		String tag = status == PartyStatus.PENDING ? " (pending)" : "";
 		JLabel name = new JLabel(member.getName() + tag);
-		name.setForeground(status == Status.HOST ? ColorScheme.BRAND_ORANGE
-			: status == Status.PENDING ? ColorScheme.PROGRESS_INPROGRESS_COLOR : Color.WHITE);
+		name.setForeground(status == PartyStatus.HOST ? ColorScheme.BRAND_ORANGE
+			: status == PartyStatus.PENDING ? ColorScheme.PROGRESS_INPROGRESS_COLOR : Color.WHITE);
 		applyAccountIcon(name, member.getData());
 
 		// Favourite/block/kick now live on the row's right-click menu (see memberMenu), not as icons.
@@ -770,7 +770,7 @@ class PartyPanel extends JPanel
 		}
 
 		// Block-list warning on a pending applicant (WARN mode; auto-reject removes them instead).
-		if (status == Status.PENDING && blockListService != null
+		if (status == PartyStatus.PENDING && blockListService != null
 			&& blockListService.isBlocked(memberHash(member), member.getName()))
 		{
 			JLabel blockedBadge = new JLabel(StatusIcons.BLOCK_ON);
@@ -854,7 +854,7 @@ class PartyPanel extends JPanel
 			bits.add("W" + world);
 		}
 
-		// Status line: the online/offline dot leads (left of the world), left-aligned under the name
+		// PartyStatus line: the online/offline dot leads (left of the world), left-aligned under the name
 		// above and the vitals below. Leading gap 5 lines the dot glyph up with the ironman-icon/heart column.
 		JPanel metaRow = cappedPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
 		((FlowLayout) metaRow.getLayout()).setAlignOnBaseline(true);
@@ -961,7 +961,7 @@ class PartyPanel extends JPanel
 			any = true;
 		}
 
-		if (host && member.getStatus() == Status.MEMBER)
+		if (host && member.getStatus() == PartyStatus.MEMBER)
 		{
 			menu.addSeparator();
 			JMenuItem kickItem = new JMenuItem("Kick player");
@@ -1215,7 +1215,7 @@ class PartyPanel extends JPanel
 		boolean any = false;
 
 		// Host membership controls.
-		if (host && member.getStatus() == Status.PENDING)
+		if (host && member.getStatus() == PartyStatus.PENDING)
 		{
 			JButton admit = smallButton("Accept");
 			admit.addActionListener(e -> admit(activity, member));
@@ -1231,7 +1231,7 @@ class PartyPanel extends JPanel
 
 		// Per-activity join prompt: CoX = host's FC, ToB = notice board, ToA = Grouping Obelisk.
 		// Never for a pending applicant — they aren't in the party yet, so there's nothing to join.
-		if (host && data != null && activity != null && member.getStatus() != Status.PENDING)
+		if (host && data != null && activity != null && member.getStatus() != PartyStatus.PENDING)
 		{
 			String kind = null;
 			String label = null;
@@ -1964,7 +1964,7 @@ class PartyPanel extends JPanel
 
 	private JComponent buildReadyCheck()
 	{
-		LiveParty.ReadyCheckStatus status = liveParty.readyCheck();
+		ReadyCheckStatus status = liveParty.readyCheck();
 		JPanel row = cappedPanel(new BorderLayout());
 		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		row.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -2030,7 +2030,7 @@ class PartyPanel extends JPanel
 		return row;
 	}
 
-	private static String readyCheckText(LiveParty.ReadyCheckStatus status)
+	private static String readyCheckText(ReadyCheckStatus status)
 	{
 		return "Ready " + status.getReady() + "/" + status.getTotal()
 			+ " - " + status.getSecondsLeft() + "s left";
@@ -2039,7 +2039,7 @@ class PartyPanel extends JPanel
 	/** Retexts the countdown between refreshes; a full rebuild only when the check ends. */
 	private void tickReadyCheck()
 	{
-		LiveParty.ReadyCheckStatus status = liveParty.readyCheck();
+		ReadyCheckStatus status = liveParty.readyCheck();
 		if (status == null)
 		{
 			readyCheckTicker.stop();
@@ -2148,12 +2148,12 @@ class PartyPanel extends JPanel
 	}
 
 	/** The admitted, online members (excluding us) the host could hand the party to. */
-	private List<LiveParty.RosterMember> transferCandidates()
+	private List<RosterMember> transferCandidates()
 	{
-		List<LiveParty.RosterMember> out = new ArrayList<>();
-		for (LiveParty.RosterMember member : liveParty.roster())
+		List<RosterMember> out = new ArrayList<>();
+		for (RosterMember member : liveParty.roster())
 		{
-			if (member.getStatus() == LiveParty.Status.MEMBER && member.isOnline() && !member.isLocal())
+			if (member.getStatus() == PartyStatus.MEMBER && member.isOnline() && !member.isLocal())
 			{
 				out.add(member);
 			}
@@ -2167,13 +2167,13 @@ class PartyPanel extends JPanel
 	 */
 	private void promptTransferHost(boolean hostStays)
 	{
-		List<LiveParty.RosterMember> candidates = transferCandidates();
+		List<RosterMember> candidates = transferCandidates();
 		if (candidates.isEmpty())
 		{
 			return;
 		}
 		String tail = hostStays ? " and you'll stay in the party." : " and you'll leave the party.";
-		LiveParty.RosterMember target;
+		RosterMember target;
 		if (candidates.size() == 1)
 		{
 			target = candidates.get(0);
@@ -2187,7 +2187,7 @@ class PartyPanel extends JPanel
 		}
 		else
 		{
-			String[] names = candidates.stream().map(LiveParty.RosterMember::getName).toArray(String[]::new);
+			String[] names = candidates.stream().map(RosterMember::getName).toArray(String[]::new);
 			JComboBox<String> combo = new JComboBox<>(names);
 			JPanel msg = new JPanel(new BorderLayout(0, 6));
 			msg.add(new JLabel("Make which member the host?" + tail), BorderLayout.NORTH);

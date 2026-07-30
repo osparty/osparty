@@ -10,12 +10,6 @@ import net.osparty.model.Party;
 import net.osparty.party.FcRequestMessage;
 import net.osparty.party.HostTransferMessage;
 import net.osparty.party.LivePartyBackend;
-import net.osparty.party.RuneLiteLivePartyBackend;
-import net.osparty.party.MemberCommand;
-import net.osparty.party.PartyStateMessage;
-import net.osparty.party.PingMessage;
-import net.osparty.party.PlayerUpdate;
-import net.osparty.party.ReadyCheckMessage;
 import net.osparty.party.SpecDrainMessage;
 import net.osparty.ui.OSPartyPanel;
 import net.osparty.ui.ApplicantOverlay;
@@ -86,8 +80,6 @@ import net.runelite.client.game.SpriteManager;
 import net.runelite.client.game.WorldService;
 import net.runelite.http.api.worlds.WorldRegion;
 import net.runelite.http.api.worlds.WorldResult;
-import net.runelite.client.party.events.UserJoin;
-import net.runelite.client.party.events.UserPart;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.task.Schedule;
@@ -128,7 +120,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private SkillIconManager skillIconManager;
 
 	@Inject
-	// V2: LivePartyBackend seam — RuneLite relay today, LivePartyV2 when P1 lands (see provideLivePartyBackend).
+	// The live party, behind its seam (see provideLivePartyBackend).
 	private LivePartyBackend liveParty;
 
 	@Inject
@@ -321,7 +313,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Override
 	protected void startUp()
 	{
-		// Discovery/advertising via the API; the live party runs peer-to-peer (see LiveParty).
+		// Discovery/advertising and the live party share one socket, demultiplexed by Mux.
 		PartyService partyService = apiClient;
 
 		partySocket.start();
@@ -371,8 +363,14 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			playReadySound();
 		});
 		liveParty.setOnReadyExpired(() -> gameMessage("Ready check expired."));
+		liveParty.setOnKicked(() -> {
+			if (config.kickSound())
+			{
+				playResourceSound("/net/osparty/sounds/kicked.wav");
+			}
+		});
 
-		// Stand up the live P2P party layer; the API only advertises the room.
+		// Stand up the live party layer; the advertisement only makes the room findable.
 		liveParty.register();
 
 		// Pull the scammer watchlist now; it refreshes periodically (see schedule).
@@ -628,7 +626,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Subscribe
 	public void onItemContainerChanged(ItemContainerChanged event)
 	{
-		// V2: only the two containers a snapshot actually carries. This fires for the bank, the GE and every
+		// Only the two containers a snapshot actually carries. This fires for the bank, the GE and every
 		// other container too, so without the filter a banking trip re-sent the whole snapshot continuously.
 		int id = event.getContainerId();
 		if (id == InventoryID.INVENTORY.getId() || id == InventoryID.EQUIPMENT.getId())
@@ -640,49 +638,15 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Subscribe
 	public void onStatChanged(StatChanged event)
 	{
-		// V2: the backend decides whether this is a real level-up or just a boost; boosts arrive constantly.
+		// The backend decides whether this is a real level-up or just a boost; boosts arrive constantly.
 		liveParty.markStatsDirty(event.getSkill(), event.getLevel());
 		specTracker.onStatChanged(event);
-	}
-
-	@Subscribe
-	public void onPlayerUpdate(PlayerUpdate event)
-	{
-		liveParty.onPlayerUpdate(event);
-	}
-
-	@Subscribe
-	public void onPartyStateMessage(PartyStateMessage event)
-	{
-		liveParty.onPartyState(event);
-	}
-
-	@Subscribe
-	public void onMemberCommand(MemberCommand event)
-	{
-		// Check before handling: onMemberCommand makes us leave the party.
-		boolean kickedUs = event.getAction() == MemberCommand.Action.KICK
-			&& liveParty.isForLocalMember(event.getTargetMemberId());
-		liveParty.onMemberCommand(event);
-		if (kickedUs && config.kickSound())
-		{
-			playResourceSound("/net/osparty/sounds/kicked.wav");
-		}
 	}
 
 	@Subscribe
 	public void onHostTransferMessage(HostTransferMessage event)
 	{
 		panel.onHostTransferMessage(event);
-	}
-
-	@Subscribe
-	public void onPingMessage(PingMessage event)
-	{
-		if (liveParty.onPing(event) && config.pingSound())
-		{
-			playPingSound();
-		}
 	}
 
 	/** Play the RuneScape-native tile-ping "tink", matching RuneLite's own party plugin. */
@@ -706,12 +670,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 				client.playSoundEffect(SoundEffectID.SMITH_ANVIL_TINK);
 			}
 		});
-	}
-
-	@Subscribe
-	public void onReadyCheckMessage(ReadyCheckMessage event)
-	{
-		liveParty.onReadyCheck(event);
 	}
 
 	@Subscribe
@@ -759,18 +717,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 				playResourceSound("/net/osparty/sounds/friendschatsound.wav");
 			}
 		}
-	}
-
-	@Subscribe
-	public void onUserJoin(UserJoin event)
-	{
-		liveParty.onPeerJoined(event.getMemberId());
-	}
-
-	@Subscribe
-	public void onUserPart(UserPart event)
-	{
-		liveParty.onPeerLeft(event.getMemberId());
 	}
 
 	@Schedule(period = 15, unit = ChronoUnit.MINUTES, asynchronous = true)
@@ -1547,23 +1493,14 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	}
 
 	/**
-	 * Selects the live-party implementation behind the {@link LivePartyBackend} seam: OSParty's own V2 live
-	 * party when {@code -Dosparty.partyV2=true}, otherwise the RuneLite relay (the default).
-	 * See PARTY_V2_MIGRATION.md §9.1/§12.
+	 * Binds the {@link LivePartyBackend} seam to OSParty's own live party — the only implementation. The
+	 * seam stays because the UI, the overlays and the trackers are all written against it and it is what
+	 * makes them testable; it no longer chooses between anything.
 	 */
 	@Provides
 	@javax.inject.Singleton
-	LivePartyBackend provideLivePartyBackend(RuneLiteLivePartyBackend runeLite,
-		net.osparty.party.v2.LivePartyV2 v2,
-		net.osparty.api.ServerCapabilities capabilities)
+	LivePartyBackend provideLivePartyBackend(net.osparty.party.v2.LivePartyV2 liveParty)
 	{
-		// Ask the server before choosing, so one plugin release works against a deployment that serves the
-		// live party and against one that does not. -Dosparty.partyV2=true forces the answer rather than
-		// this choice, so the socket and the backend cannot disagree about which world they are in.
-		capabilities.probe();
-		boolean useV2 = capabilities.partyV2() && capabilities.mergedSocket();
-		// Once, at startup, and never again: this seam is injected across the UI, and swapping it under a
-		// party in progress would leave half the plugin talking to a backend the other half had left.
-		return useV2 ? v2 : runeLite;
+		return liveParty;
 	}
 }

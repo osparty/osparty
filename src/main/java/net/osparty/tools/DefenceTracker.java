@@ -19,7 +19,7 @@ import net.runelite.api.gameval.VarbitID;
  * Tracks the live defence of the monster a party is draining with defence-lowering
  * special attacks. Both the physical Defence level and the magic-defence roll are
  * tracked. Drains are supplied by {@link SpecialAttackTracker} for both the local
- * player and party members (via the party bus), so the computed values reflect the
+ * player and party members (over the live socket), so the computed values reflect the
  * whole party's draining, not just our own.
  *
  * <p>The drain formulas and CoX party-size and Challenge Mode scaling mirror the OSRS

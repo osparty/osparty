@@ -19,14 +19,15 @@ import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
 import net.osparty.OSPartyConfig;
 import net.osparty.model.Member;
-import net.osparty.party.LiveParty;
-import net.osparty.party.LiveParty.Marker;
-import net.osparty.party.LiveParty.RosterMember;
-import net.osparty.party.LiveParty.Status;
+import net.osparty.party.PartyMarker;
+import net.osparty.party.PlayerNames;
+import net.osparty.party.RosterMember;
+import net.osparty.party.PartyStatus;
 import net.osparty.party.LivePartyBackend;
 import net.osparty.party.LocalPlayerSync;
 import net.osparty.party.PlayerUpdate;
 import net.osparty.party.TilePing;
+import net.osparty.party.ReadyCheckStatus;
 import net.osparty.tools.PersonalBests;
 import net.runelite.api.Client;
 import net.runelite.api.Skill;
@@ -35,15 +36,12 @@ import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.EventBus;
 
 /**
- * {@link LivePartyBackend} over OSParty's own live endpoint ({@link PartyV2Socket}), replacing RuneLite's
- * P2P relay. The roster is server-authoritative (received in {@code roster} frames); live member snapshots
- * are relayed {@link PlayerUpdate}s. Structurally mirrors {@link LiveParty} so the UI is unchanged.
- * See PARTY_V2_MIGRATION.md.
+ * The live party, over OSParty's own endpoint ({@link PartyV2Socket}). The roster is server-authoritative
+ * (received in {@code roster} frames); live member state is a relayed {@link PlayerUpdate}, sent as the
+ * parts that changed and merged on receipt. See PARTY_V2_MIGRATION.md.
  *
- * <p>P1 covers the core loop: host/join, live state, server-authoritative roster/admission, kick and map
- * pings. Ready checks, host transfer, spec drains and friends-chat prompts are marked {@code P3} and no-op
- * for now. Inbound RuneLite {@code @Subscribe} handlers ({@code onPlayerUpdate} etc.) are no-ops here — in
- * V2 those events never arrive; state comes over the socket instead.
+ * <p>Everything the party does goes through here: host and join, live state, admission and kick, map pings,
+ * ready checks, spec drains, friends-chat prompts and the host-transfer handshake.
  */
 @Slf4j
 @Singleton
@@ -110,7 +108,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	 */
 	static final String[] PROFILE_FIELDS = {
 		"n", "ah", "cl", "mh", "mp", "sb", "sk", "at", "wd", "fc", "pb", "ro", "ln", "te", "in",
-		// memberId is inherited from RuneLite's PartyMemberMessage, so it keeps its name.
+		// Unshortened, deliberately: peers running an older build read it by this name.
 		"memberId",
 	};
 	/**
@@ -126,9 +124,9 @@ public class LivePartyV2 implements LivePartyBackend {
 	private final PartyV2Socket socket;
 	private final Gson gson;
 	/**
-	 * V2 has no RuneLite party bus, so inbound spec drains / join prompts / host-transfer steps are re-posted
-	 * here as the same message objects the RuneLite backend produced. The plugin's existing subscribers
-	 * (defence tracker, panel, FC popup) then run unchanged.
+	 * Inbound spec drains, join prompts and host-transfer steps are re-posted here as plain message objects,
+	 * so the plugin's existing subscribers (defence tracker, panel, FC popup) receive them the way they
+	 * always have. The socket frame is the wire; the event bus is how the rest of the plugin hears about it.
 	 */
 	private final EventBus eventBus;
 
@@ -157,7 +155,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	private final Map<Long, Long> lastSeen = new ConcurrentHashMap<>();
 
 	private volatile long localMemberId;
-	private volatile Status localStatus;
+	private volatile PartyStatus localStatus;
 
 	// Local self-report.
 	private volatile String localRole;
@@ -193,6 +191,7 @@ public class LivePartyV2 implements LivePartyBackend {
 
 	private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
 	private volatile Runnable onEnded;
+	private volatile Runnable onKicked;
 	private final List<TilePing> pings = new CopyOnWriteArrayList<>();
 
 	// ---- ready check (one active per party; same semantics as LiveParty) -----
@@ -274,6 +273,11 @@ public class LivePartyV2 implements LivePartyBackend {
 	@Override
 	public void setOnEnded(Runnable onEnded) {
 		this.onEnded = onEnded;
+	}
+
+	@Override
+	public void setOnKicked(Runnable onKicked) {
+		this.onKicked = onKicked;
 	}
 
 	// ---- connection ---------------------------------------------------------
@@ -466,6 +470,13 @@ public class LivePartyV2 implements LivePartyBackend {
 				applyTransferHost(frame);
 				break;
 			case "kicked":
+				// The server only sends this to the member it removed, so no target check is needed. Fire
+				// before end(), which clears the room and would leave nothing to say we were kicked rather
+				// than that the host disbanded.
+				Runnable kicked = onKicked;
+				if (kicked != null) {
+					kicked.run();
+				}
 				end();
 				break;
 			case "error":
@@ -1205,10 +1216,10 @@ public class LivePartyV2 implements LivePartyBackend {
 	// ---- markers ------------------------------------------------------------
 
 	@Override
-	public Map<String, Marker> learnerMarkers() {
-		Map<String, Marker> markers = new HashMap<>();
+	public Map<String, PartyMarker> learnerMarkers() {
+		Map<String, PartyMarker> markers = new HashMap<>();
 		for (RosterMember member : roster()) {
-			if (member.getStatus() == Status.PENDING || member.getName() == null) {
+			if (member.getStatus() == PartyStatus.PENDING || member.getName() == null) {
 				continue;
 			}
 			boolean teacher;
@@ -1222,9 +1233,9 @@ public class LivePartyV2 implements LivePartyBackend {
 				teacher = data != null && data.isTeacher();
 				learner = data != null && data.isLearner();
 			}
-			Marker marker = teacher ? Marker.TEACHER : learner ? Marker.LEARNER : Marker.NONE;
-			if (marker != Marker.NONE) {
-				markers.put(LiveParty.normalizeName(member.getName()), marker);
+			PartyMarker marker = teacher ? PartyMarker.TEACHER : learner ? PartyMarker.LEARNER : PartyMarker.NONE;
+			if (marker != PartyMarker.NONE) {
+				markers.put(PlayerNames.normalize(member.getName()), marker);
 			}
 		}
 		return markers;
@@ -1237,7 +1248,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		long now = System.currentTimeMillis();
 		List<RosterMember> out = new ArrayList<>();
 		for (PartyV2Socket.RosterEntry entry : rosterEntries) {
-			Status status = parseStatus(entry.status);
+			PartyStatus status = parseStatus(entry.status);
 			PlayerUpdate data = playerData.get(entry.memberId);
 			String name = data != null && data.getName() != null ? data.getName() : entry.name;
 			boolean local = entry.memberId == localMemberId;
@@ -1282,7 +1293,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	public List<Member> currentMembers() {
 		List<Member> out = new ArrayList<>();
 		for (RosterMember m : roster()) {
-			if (m.getStatus() == Status.PENDING || m.getData() == null || isUnresolvedName(m.getName())) {
+			if (m.getStatus() == PartyStatus.PENDING || m.getData() == null || isUnresolvedName(m.getName())) {
 				continue;
 			}
 			out.add(new Member(m.getName(), m.getData().getAccountHash()));
@@ -1316,7 +1327,7 @@ public class LivePartyV2 implements LivePartyBackend {
 
 	@Override
 	public boolean isLocalAdmitted() {
-		return localStatus == Status.HOST || localStatus == Status.MEMBER;
+		return localStatus == PartyStatus.HOST || localStatus == PartyStatus.MEMBER;
 	}
 
 	@Override
@@ -1368,7 +1379,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		}
 		List<String> taken = new ArrayList<>();
 		for (RosterMember member : roster()) {
-			if (member.getStatus() == Status.PENDING) {
+			if (member.getStatus() == PartyStatus.PENDING) {
 				continue;
 			}
 			String role = member.isLocal() ? localRole
@@ -1412,15 +1423,15 @@ public class LivePartyV2 implements LivePartyBackend {
 		return name == null || name.trim().isEmpty() || "<unknown>".equalsIgnoreCase(name.trim());
 	}
 
-	private static Status parseStatus(String status) {
+	private static PartyStatus parseStatus(String status) {
 		if (status == null) {
-			return Status.PENDING;
+			return PartyStatus.PENDING;
 		}
 		try {
-			return Status.valueOf(status);
+			return PartyStatus.valueOf(status);
 		}
 		catch (IllegalArgumentException e) {
-			return Status.PENDING;
+			return PartyStatus.PENDING;
 		}
 	}
 
@@ -1434,7 +1445,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		// has to say so — otherwise every handover dumps the whole party back into the host's applicant
 		// queue to be re-admitted one by one. Admission is client-asserted either way (the server takes
 		// `invited` on trust), so this claims nothing an ordinary reconnect could not already claim.
-		boolean admitted = localInvited || localStatus == Status.MEMBER;
+		boolean admitted = localInvited || localStatus == PartyStatus.MEMBER;
 		send(new JoinFrame(roomKey, currentActivityId, localRole, localLearner, admitted,
 			localName, localAccountHash));
 	}
@@ -1489,11 +1500,6 @@ public class LivePartyV2 implements LivePartyBackend {
 		send(new ReadyFrame(readyCheckId));
 		checkAllReady();
 		fire();
-	}
-
-	@Override
-	public void onReadyCheck(net.osparty.party.ReadyCheckMessage message) {
-		// No-op in V2: ready checks arrive as socket frames (see applyReadyStart / applyReady).
 	}
 
 	private void applyReadyStart(PartyV2Socket.Frame frame) {
@@ -1579,7 +1585,7 @@ public class LivePartyV2 implements LivePartyBackend {
 	}
 
 	@Override
-	public LiveParty.ReadyCheckStatus readyCheck() {
+	public ReadyCheckStatus readyCheck() {
 		long id = readyCheckId;
 		if (id == 0) {
 			return null;
@@ -1594,7 +1600,7 @@ public class LivePartyV2 implements LivePartyBackend {
 		// Round up: the check reads "30s" for its whole first second and only hits 0 at expiry.
 		long leftMs = Math.max(0, READY_CHECK_TIMEOUT_MS - (System.currentTimeMillis() - readyCheckStartedAt));
 		long left = (leftMs + 999) / 1000;
-		return new LiveParty.ReadyCheckStatus(readyCheckStarter, ready, required.size(), (int) left,
+		return new ReadyCheckStatus(readyCheckStarter, ready, required.size(), (int) left,
 			readyMembers.contains(localMemberId));
 	}
 
@@ -1620,11 +1626,10 @@ public class LivePartyV2 implements LivePartyBackend {
 		catch (IllegalArgumentException e) {
 			return;
 		}
-		net.osparty.party.SpecDrainMessage message = new net.osparty.party.SpecDrainMessage(
+		eventBus.post(new net.osparty.party.SpecDrainMessage(
+			frame.memberId == null ? 0 : frame.memberId,
 			frame.npcIndex == null ? -1 : frame.npcIndex, weapon,
-			frame.hit == null ? 0 : frame.hit, frame.world == null ? 0 : frame.world);
-		message.setMemberId(frame.memberId);
-		eventBus.post(message);
+			frame.hit == null ? 0 : frame.hit, frame.world == null ? 0 : frame.world));
 	}
 
 	// ---- friends-chat / join prompts ----------------------------------------
@@ -1725,44 +1730,6 @@ public class LivePartyV2 implements LivePartyBackend {
 	public void generatePassphrase(Consumer<String> onGenerated) {
 		String token = java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12);
 		SwingUtilities.invokeLater(() -> onGenerated.accept(token));
-	}
-
-	@Override
-	public void rememberResumedRoster(List<Member> members) {
-		// Not needed in V2: the room lives on the owner node, so a host restart rejoins the existing room
-		// with its roster intact rather than rebuilding it from applicants.
-	}
-
-	@Override
-	public void onPlayerUpdate(PlayerUpdate update) {
-		// No-op: V2 receives state over the socket, not via RuneLite's event bus.
-	}
-
-	@Override
-	public void onPartyState(net.osparty.party.PartyStateMessage state) {
-		// No-op in V2 (RuneLite relay message).
-	}
-
-	@Override
-	public void onMemberCommand(net.osparty.party.MemberCommand command) {
-		// No-op in V2 (RuneLite relay message).
-	}
-
-	@Override
-	public boolean onPing(net.osparty.party.PingMessage message) {
-		// No-op in V2: pings arrive as socket frames (see applyPing), and applyPing is what decides
-		// whether one is worth a sound. Nothing reaches this path, so nothing is ever accepted here.
-		return false;
-	}
-
-	@Override
-	public void onPeerJoined(long memberId) {
-		// No-op in V2 (RuneLite party event).
-	}
-
-	@Override
-	public void onPeerLeft(long memberId) {
-		// No-op in V2 (RuneLite party event).
 	}
 
 	// ---- outbound frame shapes (Gson omits nulls) ---------------------------

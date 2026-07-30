@@ -69,7 +69,7 @@ public class TilePingOverlay extends Overlay
 			{
 				continue;
 			}
-			// Configurable (point 47); should match LiveParty's ping window for a clean fade-out.
+			// Configurable (point 47); should match the live party's ping window for a clean fade-out.
 			double t = (now - ping.getCreatedAt()) / (double) config.pingAnimMs();
 			if (t < 0 || t > 1)
 			{

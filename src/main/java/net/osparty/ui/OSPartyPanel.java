@@ -723,11 +723,10 @@ public class OSPartyPanel extends PluginPanel
 		{
 			return;
 		}
+		// The room lives on the owner node, so hosting again rejoins the existing room with its roster
+		// intact — members who were already in it stay admitted rather than coming back as applicants.
 		liveParty.hostParty(party.getPassphrase(), party.getHost(), party.getActivity(), party.getCapacity(), false,
 			party.getHostRole(), party.isLearner(), party.isTeacher());
-		// Re-admit members who were already in the party before the restart, so they don't come back as
-		// applicants the host has to accept again.
-		liveParty.rememberResumedRoster(party.getMembers());
 		partyState.resumeHosting(party);
 	}
 

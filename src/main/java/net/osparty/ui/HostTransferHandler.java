@@ -8,13 +8,14 @@ import javax.swing.Timer;
 import net.osparty.api.PartyService;
 import net.osparty.model.Party;
 import net.osparty.party.HostTransferMessage;
-import net.osparty.party.LiveParty;
 import net.osparty.party.LivePartyBackend;
+import net.osparty.party.PartyStatus;
+import net.osparty.party.RosterMember;
 
 /**
  * Coordinates handing the party to another member without destroying it, driving the
  * {@link HostTransferMessage} handshake (OFFER → ACCEPT → COMMIT / ABORT) and the matching backend
- * ad re-key. The current host keeps its P2P authority and its ownership of the backend ad until the
+ * ad re-key. The current host keeps its authority and its ownership of the backend ad until the
  * exchange completes, so a dropped/ignored message or an unreachable target never orphans the party —
  * the old host simply stays host.
  *
@@ -245,7 +246,7 @@ public class HostTransferHandler
 	/** The display name of an admitted, online member (excluding us), or null if not a valid target. */
 	private String memberName(long memberId)
 	{
-		for (LiveParty.RosterMember member : liveParty.roster())
+		for (RosterMember member : liveParty.roster())
 		{
 			if (member.getMemberId() == memberId)
 			{
@@ -256,9 +257,9 @@ public class HostTransferHandler
 	}
 
 	/** A member we could hand the party to: an admitted, online member that isn't us. */
-	private static boolean isCandidate(LiveParty.RosterMember member)
+	private static boolean isCandidate(RosterMember member)
 	{
-		return member.getStatus() == LiveParty.Status.MEMBER && member.isOnline() && !member.isLocal();
+		return member.getStatus() == PartyStatus.MEMBER && member.isOnline() && !member.isLocal();
 	}
 
 	private void clearOutgoing()

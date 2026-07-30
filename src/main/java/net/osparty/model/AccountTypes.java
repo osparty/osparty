@@ -4,7 +4,7 @@ import net.runelite.api.vars.AccountType;
 
 /**
  * Display helpers for RuneLite's {@link AccountType} (which we can't add methods
- * to) plus lenient (de)serialisation of its name for the API / P2P payloads.
+ * to) plus lenient (de)serialisation of its name for the API / live payloads.
  */
 public final class AccountTypes
 {

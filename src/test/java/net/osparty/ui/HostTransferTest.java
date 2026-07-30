@@ -8,8 +8,9 @@ import javax.swing.SwingUtilities;
 import net.osparty.api.PartyService;
 import net.osparty.model.Party;
 import net.osparty.party.HostTransferMessage;
-import net.osparty.party.LiveParty;
 import net.osparty.party.LivePartyBackend;
+import net.osparty.party.PartyStatus;
+import net.osparty.party.RosterMember;
 import net.runelite.client.config.ConfigManager;
 import org.junit.Before;
 import org.junit.Test;
@@ -25,7 +26,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Drives the {@link HostTransferHandler} handshake against a mocked {@link LiveParty}/{@link PartyService}
+ * Drives the {@link HostTransferHandler} handshake against a mocked {@link LivePartyBackend}/{@link PartyService}
  * to cover the three outcomes: the old host handing off (staying or leaving), and the new host taking over.
  * Inbound messages and socket acks are dispatched via the EDT, so the tests flush it before asserting.
  */
@@ -56,9 +57,9 @@ public class HostTransferTest
 		party.setPassphrase("pp");
 	}
 
-	private static LiveParty.RosterMember member(long id, String name, LiveParty.Status status, boolean local)
+	private static RosterMember member(long id, String name, PartyStatus status, boolean local)
 	{
-		return new LiveParty.RosterMember(id, name, status, null, local, true);
+		return new RosterMember(id, name, status, null, local, true);
 	}
 
 	private static void flushEdt() throws InterruptedException, InvocationTargetException
@@ -73,8 +74,8 @@ public class HostTransferTest
 		partyState.setHosting(party, "old-key");
 		when(liveParty.isHosting()).thenReturn(true);
 		when(liveParty.roster()).thenReturn(List.of(
-			member(OLD_HOST_ID, "LocalName", LiveParty.Status.HOST, true),
-			member(NEW_HOST_ID, "NewHost", LiveParty.Status.MEMBER, false)));
+			member(OLD_HOST_ID, "LocalName", PartyStatus.HOST, true),
+			member(NEW_HOST_ID, "NewHost", PartyStatus.MEMBER, false)));
 		when(liveParty.isForLocalMember(OLD_HOST_ID)).thenReturn(true);
 		// The backend re-key succeeds immediately.
 		doAnswer(inv -> {
@@ -106,7 +107,7 @@ public class HostTransferTest
 		partyState.setHosting(party, "old-key");
 		when(liveParty.isHosting()).thenReturn(true);
 		when(liveParty.roster()).thenReturn(List.of(
-			member(NEW_HOST_ID, "NewHost", LiveParty.Status.MEMBER, false)));
+			member(NEW_HOST_ID, "NewHost", PartyStatus.MEMBER, false)));
 		when(liveParty.isForLocalMember(OLD_HOST_ID)).thenReturn(true);
 		doAnswer(inv -> {
 			Consumer<Party> onSuccess = inv.getArgument(4);
@@ -130,7 +131,7 @@ public class HostTransferTest
 		partyState.setHosting(party, "old-key");
 		when(liveParty.isHosting()).thenReturn(true);
 		when(liveParty.roster()).thenReturn(List.of(
-			member(NEW_HOST_ID, "NewHost", LiveParty.Status.MEMBER, false)));
+			member(NEW_HOST_ID, "NewHost", PartyStatus.MEMBER, false)));
 		when(liveParty.isForLocalMember(OLD_HOST_ID)).thenReturn(true);
 		doAnswer(inv -> {
 			Consumer<Throwable> onError = inv.getArgument(5);

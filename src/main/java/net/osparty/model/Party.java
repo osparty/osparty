@@ -26,8 +26,8 @@ public class Party
 	private long createdAt;
 
 	/**
-	 * Live RuneLite P2P room backing this ad; roster/live data is exchanged P2P,
-	 * not via the API. {@code null} for legacy/seed ads with no live room.
+	 * Live room backing this ad. Roster and live member state travel over the live socket, not the
+	 * advertisement. {@code null} for seed ads with no live room.
 	 */
 	private String passphrase;
 

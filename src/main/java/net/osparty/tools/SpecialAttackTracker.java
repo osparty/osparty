@@ -27,8 +27,6 @@ import net.runelite.api.events.VarbitChanged;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.client.callback.ClientThread;
-import net.runelite.client.party.PartyMember;
-import net.runelite.client.party.PartyService;
 
 /**
  * Self-contained detection of the local player's defence-draining special
@@ -47,9 +45,8 @@ public class SpecialAttackTracker
 {
 	private final Client client;
 	private final ClientThread clientThread;
-	private final PartyService party;
 	private final DefenceTracker defenceTracker;
-	// V2: the live-party seam, used to broadcast drains when we're not on the RuneLite relay. Goes at P6.
+	/** Where a drain is broadcast, and what tells us whether an inbound one is our own echo. */
 	private final LivePartyBackend liveParty;
 	private final OSPartyConfig config;
 
@@ -64,12 +61,11 @@ public class SpecialAttackTracker
 	private final List<Hitsplat> hitsplats = new ArrayList<>();
 
 	@Inject
-	private SpecialAttackTracker(Client client, ClientThread clientThread, PartyService party,
+	private SpecialAttackTracker(Client client, ClientThread clientThread,
 		DefenceTracker defenceTracker, LivePartyBackend liveParty, OSPartyConfig config)
 	{
 		this.client = client;
 		this.clientThread = clientThread;
-		this.party = party;
 		this.defenceTracker = defenceTracker;
 		this.liveParty = liveParty;
 		this.config = config;
@@ -204,25 +200,23 @@ public class SpecialAttackTracker
 		}
 	}
 
-	/** A party member's drain, received over the party bus. */
+	/** A party member's drain, received over the live socket. */
 	public void onSpecDrain(SpecDrainMessage message)
 	{
 		if (message.getWorld() != client.getWorld())
 		{
 			return;
 		}
-		PartyMember local = party.getLocalMember();
-		if (local != null && local.getMemberId() == message.getMemberId())
+		if (liveParty.isForLocalMember(message.getMemberId()))
 		{
-			return; // our own broadcast echoed back to us
+			return; // our own broadcast echoed back to us; queuing it would double-count our spec
 		}
 		defenceTracker.queue(message.getWeapon(), message.getNpcIndex(), message.getHit(), message.getWorld());
 	}
 
 	private void recordDrain(SpecWeapon weapon, int hit, NPC target)
 	{
-		boolean inParty = party.isInParty();
-		if (!inParty && !config.defenceOutsideParty())
+		if (!liveParty.isConnected() && !config.defenceOutsideParty())
 		{
 			return;
 		}
@@ -231,16 +225,9 @@ public class SpecialAttackTracker
 		int npcIndex = target.getIndex();
 		defenceTracker.queue(weapon, npcIndex, hit, world);
 
-		if (inParty)
-		{
-			party.send(new SpecDrainMessage(npcIndex, weapon, hit, world));
-		}
-		else
-		{
-			// V2: no RuneLite party bus in V2 mode, so the drain goes over the live-party seam instead.
-			// Delete this branch (and keep only the seam call) once the RuneLite relay goes at P6.
-			liveParty.sendSpecDrain(npcIndex, weapon.name(), hit, world);
-		}
+		// Unconditional: the backend drops it when we are not in a party, and a drain landed outside one
+		// has nobody to tell anyway.
+		liveParty.sendSpecDrain(npcIndex, weapon.name(), hit, world);
 	}
 
 	private void clearSpec()

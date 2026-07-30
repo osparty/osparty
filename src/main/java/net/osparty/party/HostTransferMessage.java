@@ -1,14 +1,12 @@
 package net.osparty.party;
 
 import lombok.Data;
-import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
-import net.runelite.client.party.messages.PartyMemberMessage;
 
 /**
- * A targeted host -> member handshake for transferring who hosts the party, honoured cooperatively
- * like the rest of the party network. The current host keeps its P2P authority (and the backend ad)
- * until the exchange completes, so a dropped or ignored message never orphans the party:
+ * A targeted host -> member handshake for transferring who hosts the party. The server routes each frame
+ * to the one member it names; the current host keeps its authority (and the backend ad) until the
+ * exchange completes, so a dropped or ignored message never orphans the party:
  *
  * <ol>
  *   <li>{@link Kind#OFFER} (old host -> target): "will you take over?", carrying the fresh
@@ -21,15 +19,20 @@ import net.runelite.client.party.messages.PartyMemberMessage;
  *   <li>{@link Kind#ABORT} (old host -> target): the transfer failed; the target stays a member.</li>
  * </ol>
  *
- * <p>{@code newHostKey} travels over the party bus (visible to current members), consistent with the
- * cooperative-trust model of the party network. The previous host's key is invalidated by the re-key,
- * so the only exposure is the new host's key to players already in the room.
+ * <p>{@code newHostKey} travels over the live socket, and the server delivers it only to the target
+ * member. The previous host's key is invalidated by the re-key, so the only exposure is the new host's
+ * key to the one player being handed the party.
+ *
+ * <p>Rebuilt from an inbound frame by the live-party backend and posted on RuneLite's {@code EventBus},
+ * which is how {@code HostTransferHandler} still receives it unchanged.
  */
 @Data
 @NoArgsConstructor
-@EqualsAndHashCode(callSuper = true)
-public class HostTransferMessage extends PartyMemberMessage
+public class HostTransferMessage
 {
+	/** The member that sent this, stamped by the backend from the frame's sender. */
+	private long memberId;
+
 	public enum Kind
 	{
 		OFFER, ACCEPT, COMMIT, ABORT

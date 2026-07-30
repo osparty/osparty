@@ -11,6 +11,7 @@ import net.osparty.model.PartyPreset;
 import net.osparty.model.PartyRequest;
 import net.osparty.model.Role;
 import net.osparty.party.LivePartyBackend;
+import net.osparty.party.PartyStatus;
 import com.google.gson.Gson;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -1586,7 +1587,7 @@ class CreatePanel extends JPanel implements Scrollable
 		// Can't shrink the party below the people already in it (host + admitted members).
 		int present = liveParty.isConnected()
 			? (int) liveParty.roster().stream()
-				.filter(m -> m.getStatus() != net.osparty.party.LiveParty.Status.PENDING).count()
+				.filter(m -> m.getStatus() != net.osparty.party.PartyStatus.PENDING).count()
 			: 1;
 		if (capacity < present)
 		{
@@ -1671,7 +1672,7 @@ class CreatePanel extends JPanel implements Scrollable
 		partyState.setAdvertiseLayout(advertiseLayout);
 		partyState.update(party);
 
-		// Sync the live P2P room so admit limits, host role and learner/teacher markers follow the edit.
+		// Sync the live room so admit limits, host role and learner/teacher markers follow the edit.
 		liveParty.setCapacity(edit.getCapacity());
 		liveParty.setLocalRole(edit.getHostRole());
 		liveParty.setLocalLearner(edit.isLearner());
