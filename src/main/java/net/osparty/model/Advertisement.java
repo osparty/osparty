@@ -19,6 +19,15 @@ public class Advertisement
 	private String id;
 	private String activity;
 	private String host;
+
+	/**
+	 * The current host's account hash as the server reports it, or 0 from a server that predates the
+	 * field. Read it through {@link #getHostAccountHash()}, never directly: a host transfer rewrites
+	 * {@code host} without touching the member list, so the old fallback of member zero goes stale the
+	 * moment a party changes hands.
+	 */
+	private long hostAccountHash;
+
 	private String description;
 	private int size;
 	private int capacity;
@@ -31,6 +40,13 @@ public class Advertisement
 	private long createdAt;
 
 	/**
+	 * Cluster-wide revision, bumped by the server on every meaningful write and never on a TTL touch.
+	 * What lets a client that already holds the board resume from where it got to instead of being sent
+	 * all of it again.
+	 */
+	private long seq;
+
+	/**
 	 * Live room backing this ad. Roster and live member state travel over the live socket, not the
 	 * advertisement. {@code null} for seed ads with no live room.
 	 */
@@ -40,11 +56,17 @@ public class Advertisement
 	private List<Member> members;
 
 	/**
-	 * @return the host's accountHash (the first member's), or {@code 0} when unknown
-	 * (older host client, or legacy/seed ad). Used for block/favourite matching.
+	 * @return the host's accountHash, or {@code 0} when unknown (older host client, or legacy/seed ad).
+	 * Used for block/favourite matching. Falls back to member zero only for a server that predates
+	 * {@link #hostAccountHash}, where it is the best guess available; member zero is wrong after a host
+	 * transfer, which is why the server sends the hash itself.
 	 */
 	public long getHostAccountHash()
 	{
+		if (hostAccountHash != 0L)
+		{
+			return hostAccountHash;
+		}
 		return members == null || members.isEmpty() ? 0L : members.get(0).getAccountHash();
 	}
 
@@ -71,6 +93,12 @@ public class Advertisement
 
 	private boolean learner;
 	private boolean teacher;
+
+	/** Discord voice channel the server made for this ad, or null when it made none. */
+	private String discordChannelId;
+
+	/** Invite to {@link #discordChannelId}, or null when there is no channel. */
+	private String discordInviteUrl;
 
 	public boolean isFull()
 	{

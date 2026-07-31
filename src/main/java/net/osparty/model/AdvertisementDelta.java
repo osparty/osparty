@@ -15,6 +15,13 @@ public class AdvertisementDelta
 	private String id;
 	private String activity;
 	private String host;
+
+	/**
+	 * Travels with {@code host}: a transfer rewrites the host without touching the member list, so
+	 * without this the ad's hash would keep pointing at the outgoing host.
+	 */
+	private Long hostAccountHash;
+
 	private Integer size;
 	private List<Member> members;
 	private String world;
@@ -30,6 +37,16 @@ public class AdvertisementDelta
 	private Integer invocation;
 	private Boolean hardMode;
 	private String coxScale;
+	private List<String> requiredRoles;
+	private String hostRole;
+	private Boolean learner;
+	private Boolean teacher;
+
+	/**
+	 * The pod the host's live room moved to. Only ever delivered as a delta: a host cannot know where
+	 * its room landed until the live welcome tells it, which is after it advertised.
+	 */
+	private String node;
 
 	public String getId()
 	{
@@ -42,6 +59,10 @@ public class AdvertisementDelta
 		if (host != null)
 		{
 			p.setHost(host);
+		}
+		if (hostAccountHash != null)
+		{
+			p.setHostAccountHash(hostAccountHash);
 		}
 		if (size != null)
 		{
@@ -102,6 +123,26 @@ public class AdvertisementDelta
 		if (coxScale != null)
 		{
 			p.setCoxScale(coxScale);
+		}
+		if (requiredRoles != null)
+		{
+			p.setRequiredRoles(requiredRoles);
+		}
+		if (hostRole != null)
+		{
+			p.setHostRole(hostRole);
+		}
+		if (learner != null)
+		{
+			p.setLearner(learner);
+		}
+		if (teacher != null)
+		{
+			p.setTeacher(teacher);
+		}
+		if (node != null)
+		{
+			p.setNode(node);
 		}
 	}
 }
