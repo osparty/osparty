@@ -1,7 +1,7 @@
 package net.osparty.api;
 
 /**
- * Handle to a live party-list subscription (see {@link BoardService#subscribeAds}).
+ * Handle to a live board subscription (see {@link BoardService#subscribeAds}).
  * Close it to unsubscribe and release the socket. {@link #isConnected()} lets the
  * caller fall back to REST polling while the socket is down.
  */

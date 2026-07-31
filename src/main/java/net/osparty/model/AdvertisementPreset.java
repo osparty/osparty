@@ -7,8 +7,11 @@ import lombok.Data;
  * A saved snapshot of the Create form. Used both for the implicit "last used" recall and for named
  * favourites. Persisted as JSON via ConfigManager, so fields stay simple/serializable.
  *
- * <p>{@link #privateParty} keeps its old name deliberately: this is the on-disk shape, and renaming it
- * would silently clear that checkbox on every favourite a user has already saved. The mapping to
+ * <p><b>Every field name here is the on-disk shape.</b> Renaming one does not fail loudly: gson simply
+ * finds no such key in what a user has already saved and leaves the field at its default, so the setting
+ * reads as cleared. {@link #privateParty} keeps its old name for exactly that reason, and {@link #minKc}
+ * and {@link #hardKc} keep theirs despite being spelled minKillCount / minHardModeKillCount everywhere
+ * else. Renaming any of them needs a migration, not an IDE refactor. The mapping to
  * {@code AdvertisementRequest.privateAd} is explicit in {@code CreatePanel}.
  */
 @Data

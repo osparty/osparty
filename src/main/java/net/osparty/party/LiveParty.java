@@ -27,7 +27,7 @@ import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.EventBus;
 
 /**
- * The live party, over OSParty's own endpoint ({@link LivePartySocket}). The roster is server-authoritative
+ * The live party, over OSParty's own endpoint ({@link LivePartyChannel}). The roster is server-authoritative
  * (received in {@code roster} frames); live member state is a relayed {@link PlayerUpdate}, sent as the
  * parts that changed and merged on receipt. See PARTY_V2_MIGRATION.md.
  *
@@ -112,7 +112,7 @@ public class LiveParty implements LivePartyBackend {
 	private final Client client;
 	private final ConfigManager configManager;
 	private final OSPartyConfig config;
-	private final LivePartySocket socket;
+	private final LivePartyChannel socket;
 	private final Gson gson;
 	/**
 	 * Inbound spec drains, join prompts and host-transfer steps are re-posted here as plain message objects,
@@ -128,7 +128,7 @@ public class LiveParty implements LivePartyBackend {
 	private volatile boolean locked;
 
 	// Server-authoritative roster (last roster frame) + room meta.
-	private volatile List<LivePartySocket.RosterEntry> rosterEntries = List.of();
+	private volatile List<LivePartyChannel.RosterEntry> rosterEntries = List.of();
 	private volatile String hostName;
 	private volatile String discordUrl;
 	/** The advertised party's settings: ours to publish while hosting, the host's to follow as a member. */
@@ -200,7 +200,7 @@ public class LiveParty implements LivePartyBackend {
 
 	@Inject
 	private LiveParty(Client client, ConfigManager configManager, OSPartyConfig config,
-		LivePartySocket socket, Gson gson, EventBus eventBus) {
+		LivePartyChannel socket, Gson gson, EventBus eventBus) {
 		this.client = client;
 		this.configManager = configManager;
 		this.config = config;
@@ -225,7 +225,7 @@ public class LiveParty implements LivePartyBackend {
 
 	@Override
 	public void unregister() {
-		socket.stop();
+		socket.detach();
 		reset();
 	}
 
@@ -291,7 +291,7 @@ public class LiveParty implements LivePartyBackend {
 		// Connect after the mode is set: whether we arrive connected or not, onOpen is what re-sends this
 		// frame, and it reads mode to decide between host and join. sendHost() below covers the case where
 		// the socket is already up (hosting straight after another party).
-		socket.start();
+		socket.attach();
 		sendHost();
 		fire();
 	}
@@ -313,7 +313,7 @@ public class LiveParty implements LivePartyBackend {
 		this.localLearner = learner;
 		this.localInvited = invited;
 		markAllDirty();
-		socket.start();
+		socket.attach();
 		sendJoin();
 		fire();
 	}
@@ -325,7 +325,7 @@ public class LiveParty implements LivePartyBackend {
 		}
 		reset();
 		// After the leave frame: OkHttp transmits what is already queued before it sends the close.
-		socket.stop();
+		socket.detach();
 		fire();
 	}
 
@@ -372,7 +372,7 @@ public class LiveParty implements LivePartyBackend {
 	}
 
 	@Override
-	public boolean isConnected() {
+	public boolean isInParty() {
 		return mode != Mode.NONE;
 	}
 
@@ -388,7 +388,7 @@ public class LiveParty implements LivePartyBackend {
 
 	// ---- inbound frames (socket thread) -------------------------------------
 
-	private void onFrame(LivePartySocket.Frame frame) {
+	private void onFrame(LivePartyChannel.Frame frame) {
 		switch (frame.type) {
 			case "welcome":
 				localMemberId = frame.memberId == null ? 0 : frame.memberId;
@@ -413,7 +413,7 @@ public class LiveParty implements LivePartyBackend {
 				// One window's worth of everyone else's changes, in the order they happened. The owner
 				// already leaves our own out; the id check is belt and braces, not a filter we rely on.
 				if (frame.updates != null) {
-					for (LivePartySocket.MemberUpdate update : frame.updates) {
+					for (LivePartyChannel.MemberUpdate update : frame.updates) {
 						if (update != null && update.state != null && update.memberId != localMemberId) {
 							applyState(update.memberId, update.state);
 						}
@@ -455,7 +455,7 @@ public class LiveParty implements LivePartyBackend {
 				applySpecDrain(frame);
 				break;
 			case "fcRequest":
-				applyFcRequest(frame);
+				applyJoinPrompt(frame);
 				break;
 			case "transferHost":
 				applyTransferHost(frame);
@@ -478,7 +478,7 @@ public class LiveParty implements LivePartyBackend {
 		}
 	}
 
-	private void applyRoster(LivePartySocket.Frame frame) {
+	private void applyRoster(LivePartyChannel.Frame frame) {
 		rosterEntries = frame.members == null ? List.of() : frame.members;
 		hostName = frame.host;
 		if (frame.capacity != null) {
@@ -489,7 +489,7 @@ public class LiveParty implements LivePartyBackend {
 		}
 		discordUrl = frame.discordUrl;
 		// Refresh our own status from the authoritative roster.
-		for (LivePartySocket.RosterEntry entry : rosterEntries) {
+		for (LivePartyChannel.RosterEntry entry : rosterEntries) {
 			if (entry.memberId == localMemberId) {
 				localStatus = parseStatus(entry.status);
 			}
@@ -598,7 +598,7 @@ public class LiveParty implements LivePartyBackend {
 		}
 	}
 
-	private void applyMeta(LivePartySocket.Frame frame) {
+	private void applyMeta(LivePartyChannel.Frame frame) {
 		if (frame.meta == null) {
 			return;
 		}
@@ -616,7 +616,7 @@ public class LiveParty implements LivePartyBackend {
 		fire();
 	}
 
-	private void applyPing(LivePartySocket.Frame frame) {
+	private void applyPing(LivePartyChannel.Frame frame) {
 		if (frame.x == null || frame.y == null || frame.memberId == null || frame.memberId == localMemberId) {
 			return;
 		}
@@ -629,7 +629,7 @@ public class LiveParty implements LivePartyBackend {
 	/** The room is over (host disbanded, or we were kicked): drop the connection with it. */
 	private void end() {
 		reset();
-		socket.stop();
+		socket.detach();
 		Runnable cb = onEnded;
 		if (cb != null) {
 			cb.run();
@@ -784,7 +784,7 @@ public class LiveParty implements LivePartyBackend {
 	 * Send whatever changed, as up to three frames.
 	 *
 	 * <p>The whole point of the split is that the common case — a vital moved and nothing else — never
-	 * touches {@link LocalPlayerSync#snapshot}, which reads 28 inventory slots and 23 skill levels to
+	 * touches {@link LocalPlayerSnapshot#snapshot}, which reads 28 inventory slots and 23 skill levels to
 	 * produce a payload we would then throw away. Items and profile share one snapshot when both are dirty.
 	 *
 	 * <p>The frame also says whether it wants relaying promptly. Only a vital that moved down does — see
@@ -793,7 +793,7 @@ public class LiveParty implements LivePartyBackend {
 	private void sendLocalState() {
 		JsonObject full = null;
 		if (itemsDirty || profileDirty) {
-			PlayerUpdate update = LocalPlayerSync.snapshot(client);
+			PlayerUpdate update = LocalPlayerSnapshot.snapshot(client);
 			if (update == null) {
 				// Not logged in yet; leave the flags set and try again next tick.
 				return;
@@ -987,7 +987,7 @@ public class LiveParty implements LivePartyBackend {
 				sentRealLevels.put(skill, client.getRealSkillLevel(skill));
 			}
 			catch (Exception ignored) {
-				// Placeholder/unreleased skills, as in LocalPlayerSync.
+				// Placeholder/unreleased skills, as in LocalPlayerSnapshot.
 			}
 		}
 	}
@@ -1142,7 +1142,7 @@ public class LiveParty implements LivePartyBackend {
 			return true;
 		}
 		int admitted = 0;
-		for (LivePartySocket.RosterEntry entry : rosterEntries) {
+		for (LivePartyChannel.RosterEntry entry : rosterEntries) {
 			if (!"PENDING".equals(entry.status)) {
 				admitted++;
 			}
@@ -1238,7 +1238,7 @@ public class LiveParty implements LivePartyBackend {
 	public List<RosterMember> roster() {
 		long now = System.currentTimeMillis();
 		List<RosterMember> out = new ArrayList<>();
-		for (LivePartySocket.RosterEntry entry : rosterEntries) {
+		for (LivePartyChannel.RosterEntry entry : rosterEntries) {
 			PartyStatus status = parseStatus(entry.status);
 			PlayerUpdate data = playerData.get(entry.memberId);
 			String name = data != null && data.getName() != null ? data.getName() : entry.name;
@@ -1254,9 +1254,9 @@ public class LiveParty implements LivePartyBackend {
 	@Override
 	public List<Member> rosterMembers() {
 		List<Member> out = new ArrayList<>();
-		LivePartySocket.RosterEntry host = null;
-		List<LivePartySocket.RosterEntry> others = new ArrayList<>();
-		for (LivePartySocket.RosterEntry entry : rosterEntries) {
+		LivePartyChannel.RosterEntry host = null;
+		List<LivePartyChannel.RosterEntry> others = new ArrayList<>();
+		for (LivePartyChannel.RosterEntry entry : rosterEntries) {
 			if ("HOST".equals(entry.status)) {
 				host = entry;
 			}
@@ -1268,14 +1268,14 @@ public class LiveParty implements LivePartyBackend {
 			out.add(new Member(nameFor(host), accountHashFor(host)));
 		}
 		others.sort(Comparator.comparingLong(e -> e.memberId));
-		for (LivePartySocket.RosterEntry entry : others) {
+		for (LivePartyChannel.RosterEntry entry : others) {
 			out.add(new Member(nameFor(entry), accountHashFor(entry)));
 		}
 		return out;
 	}
 
 	/** The member's live self-reported name, falling back to whatever the roster carries. */
-	private String nameFor(LivePartySocket.RosterEntry entry) {
+	private String nameFor(LivePartyChannel.RosterEntry entry) {
 		PlayerUpdate data = playerData.get(entry.memberId);
 		return data != null && data.getName() != null ? data.getName() : entry.name;
 	}
@@ -1292,7 +1292,7 @@ public class LiveParty implements LivePartyBackend {
 		return out;
 	}
 
-	private long accountHashFor(LivePartySocket.RosterEntry entry) {
+	private long accountHashFor(LivePartyChannel.RosterEntry entry) {
 		PlayerUpdate data = playerData.get(entry.memberId);
 		return data != null && data.getAccountHash() != 0 ? data.getAccountHash() : entry.accountHash;
 	}
@@ -1303,7 +1303,7 @@ public class LiveParty implements LivePartyBackend {
 		if (data != null && data.getAccountHash() != 0) {
 			return data.getAccountHash();
 		}
-		for (LivePartySocket.RosterEntry entry : rosterEntries) {
+		for (LivePartyChannel.RosterEntry entry : rosterEntries) {
 			if (entry.memberId == memberId) {
 				return entry.accountHash;
 			}
@@ -1326,7 +1326,7 @@ public class LiveParty implements LivePartyBackend {
 		if (mode != Mode.HOST) {
 			return false;
 		}
-		for (LivePartySocket.RosterEntry entry : rosterEntries) {
+		for (LivePartyChannel.RosterEntry entry : rosterEntries) {
 			if (entry.memberId == memberId) {
 				return "PENDING".equals(entry.status);
 			}
@@ -1345,7 +1345,7 @@ public class LiveParty implements LivePartyBackend {
 			PlayerUpdate mine = playerData.get(localMemberId);
 			return mine != null && mine.getWorld() > 0 ? mine.getWorld() : localWorld;
 		}
-		for (LivePartySocket.RosterEntry entry : rosterEntries) {
+		for (LivePartyChannel.RosterEntry entry : rosterEntries) {
 			if ("HOST".equals(entry.status)) {
 				PlayerUpdate data = playerData.get(entry.memberId);
 				return data != null ? data.getWorld() : 0;
@@ -1467,7 +1467,7 @@ public class LiveParty implements LivePartyBackend {
 	/** Start a ready check (anyone in the party may). The starter counts as ready. */
 	@Override
 	public void startReadyCheck() {
-		if (!isConnected() || localMemberId == 0 || onDifferentWorldThanHost()) {
+		if (!isInParty() || localMemberId == 0 || onDifferentWorldThanHost()) {
 			return;
 		}
 		long id = (localMemberId << 16) | (++readyCheckSeq & 0xFFFF);
@@ -1493,7 +1493,7 @@ public class LiveParty implements LivePartyBackend {
 		fire();
 	}
 
-	private void applyReadyStart(LivePartySocket.Frame frame) {
+	private void applyReadyStart(LivePartyChannel.Frame frame) {
 		if (frame.checkId == null || frame.memberId == null) {
 			return;
 		}
@@ -1505,7 +1505,7 @@ public class LiveParty implements LivePartyBackend {
 		fire();
 	}
 
-	private void applyReady(LivePartySocket.Frame frame) {
+	private void applyReady(LivePartyChannel.Frame frame) {
 		if (frame.checkId == null || frame.memberId == null
 			|| readyCheckId == 0 || frame.checkId != readyCheckId) {
 			return;
@@ -1567,7 +1567,7 @@ public class LiveParty implements LivePartyBackend {
 	/** Member ids that must ready up: everyone admitted (host + members), not pending. */
 	private java.util.Set<Long> activeMemberIds() {
 		java.util.Set<Long> ids = new java.util.HashSet<>();
-		for (LivePartySocket.RosterEntry entry : rosterEntries) {
+		for (LivePartyChannel.RosterEntry entry : rosterEntries) {
 			if (!"PENDING".equals(entry.status)) {
 				ids.add(entry.memberId);
 			}
@@ -1606,7 +1606,7 @@ public class LiveParty implements LivePartyBackend {
 		send(new SpecDrainFrame(npcIndex, weapon, hit, world));
 	}
 
-	private void applySpecDrain(LivePartySocket.Frame frame) {
+	private void applySpecDrain(LivePartyChannel.Frame frame) {
 		if (frame.memberId == null || frame.weapon == null) {
 			return;
 		}
@@ -1617,7 +1617,7 @@ public class LiveParty implements LivePartyBackend {
 		catch (IllegalArgumentException e) {
 			return;
 		}
-		eventBus.post(new SpecDrainMessage(
+		eventBus.post(new SpecDrainEvent(
 			frame.memberId == null ? 0 : frame.memberId,
 			frame.npcIndex == null ? -1 : frame.npcIndex, weapon,
 			frame.hit == null ? 0 : frame.hit, frame.world == null ? 0 : frame.world));
@@ -1638,8 +1638,8 @@ public class LiveParty implements LivePartyBackend {
 		send(new FcRequestFrame(targetMemberId, kind, friendsChat));
 	}
 
-	private void applyFcRequest(LivePartySocket.Frame frame) {
-		FcRequestMessage request = new FcRequestMessage();
+	private void applyJoinPrompt(LivePartyChannel.Frame frame) {
+		JoinPromptEvent request = new JoinPromptEvent();
 		// The server only delivers this to its target, so it is always aimed at us.
 		request.setTargetMemberId(localMemberId);
 		request.setHostName(frame.host != null ? frame.host : hostName);
@@ -1695,13 +1695,13 @@ public class LiveParty implements LivePartyBackend {
 		send(new TransferHostFrame("ABORT", targetMemberId, null, null, false));
 	}
 
-	private void applyTransferHost(LivePartySocket.Frame frame) {
+	private void applyTransferHost(LivePartyChannel.Frame frame) {
 		if (frame.kind == null || frame.memberId == null) {
 			return;
 		}
-		HostTransferMessage message = new HostTransferMessage();
+		HostTransferEvent message = new HostTransferEvent();
 		try {
-			message.setKind(HostTransferMessage.Kind.valueOf(frame.kind));
+			message.setKind(HostTransferEvent.Kind.valueOf(frame.kind));
 		}
 		catch (IllegalArgumentException e) {
 			return;

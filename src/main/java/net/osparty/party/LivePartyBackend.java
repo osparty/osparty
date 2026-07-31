@@ -62,7 +62,8 @@ public interface LivePartyBackend
 
 	void leaveForSwitch();
 
-	boolean isConnected();
+	/** Whether we are in a party at all, as host or member. Says nothing about the socket. */
+	boolean isInParty();
 
 	boolean isHosting();
 

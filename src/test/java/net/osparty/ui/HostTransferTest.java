@@ -7,7 +7,7 @@ import java.util.function.Consumer;
 import javax.swing.SwingUtilities;
 import net.osparty.api.BoardService;
 import net.osparty.model.Advertisement;
-import net.osparty.party.HostTransferMessage;
+import net.osparty.party.HostTransferEvent;
 import net.osparty.party.LivePartyBackend;
 import net.osparty.party.PartyStatus;
 import net.osparty.party.RosterMember;
@@ -187,31 +187,31 @@ public class HostTransferTest
 		assertFalse(partyState.isHost());
 	}
 
-	private static HostTransferMessage offer(long target, long from, String key, boolean stays)
+	private static HostTransferEvent offer(long target, long from, String key, boolean stays)
 	{
-		HostTransferMessage m = message(HostTransferMessage.Kind.OFFER, target, from);
+		HostTransferEvent m = message(HostTransferEvent.Kind.OFFER, target, from);
 		m.setNewHostKey(key);
 		m.setNewHostName("NewHost");
 		m.setHostStays(stays);
 		return m;
 	}
 
-	private static HostTransferMessage accept(long from, long target)
+	private static HostTransferEvent accept(long from, long target)
 	{
-		return message(HostTransferMessage.Kind.ACCEPT, target, from);
+		return message(HostTransferEvent.Kind.ACCEPT, target, from);
 	}
 
-	private static HostTransferMessage commit(long target, long from, String key, boolean stays)
+	private static HostTransferEvent commit(long target, long from, String key, boolean stays)
 	{
-		HostTransferMessage m = message(HostTransferMessage.Kind.COMMIT, target, from);
+		HostTransferEvent m = message(HostTransferEvent.Kind.COMMIT, target, from);
 		m.setNewHostKey(key);
 		m.setHostStays(stays);
 		return m;
 	}
 
-	private static HostTransferMessage message(HostTransferMessage.Kind kind, long target, long from)
+	private static HostTransferEvent message(HostTransferEvent.Kind kind, long target, long from)
 	{
-		HostTransferMessage m = new HostTransferMessage();
+		HostTransferEvent m = new HostTransferEvent();
 		m.setKind(kind);
 		m.setTargetMemberId(target);
 		m.setMemberId(from);

@@ -14,7 +14,7 @@ import lombok.NoArgsConstructor;
  */
 @Data
 @NoArgsConstructor
-public class FcRequestMessage
+public class JoinPromptEvent
 {
 	/** The host that sent this, stamped by the backend from the frame's sender. */
 	private long memberId;

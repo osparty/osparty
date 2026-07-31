@@ -7,7 +7,7 @@ import javax.inject.Singleton;
 import net.osparty.OSPartyConfig;
 import net.osparty.enums.SpecWeapon;
 import net.osparty.party.LivePartyBackend;
-import net.osparty.party.SpecDrainMessage;
+import net.osparty.party.SpecDrainEvent;
 import net.runelite.api.Actor;
 import net.runelite.api.Client;
 import net.runelite.api.EquipmentInventorySlot;
@@ -32,7 +32,7 @@ import net.runelite.client.callback.ClientThread;
  * Self-contained detection of the local player's defence-draining special
  * attacks. It watches the special-attack energy drop, identifies the equipped
  * {@link SpecWeapon}, waits for the resulting hitsplat on the interacting NPC,
- * then feeds {@link DefenceTracker} and broadcasts a {@link SpecDrainMessage} so
+ * then feeds {@link DefenceTracker} and broadcasts a {@link SpecDrainEvent} so
  * every party member aggregates the whole group's draining.
  *
  * <p>This replicates the relevant detection from RuneLite's Special Attack
@@ -201,7 +201,7 @@ public class SpecialAttackTracker
 	}
 
 	/** A party member's drain, received over the live socket. */
-	public void onSpecDrain(SpecDrainMessage message)
+	public void onSpecDrain(SpecDrainEvent message)
 	{
 		if (message.getWorld() != client.getWorld())
 		{
@@ -216,7 +216,7 @@ public class SpecialAttackTracker
 
 	private void recordDrain(SpecWeapon weapon, int hit, NPC target)
 	{
-		if (!liveParty.isConnected() && !config.defenceOutsideParty())
+		if (!liveParty.isInParty() && !config.defenceOutsideParty())
 		{
 			return;
 		}

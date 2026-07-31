@@ -9,7 +9,7 @@ import net.osparty.api.DiscordLinkStatus;
 import net.osparty.api.BoardService;
 import net.osparty.service.PartyHistoryService;
 import net.osparty.model.Advertisement;
-import net.osparty.party.HostTransferMessage;
+import net.osparty.party.HostTransferEvent;
 import net.osparty.party.LivePartyBackend;
 import com.google.gson.Gson;
 import net.osparty.service.RuneWatchService;
@@ -113,7 +113,7 @@ public class OSPartyPanel extends PluginPanel
 	/** The account's server-side badge-privacy preference, mirrored from the last link status. */
 	private volatile boolean badgesVisible = true;
 	private final SearchPanel searchPanel;
-	private final FriendsPanel favoritesPanel;
+	private final FavoritesPanel favoritesPanel;
 	private final BlockedPanel blockedPanel;
 	private final CreatePanel createPanel;
 	private final PartyPanel partyPanel;
@@ -122,7 +122,7 @@ public class OSPartyPanel extends PluginPanel
 	private final MaterialTabGroup tabGroup;
 	private final MaterialTab searchTab;
 	private final MaterialTab createTab;
-	private final MaterialTab favesTab;
+	private final MaterialTab favoritesTab;
 	private final MaterialTab blockedTab;
 	private final MaterialTab partyTab;
 	private final MaterialTab historyTab;
@@ -170,7 +170,7 @@ public class OSPartyPanel extends PluginPanel
 			mapRegionsSupplier, worldRegionResolver, killcountService, configManager,
 			worldPinger, worldAddressResolver, friendNamesSupplier, favoritesService, blockListService,
 			spriteManager, config);
-		favoritesPanel = new FriendsPanel(boardService, playerNameSupplier, partyState,
+		favoritesPanel = new FavoritesPanel(boardService, playerNameSupplier, partyState,
 			liveParty, accountTypeSupplier, killcountService, worldPinger, worldRegionResolver,
 			worldAddressResolver, favoritesService, blockListService, friendNamesSupplier, spriteManager,
 			config);
@@ -219,8 +219,8 @@ public class OSPartyPanel extends PluginPanel
 		searchTab.setToolTipText("Search");
 		createTab = new MaterialTab(TabIcons.PARTY, tabGroup, createScroll);
 		createTab.setToolTipText("Party");
-		favesTab = new MaterialTab(TabIcons.FAVORITES, tabGroup, favoritesPanel);
-		favesTab.setToolTipText("Favorites");
+		favoritesTab = new MaterialTab(TabIcons.FAVORITES, tabGroup, favoritesPanel);
+		favoritesTab.setToolTipText("Favorites");
 		blockedTab = new MaterialTab(TabIcons.BLOCK, tabGroup, blockedPanel);
 		blockedTab.setToolTipText("Blocked");
 		partyTab = new MaterialTab(TabIcons.PARTY, tabGroup, partyPanel)
@@ -247,14 +247,14 @@ public class OSPartyPanel extends PluginPanel
 
 		// Upgrade tabs to OSRS sprites; Party keeps its bundled PNG (no clean square sprite exists).
 		applyTabSprite(spriteManager, SpriteID.GE_SEARCH, searchTab::setIcon);
-		applyTabSprite(spriteManager, SpriteID.WORLD_SWITCHER_STAR_MEMBERS, favesTab::setIcon);
+		applyTabSprite(spriteManager, SpriteID.WORLD_SWITCHER_STAR_MEMBERS, favoritesTab::setIcon);
 		applyTabSprite(spriteManager, SpriteID.TAB_IGNORES, blockedTab::setIcon);
 		applyTabItem(itemManager, ItemID.HOURGLASS, historyTab::setIcon);
 
 		// Register all tabs (needed for select()); rebuildTabs lays out the idle bar.
 		tabGroup.addTab(searchTab);
 		tabGroup.addTab(createTab);
-		tabGroup.addTab(favesTab);
+		tabGroup.addTab(favoritesTab);
 		tabGroup.addTab(blockedTab);
 		tabGroup.addTab(partyTab);
 		tabGroup.addTab(historyTab);
@@ -366,7 +366,7 @@ public class OSPartyPanel extends PluginPanel
 
 	private void updateActiveUsers()
 	{
-		int online = boardService.onlineUsers();
+		int online = boardService.onlineUserCount();
 		activeUsersLabel.setText(online < 0 ? "" : online + " online");
 
 		// Only re-query link status when the logged-in account changes, not every tick.
@@ -460,7 +460,7 @@ public class OSPartyPanel extends PluginPanel
 			applyLinkStatus(null);
 			return;
 		}
-		boardService.getDiscordLink(hash, status -> SwingUtilities.invokeLater(() -> applyLinkStatus(status)));
+		boardService.fetchDiscordLink(hash, status -> SwingUtilities.invokeLater(() -> applyLinkStatus(status)));
 	}
 
 	private void applyLinkStatus(DiscordLinkStatus status)
@@ -541,7 +541,7 @@ public class OSPartyPanel extends PluginPanel
 		linkPollTimer = new Timer(2000, e ->
 		{
 			ticks[0]++;
-			boardService.getDiscordLink(hash, status -> SwingUtilities.invokeLater(() ->
+			boardService.fetchDiscordLink(hash, status -> SwingUtilities.invokeLater(() ->
 			{
 				if (status != null && status.isLinked())
 				{
@@ -731,7 +731,7 @@ public class OSPartyPanel extends PluginPanel
 	}
 
 	/** Route an inbound host-transfer handshake message (from the plugin's party-bus subscription). */
-	public void onHostTransferMessage(HostTransferMessage message)
+	public void onHostTransferEvent(HostTransferEvent message)
 	{
 		hostTransferHandler.onMessage(message);
 	}
@@ -908,7 +908,7 @@ public class OSPartyPanel extends PluginPanel
 	{
 		tabGroup.remove(searchTab);
 		tabGroup.remove(createTab);
-		tabGroup.remove(favesTab);
+		tabGroup.remove(favoritesTab);
 		tabGroup.remove(blockedTab);
 		tabGroup.remove(partyTab);
 		tabGroup.remove(historyTab);
@@ -916,7 +916,7 @@ public class OSPartyPanel extends PluginPanel
 		tabGroup.add(searchTab);
 		tabGroup.add(partyTab);
 		tabGroup.add(createTab);
-		tabGroup.add(favesTab);
+		tabGroup.add(favoritesTab);
 		tabGroup.add(blockedTab);
 		tabGroup.add(historyTab);
 
@@ -929,7 +929,7 @@ public class OSPartyPanel extends PluginPanel
 	{
 		tabGroup.remove(searchTab);
 		tabGroup.remove(createTab);
-		tabGroup.remove(favesTab);
+		tabGroup.remove(favoritesTab);
 		tabGroup.remove(blockedTab);
 		tabGroup.remove(partyTab);
 		tabGroup.remove(historyTab);
@@ -943,7 +943,7 @@ public class OSPartyPanel extends PluginPanel
 		{
 			tabGroup.add(createTab);
 		}
-		tabGroup.add(favesTab);
+		tabGroup.add(favoritesTab);
 		tabGroup.add(blockedTab);
 		tabGroup.add(historyTab);
 

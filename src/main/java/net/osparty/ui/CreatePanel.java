@@ -73,7 +73,8 @@ class CreatePanel extends JPanel implements Scrollable
 	private static final int DESC_MAX = 200;
 
 	private static final String KEY_LAST_PRESET = "lastPreset";
-	private static final String KEY_FAVOURITES = "favourites";
+	/** Value stays "favourites": it is what presets have always been saved under. */
+	private static final String KEY_PRESETS = "favourites";
 
 	private final BoardService boardService;
 	private final OSPartyConfig config;
@@ -139,8 +140,8 @@ class CreatePanel extends JPanel implements Scrollable
 	private boolean rolesExpanded;
 	private final JButton rolesToggle = new JButton();
 
-	private final JComboBox<String> favouriteDropdown = new JComboBox<>();
-	private boolean rebuildingFavourites;
+	private final JComboBox<String> presetDropdown = new JComboBox<>();
+	private boolean rebuildingPresets;
 
 	private final JSpinner minKcSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 100_000, 10));
 	private final JLabel hardKcLabel = new JLabel("Minimum CM KC");
@@ -206,7 +207,7 @@ class CreatePanel extends JPanel implements Scrollable
 		setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
 		setBackground(ColorScheme.DARK_GRAY_COLOR);
 
-		add(buildFavourites());
+		add(buildPresets());
 
 		// ---- Join existing ---- (apply to a party by invite code, above the create form)
 		joinExistingSection = buildJoinExisting();
@@ -1585,7 +1586,7 @@ class CreatePanel extends JPanel implements Scrollable
 
 		int capacity = (Integer) capacitySpinner.getValue();
 		// Can't shrink the party below the people already in it (host + admitted members).
-		int present = liveParty.isConnected()
+		int present = liveParty.isInParty()
 			? (int) liveParty.roster().stream()
 				.filter(m -> m.getStatus() != net.osparty.party.PartyStatus.PENDING).count()
 			: 1;
@@ -1739,11 +1740,11 @@ class CreatePanel extends JPanel implements Scrollable
 		return false;
 	}
 
-	// ---- favourites / presets ------------------------------------------------
+	// ---- presets -------------------------------------------------------------
 
-	private static final String FAV_PLACEHOLDER = "Presets…";
+	private static final String PRESET_PLACEHOLDER = "Presets…";
 
-	private JPanel buildFavourites()
+	private JPanel buildPresets()
 	{
 		JPanel panel = new JPanel(new BorderLayout(4, 0))
 		{
@@ -1757,38 +1758,38 @@ class CreatePanel extends JPanel implements Scrollable
 		panel.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
 		panel.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-		favouriteDropdown.addActionListener(e -> {
-			if (rebuildingFavourites)
+		presetDropdown.addActionListener(e -> {
+			if (rebuildingPresets)
 			{
 				return;
 			}
-			int idx = favouriteDropdown.getSelectedIndex();
+			int idx = presetDropdown.getSelectedIndex();
 			if (idx <= 0)
 			{
 				return; // placeholder row
 			}
-			List<AdvertisementPreset> favourites = loadFavourites();
-			if (idx - 1 < favourites.size())
+			List<AdvertisementPreset> presets = loadPresets();
+			if (idx - 1 < presets.size())
 			{
-				applyPreset(favourites.get(idx - 1));
-				setStatus("Loaded preset \"" + favourites.get(idx - 1).getName() + "\".");
+				applyPreset(presets.get(idx - 1));
+				setStatus("Loaded preset \"" + presets.get(idx - 1).getName() + "\".");
 			}
 		});
 
 		JButton save = miniButton(StatusIcons.PLUS, "Save the current settings as a preset");
-		save.addActionListener(e -> saveCurrentAsFavourite());
+		save.addActionListener(e -> saveCurrentAsPreset());
 
 		JButton remove = miniButton(StatusIcons.CROSS, "Remove the selected preset");
-		remove.addActionListener(e -> removeSelectedFavourite());
+		remove.addActionListener(e -> removeSelectedPreset());
 
 		JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
 		buttons.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		buttons.add(save);
 		buttons.add(remove);
 
-		panel.add(favouriteDropdown, BorderLayout.CENTER);
+		panel.add(presetDropdown, BorderLayout.CENTER);
 		panel.add(buttons, BorderLayout.EAST);
-		rebuildFavourites();
+		rebuildPresets();
 		return panel;
 	}
 
@@ -1801,20 +1802,20 @@ class CreatePanel extends JPanel implements Scrollable
 		return button;
 	}
 
-	private void rebuildFavourites()
+	private void rebuildPresets()
 	{
-		rebuildingFavourites = true;
-		favouriteDropdown.removeAllItems();
-		favouriteDropdown.addItem(FAV_PLACEHOLDER);
-		for (AdvertisementPreset preset : loadFavourites())
+		rebuildingPresets = true;
+		presetDropdown.removeAllItems();
+		presetDropdown.addItem(PRESET_PLACEHOLDER);
+		for (AdvertisementPreset preset : loadPresets())
 		{
-			favouriteDropdown.addItem(preset.getName());
+			presetDropdown.addItem(preset.getName());
 		}
-		favouriteDropdown.setSelectedIndex(0);
-		rebuildingFavourites = false;
+		presetDropdown.setSelectedIndex(0);
+		rebuildingPresets = false;
 	}
 
-	private void saveCurrentAsFavourite()
+	private void saveCurrentAsPreset()
 	{
 		String name = JOptionPane.showInputDialog(this, "Preset name:", "Save preset",
 			JOptionPane.PLAIN_MESSAGE);
@@ -1823,35 +1824,35 @@ class CreatePanel extends JPanel implements Scrollable
 			return;
 		}
 		name = name.trim();
-		if (name.isEmpty() || FAV_PLACEHOLDER.equals(name))
+		if (name.isEmpty() || PRESET_PLACEHOLDER.equals(name))
 		{
 			setError("Enter a name for the preset.");
 			return;
 		}
-		List<AdvertisementPreset> favourites = loadFavourites();
+		List<AdvertisementPreset> presets = loadPresets();
 		String chosen = name;
-		favourites.removeIf(f -> chosen.equalsIgnoreCase(f.getName())); // overwrite a same-named one
-		favourites.add(captureForm(chosen));
-		saveFavourites(favourites);
-		rebuildFavourites();
-		favouriteDropdown.setSelectedItem(chosen);
+		presets.removeIf(p -> chosen.equalsIgnoreCase(p.getName())); // overwrite a same-named one
+		presets.add(captureForm(chosen));
+		savePresets(presets);
+		rebuildPresets();
+		presetDropdown.setSelectedItem(chosen);
 		setSuccess("Saved preset \"" + chosen + "\".");
 	}
 
-	private void removeSelectedFavourite()
+	private void removeSelectedPreset()
 	{
-		int idx = favouriteDropdown.getSelectedIndex();
+		int idx = presetDropdown.getSelectedIndex();
 		if (idx <= 0)
 		{
 			setError("Select a preset to remove.");
 			return;
 		}
-		List<AdvertisementPreset> favourites = loadFavourites();
-		if (idx - 1 < favourites.size())
+		List<AdvertisementPreset> presets = loadPresets();
+		if (idx - 1 < presets.size())
 		{
-			String removed = favourites.remove(idx - 1).getName();
-			saveFavourites(favourites);
-			rebuildFavourites();
+			String removed = presets.remove(idx - 1).getName();
+			savePresets(presets);
+			rebuildPresets();
 			setSuccess("Removed preset \"" + removed + "\".");
 		}
 	}
@@ -1973,17 +1974,17 @@ class CreatePanel extends JPanel implements Scrollable
 		}
 	}
 
-	private List<AdvertisementPreset> loadFavourites()
+	private List<AdvertisementPreset> loadPresets()
 	{
-		String json = configManager.getConfiguration(OSPartyConfig.GROUP, KEY_FAVOURITES);
+		String json = configManager.getConfiguration(OSPartyConfig.GROUP, KEY_PRESETS);
 		if (json == null || json.isEmpty())
 		{
 			return new ArrayList<>();
 		}
 		try
 		{
-			AdvertisementPreset[] favourites = gson.fromJson(json, AdvertisementPreset[].class);
-			return favourites == null ? new ArrayList<>() : new ArrayList<>(Arrays.asList(favourites));
+			AdvertisementPreset[] presets = gson.fromJson(json, AdvertisementPreset[].class);
+			return presets == null ? new ArrayList<>() : new ArrayList<>(Arrays.asList(presets));
 		}
 		catch (RuntimeException e)
 		{
@@ -1991,9 +1992,9 @@ class CreatePanel extends JPanel implements Scrollable
 		}
 	}
 
-	private void saveFavourites(List<AdvertisementPreset> favourites)
+	private void savePresets(List<AdvertisementPreset> presets)
 	{
-		configManager.setConfiguration(OSPartyConfig.GROUP, KEY_FAVOURITES, gson.toJson(favourites));
+		configManager.setConfiguration(OSPartyConfig.GROUP, KEY_PRESETS, gson.toJson(presets));
 	}
 
 	/** Dropdown renderer that appends "(nearby)" to the recommended activity. */

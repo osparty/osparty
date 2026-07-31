@@ -35,7 +35,7 @@ import net.osparty.api.OSPartySocket;
  * would arrive to "no room" and silently fall out of the party.
  */
 @Slf4j
-public class LivePartySocket implements OSPartySocket.LiveChannel {
+public class LivePartyChannel implements OSPartySocket.LiveChannel {
 	/** Retry delay used when an {@code ownerPending} frame does not name one. */
 	private static final long DEFAULT_RETRY_MS = 1_000;
 	/**
@@ -58,7 +58,7 @@ public class LivePartySocket implements OSPartySocket.LiveChannel {
 	private volatile int pendingRetries;
 
 	@javax.inject.Inject
-	public LivePartySocket(OSPartySocket connection, Gson gson) {
+	public LivePartyChannel(OSPartySocket connection, Gson gson) {
 		this.connection = connection;
 		this.gson = gson;
 	}
@@ -79,7 +79,7 @@ public class LivePartySocket implements OSPartySocket.LiveChannel {
 	 * {@link OSPartySocket#setLiveChannel} fires the announce callback straight away, so the caller sees the
 	 * same "we are connected, say who we are" moment a fresh socket used to give it.
 	 */
-	public synchronized void start() {
+	public synchronized void attach() {
 		if (started) {
 			return;
 		}
@@ -103,7 +103,7 @@ public class LivePartySocket implements OSPartySocket.LiveChannel {
 	 * ends up owning them all. Reconnecting to drop it would be pure cost, though: any node serves the board,
 	 * and the next party will move us wherever it lives.
 	 */
-	public synchronized void stop() {
+	public synchronized void detach() {
 		started = false;
 		connection.setLiveChannel(null);
 		connection.clearNodeHint(false);

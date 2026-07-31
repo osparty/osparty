@@ -13,14 +13,14 @@ import net.runelite.client.ui.overlay.components.TitleComponent;
  * join the host's friends chat (CoX), apply on the notice board (ToB), or apply on
  * the Grouping Obelisk (ToA).
  */
-public class FcRequestOverlay extends OverlayPanel
+public class JoinPromptOverlay extends OverlayPanel
 {
 	private volatile String hostName;
 	private volatile String title;
 	private volatile String detail;
 	private volatile long expiresAt;
 
-	public FcRequestOverlay()
+	public JoinPromptOverlay()
 	{
 		// Distinct anchor from the ready-check overlay so the two never stack; user can reposition.
 		setPosition(OverlayPosition.TOP_RIGHT);

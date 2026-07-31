@@ -14,7 +14,7 @@ import net.osparty.enums.SpecWeapon;
  * which is how {@code SpecialAttackTracker} still receives it unchanged.
  */
 @Value
-public class SpecDrainMessage
+public class SpecDrainEvent
 {
 	/**
 	 * The member that landed the spec, stamped by the backend from the frame's sender. A constructor

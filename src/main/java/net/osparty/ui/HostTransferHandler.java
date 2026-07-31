@@ -7,14 +7,14 @@ import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import net.osparty.api.BoardService;
 import net.osparty.model.Advertisement;
-import net.osparty.party.HostTransferMessage;
+import net.osparty.party.HostTransferEvent;
 import net.osparty.party.LivePartyBackend;
 import net.osparty.party.PartyStatus;
 import net.osparty.party.RosterMember;
 
 /**
  * Coordinates handing the party to another member without destroying it, driving the
- * {@link HostTransferMessage} handshake (OFFER → ACCEPT → COMMIT / ABORT) and the matching backend
+ * {@link HostTransferEvent} handshake (OFFER → ACCEPT → COMMIT / ABORT) and the matching backend
  * ad re-key. The current host keeps its authority and its ownership of the backend ad until the
  * exchange completes, so a dropped/ignored message or an unreachable target never orphans the party —
  * the old host simply stays host.
@@ -80,7 +80,7 @@ public class HostTransferHandler
 	}
 
 	/** Dispatch an inbound handshake message (arrives off-EDT; marshalled on before mutating state). */
-	public void onMessage(HostTransferMessage message)
+	public void onMessage(HostTransferEvent message)
 	{
 		if (message == null || message.getKind() == null)
 		{
@@ -96,7 +96,7 @@ public class HostTransferHandler
 		clearIncoming();
 	}
 
-	private void handle(HostTransferMessage message)
+	private void handle(HostTransferEvent message)
 	{
 		switch (message.getKind())
 		{
@@ -119,7 +119,7 @@ public class HostTransferHandler
 
 	// ---- new host side -------------------------------------------------------
 
-	private void onOffer(HostTransferMessage message)
+	private void onOffer(HostTransferEvent message)
 	{
 		if (!liveParty.isForLocalMember(message.getTargetMemberId()))
 		{
@@ -138,7 +138,7 @@ public class HostTransferHandler
 		timeout.start();
 	}
 
-	private void onCommit(HostTransferMessage message)
+	private void onCommit(HostTransferEvent message)
 	{
 		if (incoming == null || !liveParty.isForLocalMember(message.getTargetMemberId())
 			|| message.getMemberId() != incoming.oldHostId)
@@ -163,7 +163,7 @@ public class HostTransferHandler
 		clearIncoming();
 	}
 
-	private void onAbort(HostTransferMessage message)
+	private void onAbort(HostTransferEvent message)
 	{
 		if (incoming != null && liveParty.isForLocalMember(message.getTargetMemberId()))
 		{
@@ -173,7 +173,7 @@ public class HostTransferHandler
 
 	// ---- old host side -------------------------------------------------------
 
-	private void onAccept(HostTransferMessage message)
+	private void onAccept(HostTransferEvent message)
 	{
 		if (outgoing == null || !liveParty.isForLocalMember(message.getTargetMemberId())
 			|| message.getMemberId() != outgoing.targetId)

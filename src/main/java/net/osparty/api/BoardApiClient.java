@@ -84,15 +84,15 @@ public class BoardApiClient implements BoardService
 	}
 
 	@Override
-	public void getAdByCode(String code, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError)
+	public void fetchAdByCode(String code, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError)
 	{
-		socket.getByCode(code, ad -> deliver(ad, onSuccess, onError, "No party with code " + code));
+		socket.fetchByCode(code, ad -> deliver(ad, onSuccess, onError, "No party with code " + code));
 	}
 
 	@Override
-	public void getAdByHost(String host, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError)
+	public void fetchAdByHost(String host, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError)
 	{
-		socket.getByHost(host, ad -> deliver(ad, onSuccess, onError, "No party for host " + host));
+		socket.fetchByHost(host, ad -> deliver(ad, onSuccess, onError, "No party for host " + host));
 	}
 
 	@Override
@@ -173,9 +173,9 @@ public class BoardApiClient implements BoardService
 	}
 
 	@Override
-	public void getDiscordLink(long accountHash, Consumer<DiscordLinkStatus> onResult)
+	public void fetchDiscordLink(long accountHash, Consumer<DiscordLinkStatus> onResult)
 	{
-		socket.getDiscordLink(accountHash, onResult);
+		socket.fetchDiscordLink(accountHash, onResult);
 	}
 
 	@Override
@@ -228,9 +228,9 @@ public class BoardApiClient implements BoardService
 	}
 
 	@Override
-	public int onlineUsers()
+	public int onlineUserCount()
 	{
-		return socket.onlineUsers();
+		return socket.onlineUserCount();
 	}
 
 	/** Route a lookup result: the ad on success, or a not-found error when null. */

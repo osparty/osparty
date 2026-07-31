@@ -152,7 +152,7 @@ public class DefenceTracker
 			return;
 		}
 		NPC target = interactingNpc();
-		if (target == null || target.getName() == null || BossDefence.forName(target.getName()) == null)
+		if (target == null || target.getName() == null || BossDefence.matchingNpcName(target.getName()) == null)
 		{
 			if (bossIndex != -1)
 			{
@@ -186,7 +186,7 @@ public class DefenceTracker
 			return;
 		}
 		String name = npc.getName();
-		if (BossDefence.forName(name) == null && bossIndex != index)
+		if (BossDefence.matchingNpcName(name) == null && bossIndex != index)
 		{
 			return; // not a tracked monster
 		}
@@ -203,7 +203,7 @@ public class DefenceTracker
 
 	private void setBoss(String name, int index)
 	{
-		BossDefence boss = BossDefence.forName(name);
+		BossDefence boss = BossDefence.matchingNpcName(name);
 		bossName = name;
 		bossIndex = index;
 		bossDef = boss != null ? boss.getBaseDef() : 0;

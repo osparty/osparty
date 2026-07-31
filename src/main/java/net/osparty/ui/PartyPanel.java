@@ -175,12 +175,12 @@ class PartyPanel extends JPanel
 	private JLabel readyCheckCountdown;
 	private final Timer readyCheckTicker = new Timer(200, e -> tickReadyCheck());
 	/** memberId -> epoch millis until which the "Request FC" button is on cooldown. */
-	private final Map<Long, Long> fcRequestCooldown = new HashMap<>();
-	private static final long FC_REQUEST_COOLDOWN_MS = 10_000;
+	private final Map<Long, Long> joinPromptCooldown = new HashMap<>();
+	private static final long JOIN_PROMPT_COOLDOWN_MS = 10_000;
 
 	/**
 	 * The freshest ad member list (with server-asserted Discord badges), fetched from
-	 * {@code getAdByHost} whenever the roster changes. The stored {@code currentAd} is a
+	 * {@code fetchAdByHost} whenever the roster changes. The stored {@code currentAd} is a
 	 * snapshot from join/create time that never gains later joiners' badges, so without this a
 	 * viewer only ever sees the host's.
 	 */
@@ -298,7 +298,7 @@ class PartyPanel extends JPanel
 
 	private int currentPartySize()
 	{
-		if (!liveParty.isConnected())
+		if (!liveParty.isInParty())
 		{
 			return 1;
 		}
@@ -420,7 +420,7 @@ class PartyPanel extends JPanel
 			return;
 		}
 
-		List<RosterMember> roster = liveParty.isConnected() ? liveParty.roster() : null;
+		List<RosterMember> roster = liveParty.isInParty() ? liveParty.roster() : null;
 
 		// Only fetch the live ad (for badges) when the roster actually changes — a member joins,
 		// leaves, is admitted, or their accountHash finally resolves — not on every vitals update.
@@ -508,7 +508,7 @@ class PartyPanel extends JPanel
 		}
 
 		// Ready check at the top (anyone can start; everyone readies up).
-		if (liveParty.isConnected())
+		if (liveParty.isInParty())
 		{
 			content.add(Box.createVerticalStrut(8));
 			content.add(buildReadyCheck());
@@ -691,7 +691,7 @@ class PartyPanel extends JPanel
 		boolean blocked = blockListService != null && member.getName() != null
 			&& blockListService.isBlocked(memberHash(member), member.getName());
 		List<String> badges = adBadges(ad, member);
-		boolean fcReady = fcRequestCooldown.getOrDefault(id, 0L) - System.currentTimeMillis() <= 0;
+		boolean fcReady = joinPromptCooldown.getOrDefault(id, 0L) - System.currentTimeMillis() <= 0;
 		// KC shows only in the expanded detail and arrives via an async lookup, so fold it in there.
 		String kcSig = "";
 		if (isExpanded && data != null && activity != null && data.getName() != null && data.getKillCount() < 0)
@@ -1107,7 +1107,7 @@ class PartyPanel extends JPanel
 	 */
 	private void syncPartyMeta(Advertisement ad, boolean host)
 	{
-		if (!liveParty.isConnected())
+		if (!liveParty.isInParty())
 		{
 			return;
 		}
@@ -1134,7 +1134,7 @@ class PartyPanel extends JPanel
 		{
 			return;
 		}
-		boardService.getAdByHost(ad.getHost(),
+		boardService.fetchAdByHost(ad.getHost(),
 			fresh -> SwingUtilities.invokeLater(() -> onAdBadgesFetched(fresh)),
 			err -> { /* no ad for this host right now — keep the last known badges */ });
 	}
@@ -1261,7 +1261,7 @@ class PartyPanel extends JPanel
 			}
 			if (kind != null)
 			{
-				long remaining = fcRequestCooldown.getOrDefault(member.getMemberId(), 0L) - System.currentTimeMillis();
+				long remaining = joinPromptCooldown.getOrDefault(member.getMemberId(), 0L) - System.currentTimeMillis();
 				boolean ready = remaining <= 0;
 				JButton prompt = smallButton(ready ? label : "Sent");
 				prompt.setEnabled(ready);
@@ -1282,14 +1282,9 @@ class PartyPanel extends JPanel
 	/** True if two RuneScape names refer to the same account (case- and space-insensitive). */
 	private static boolean sameRsn(String a, String b)
 	{
-		return a != null && b != null && norm(a).equalsIgnoreCase(norm(b));
+		return a != null && b != null && normalizeName(a).equalsIgnoreCase(normalizeName(b));
 	}
 
-	/** Normalise an RSN for comparison: non-breaking spaces to spaces, trimmed. */
-	private static String norm(String name)
-	{
-		return name.replace(' ', ' ').trim();
-	}
 
 	private static final Dimension ORB_ICON = new Dimension(14, 14);
 
@@ -1955,8 +1950,8 @@ class PartyPanel extends JPanel
 			setStatus("Reminded " + member.getName() + " to apply on " + where + ".");
 		}
 		// Throttle: keep the button disabled for a few seconds, then re-enable.
-		fcRequestCooldown.put(member.getMemberId(), System.currentTimeMillis() + FC_REQUEST_COOLDOWN_MS);
-		Timer reEnable = new Timer((int) FC_REQUEST_COOLDOWN_MS, e -> refresh());
+		joinPromptCooldown.put(member.getMemberId(), System.currentTimeMillis() + JOIN_PROMPT_COOLDOWN_MS);
+		Timer reEnable = new Timer((int) JOIN_PROMPT_COOLDOWN_MS, e -> refresh());
 		reEnable.setRepeats(false);
 		reEnable.start();
 		refresh();
@@ -2216,7 +2211,7 @@ class PartyPanel extends JPanel
 			return;
 		}
 		String id = ad.getId();
-		boardService.getAdByHost(ad.getHost(),
+		boardService.fetchAdByHost(ad.getHost(),
 			fresh -> log.debug("Hosted ad {} still advertised", id),
 			err -> SwingUtilities.invokeLater(() -> {
 				if (boardService.isApiConnected())

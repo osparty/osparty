@@ -136,7 +136,8 @@ public enum BossDefence
 		return flags.contains(flag);
 	}
 
-	public static BossDefence forName(String name)
+	/** The entry whose npcName contains {@code name}, so a partial in-game name still matches. */
+	public static BossDefence matchingNpcName(String name)
 	{
 		if (name == null)
 		{

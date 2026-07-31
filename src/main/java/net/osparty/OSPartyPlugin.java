@@ -7,13 +7,14 @@ import net.osparty.tools.*;
 import net.osparty.model.Activity;
 import net.osparty.model.Applicant;
 import net.osparty.model.Advertisement;
-import net.osparty.party.FcRequestMessage;
-import net.osparty.party.HostTransferMessage;
+import net.osparty.party.JoinPromptEvent;
+import net.osparty.party.PlayerNames;
+import net.osparty.party.HostTransferEvent;
 import net.osparty.party.LivePartyBackend;
-import net.osparty.party.SpecDrainMessage;
+import net.osparty.party.SpecDrainEvent;
 import net.osparty.ui.OSPartyPanel;
 import net.osparty.ui.ApplicantOverlay;
-import net.osparty.ui.FcRequestOverlay;
+import net.osparty.ui.JoinPromptOverlay;
 import net.osparty.ui.DefenceInfoBox;
 import net.osparty.ui.NpcDefenceOverlay;
 import net.osparty.ui.PlayerMarkerOverlay;
@@ -201,7 +202,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private long identifiedHash;
 	private String identifiedName;
 	private ApplicantOverlay applicantOverlay;
-	private FcRequestOverlay fcRequestOverlay;
+	private JoinPromptOverlay joinPromptOverlay;
 	private ReadyCheckOverlay readyCheckOverlay;
 	private TilePingOverlay tilePingOverlay;
 	private PingArrowOverlay pingArrowOverlay;
@@ -289,7 +290,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		public MouseEvent mousePressed(MouseEvent event)
 		{
 			if (pingHotkeyDown && config.pings() && javax.swing.SwingUtilities.isLeftMouseButton(event)
-					&& liveParty.isConnected())
+					&& liveParty.isInParty())
 			{
 				pingHoveredTile();
 				event.consume();
@@ -321,8 +322,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		applicantOverlay = new ApplicantOverlay(config);
 		overlayManager.add(applicantOverlay);
 
-		fcRequestOverlay = new FcRequestOverlay();
-		overlayManager.add(fcRequestOverlay);
+		joinPromptOverlay = new JoinPromptOverlay();
+		overlayManager.add(joinPromptOverlay);
 
 		readyCheckOverlay = new ReadyCheckOverlay(liveParty);
 		overlayManager.add(readyCheckOverlay);
@@ -423,7 +424,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			clientToolbar.removeNavigation(navButtonAlert);
 		}
 		overlayManager.remove(applicantOverlay);
-		overlayManager.remove(fcRequestOverlay);
+		overlayManager.remove(joinPromptOverlay);
 		overlayManager.remove(readyCheckOverlay);
 		overlayManager.remove(tilePingOverlay);
 		overlayManager.remove(pingArrowOverlay);
@@ -442,7 +443,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			worldPinger = null;
 		}
 		applicantOverlay = null;
-		fcRequestOverlay = null;
+		joinPromptOverlay = null;
 		readyCheckOverlay = null;
 		tilePingOverlay = null;
 		pingArrowOverlay = null;
@@ -497,7 +498,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	{
 		// On a real logout (not a hop), tell the party we're offline so our dot clears now.
 		if (event.getGameState() == GameState.LOGIN_SCREEN && playerName != null
-			&& liveParty.isConnected())
+			&& liveParty.isInParty())
 		{
 			liveParty.broadcastOffline(playerName);
 		}
@@ -618,7 +619,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	}
 
 	@Subscribe
-	public void onSpecDrainMessage(SpecDrainMessage event)
+	public void onSpecDrainEvent(SpecDrainEvent event)
 	{
 		specTracker.onSpecDrain(event);
 	}
@@ -644,9 +645,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	}
 
 	@Subscribe
-	public void onHostTransferMessage(HostTransferMessage event)
+	public void onHostTransferEvent(HostTransferEvent event)
 	{
-		panel.onHostTransferMessage(event);
+		panel.onHostTransferEvent(event);
 	}
 
 	/** Play the RuneScape-native tile-ping "tink", matching RuneLite's own party plugin. */
@@ -673,7 +674,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	}
 
 	@Subscribe
-	public void onFcRequestMessage(FcRequestMessage event)
+	public void onJoinPromptEvent(JoinPromptEvent event)
 	{
 		// Only show the popup if this request is aimed at us, and we accept them.
 		if (!config.receiveFriendsChatRequests())
@@ -707,9 +708,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 				title = "Friends chat request";
 				detail = "Join the friends chat: " + fc;
 		}
-		if (fcRequestOverlay != null)
+		if (joinPromptOverlay != null)
 		{
-			fcRequestOverlay.show(host, title, detail, config.fcRequestDurationSecs() * 1000L);
+			joinPromptOverlay.show(host, title, detail, config.fcRequestDurationSecs() * 1000L);
 			gameMessage(host + " - " + detail);
 			desktopNotify(host + " — " + detail);
 			if (config.friendsChatRequestSound())
@@ -728,11 +729,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	/** Look up an ad still hosted by us (survives a crash/restart for ~the ad TTL). */
 	private void attemptRejoin(String rsn)
 	{
-		if (liveParty.isConnected())
+		if (liveParty.isInParty())
 		{
 			return; // already in a party
 		}
-		apiClient.getAdByHost(rsn,
+		apiClient.fetchAdByHost(rsn,
 			ad -> SwingUtilities.invokeLater(() -> onRejoinFound(ad)),
 			error -> { /* no party for this host - normal, nothing to do */ });
 	}
@@ -1089,8 +1090,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			return; // not hosting or in a party — nothing to invite to
 		}
 		String friend = Text.removeTags(event.getTarget());
-		String normalized = normalizeName(friend);
-		if (normalized.isEmpty() || normalized.equals(normalizeName(playerName)))
+		String normalized = PlayerNames.normalize(friend);
+		if (normalized.isEmpty() || normalized.equals(PlayerNames.normalize(playerName)))
 		{
 			return; // unresolved name, or it's us
 		}
@@ -1101,7 +1102,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// Don't offer to invite someone already in the party.
 		for (net.osparty.model.Member member : liveParty.currentMembers())
 		{
-			if (normalized.equals(normalizeName(member.getName())))
+			if (normalized.equals(PlayerNames.normalize(member.getName())))
 			{
 				return;
 			}
@@ -1117,7 +1118,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	/** Send a party invite to {@code friend} and report the outcome in the chatbox. Rate-limited per friend. */
 	private void sendInvite(String adId, String friend)
 	{
-		String normalized = normalizeName(friend);
+		String normalized = PlayerNames.normalize(friend);
 		long now = System.currentTimeMillis();
 		Long last = lastInviteAt.get(normalized);
 		if (last != null && now - last < INVITE_COOLDOWN_MS)
@@ -1155,7 +1156,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		for (net.runelite.api.Friend friend : friends.getMembers())
 		{
 			if (friend != null && friend.getName() != null
-				&& normalizedName.equals(normalizeName(friend.getName())))
+				&& normalizedName.equals(PlayerNames.normalize(friend.getName())))
 			{
 				return friend.getWorld() > 0;
 			}
@@ -1445,11 +1446,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		return badged;
 	}
 
-	/** Normalise an OSRS name for identity matching: strip the nbsp Jagex uses, trim, lowercase. */
-	private static String normalizeName(String name)
-	{
-		return name == null ? "" : name.replace('\u00A0', ' ').trim().toLowerCase();
-	}
 
 	/** Send a desktop notification for an OSParty event, when the user has opted in. */
 	private void desktopNotify(String message)

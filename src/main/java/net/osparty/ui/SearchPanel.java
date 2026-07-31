@@ -1284,7 +1284,7 @@ class SearchPanel extends PartyCardPanel
 			return;
 		}
 		status.accept("Looking up code " + trimmed + "...");
-		boardService.getAdByCode(trimmed,
+		boardService.fetchAdByCode(trimmed,
 			ad -> SwingUtilities.invokeLater(() -> joinFetched(ad, status, invited)),
 			error -> SwingUtilities.invokeLater(() -> status.accept("No party found for code " + trimmed + ".")));
 	}

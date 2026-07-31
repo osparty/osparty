@@ -65,7 +65,7 @@ public class OSPartySocket extends WebSocketListener
 	private volatile LiveChannel live;
 
 	/**
-	 * The live party's half of this connection. Implemented by {@link net.osparty.party.LivePartySocket},
+	 * The live party's half of this connection. Implemented by {@link net.osparty.party.LivePartyChannel},
 	 * which keeps every bit of protocol and reconnect-semantics knowledge on its own side of this seam.
 	 */
 	public interface LiveChannel
@@ -220,7 +220,7 @@ public class OSPartySocket extends WebSocketListener
 	}
 
 	/** @return the server-reported count of connected plugin clients, or {@code -1} if unknown. */
-	public int onlineUsers()
+	public int onlineUserCount()
 	{
 		return connected ? onlineUsers : -1;
 	}
@@ -509,8 +509,8 @@ public class OSPartySocket extends WebSocketListener
 
 	// --- One-shot lookups (request/response over the socket) ---
 
-	/** Look up a party by invite code; {@code onResult} gets the party, or null if none/offline. */
-	public void getByCode(String code, Consumer<Advertisement> onResult)
+	/** Look up an ad by invite code; {@code onResult} gets the ad, or null if none/offline. */
+	public void fetchByCode(String code, Consumer<Advertisement> onResult)
 	{
 		if (code == null || !connected)
 		{
@@ -521,8 +521,8 @@ public class OSPartySocket extends WebSocketListener
 		send(gson.toJson(new LookupFrame("getByCode", code, null)));
 	}
 
-	/** Look up the ad hosted by a player; {@code onResult} gets the party, or null if none/offline. */
-	public void getByHost(String host, Consumer<Advertisement> onResult)
+	/** Look up the ad hosted by a player; {@code onResult} gets the ad, or null if none/offline. */
+	public void fetchByHost(String host, Consumer<Advertisement> onResult)
 	{
 		if (host == null || !connected)
 		{
@@ -563,7 +563,7 @@ public class OSPartySocket extends WebSocketListener
 	}
 
 	/** Look up whether {@code accountHash} is linked; {@code onResult} gets the status, or null if offline. */
-	public void getDiscordLink(long accountHash, Consumer<DiscordLinkStatus> onResult)
+	public void fetchDiscordLink(long accountHash, Consumer<DiscordLinkStatus> onResult)
 	{
 		if (!connected)
 		{

@@ -28,7 +28,7 @@ import lombok.NoArgsConstructor;
  */
 @Data
 @NoArgsConstructor
-public class HostTransferMessage
+public class HostTransferEvent
 {
 	/** The member that sent this, stamped by the backend from the frame's sender. */
 	private long memberId;

@@ -27,10 +27,10 @@ public interface BoardService
 	BoardSubscription subscribeAds(Consumer<List<Advertisement>> onAds, Consumer<Throwable> onError, String activityId);
 
 	/** One-shot lookup of an ad by invite code (public or private). */
-	void getAdByCode(String code, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError);
+	void fetchAdByCode(String code, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError);
 
 	/** One-shot lookup of the ad hosted by a player (used to rejoin after a restart). */
-	void getAdByHost(String host, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError);
+	void fetchAdByHost(String host, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError);
 
 	/**
 	 * Register a callback fired (off the EDT) with the ad id when the server reports the
@@ -91,12 +91,12 @@ public interface BoardService
 
 	/**
 	 * Begin an OAuth2 Discord link for {@code accountHash}. {@code onUrl} gets the authorize URL,
-	 * {@code onError} on failure. Poll {@link #getDiscordLink} to learn when it completes.
+	 * {@code onError} on failure. Poll {@link #fetchDiscordLink} to learn when it completes.
 	 */
 	void startDiscordLink(long accountHash, Consumer<String> onUrl, Consumer<Throwable> onError);
 
 	/** Look up whether {@code accountHash} is linked to a Discord account; result may be null if offline. */
-	void getDiscordLink(long accountHash, Consumer<DiscordLinkStatus> onResult);
+	void fetchDiscordLink(long accountHash, Consumer<DiscordLinkStatus> onResult);
 
 	/** Remove the Discord binding for {@code accountHash} server-side. Fire-and-forget. */
 	void unlinkDiscord(long accountHash);
@@ -138,5 +138,5 @@ public interface BoardService
 	void setInviteListener(Consumer<PartyInvite> listener);
 
 	/** @return the server-reported number of connected plugin users, or {@code -1} if not yet known. */
-	int onlineUsers();
+	int onlineUserCount();
 }

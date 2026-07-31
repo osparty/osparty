@@ -24,7 +24,7 @@ import net.runelite.api.gameval.VarbitID;
  * containers and skills, so it must be called on the client thread.
  *
  */
-public final class LocalPlayerSync
+public final class LocalPlayerSnapshot
 {
 	/** Varp id for special-attack energy (0-1000). {@code VarPlayer.SPECIAL_ATTACK_PERCENT} is deprecated. */
 	private static final int VARP_SPECIAL_ATTACK_PERCENT = 300;
@@ -44,7 +44,7 @@ public final class LocalPlayerSync
 		ItemID.DIVINE_RUNE_POUCH, ItemID.DIVINE_RUNE_POUCH_TROUVER,
 	};
 
-	private LocalPlayerSync()
+	private LocalPlayerSnapshot()
 	{
 	}
 

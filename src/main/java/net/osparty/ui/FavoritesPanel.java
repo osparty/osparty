@@ -41,7 +41,7 @@ import net.runelite.http.api.worlds.WorldRegion;
  * The "Favorites" tab: two collapsible sections, Favorites (parties with a starred player) and
  * Friends (parties hosted by an in-game friend), rendered as Search-tab cards via {@link PartyCardPanel}.
  */
-class FriendsPanel extends PartyCardPanel
+class FavoritesPanel extends PartyCardPanel
 {
 	private List<Advertisement> lastAll = new ArrayList<>();
 	private BoardSubscription subscription;
@@ -54,7 +54,7 @@ class FriendsPanel extends PartyCardPanel
 	private final JLabel friendsCount;
 	private final JLabel favoritesCaret;
 	private final JLabel friendsCaret;
-	private boolean favExpanded = true;
+	private boolean favoritesExpanded = true;
 	private boolean friendsExpanded = true;
 
 	/** RuneLite's config-section caret (grey): points right when collapsed, down when expanded. */
@@ -63,7 +63,7 @@ class FriendsPanel extends PartyCardPanel
 
 	private static ImageIcon caret(double rotation)
 	{
-		BufferedImage arrow = ImageUtil.loadImageResource(FriendsPanel.class, "/util/arrow_right.png");
+		BufferedImage arrow = ImageUtil.loadImageResource(FavoritesPanel.class, "/util/arrow_right.png");
 		if (arrow == null)
 		{
 			return null;
@@ -78,7 +78,7 @@ class FriendsPanel extends PartyCardPanel
 
 	// ---- constructor -------------------------------------------------------
 
-	FriendsPanel(BoardService boardService, Supplier<String> playerNameSupplier,
+	FavoritesPanel(BoardService boardService, Supplier<String> playerNameSupplier,
 		PartyState partyState, LivePartyBackend liveParty,
 		Supplier<AccountType> accountTypeSupplier,
 		KillcountService killcountService,
@@ -116,11 +116,11 @@ class FriendsPanel extends PartyCardPanel
 		friendsContent.setAlignmentX(Component.LEFT_ALIGNMENT);
 
 		// Favorites section
-		JPanel favHeader = buildSectionHeader("Favorites",
-			() -> { favExpanded = !favExpanded; render(); });
-		favoritesCount = (JLabel) favHeader.getClientProperty("count");
-		favoritesCaret = (JLabel) favHeader.getClientProperty("caret");
-		JLabel favTitleLabel = (JLabel) favHeader.getClientProperty("title");
+		JPanel favoritesHeader = buildSectionHeader("Favorites",
+			() -> { favoritesExpanded = !favoritesExpanded; render(); });
+		favoritesCount = (JLabel) favoritesHeader.getClientProperty("count");
+		favoritesCaret = (JLabel) favoritesHeader.getClientProperty("caret");
+		JLabel favoritesTitleLabel = (JLabel) favoritesHeader.getClientProperty("title");
 		favoritesContent = new JPanel();
 		favoritesContent.setLayout(new BoxLayout(favoritesContent, BoxLayout.Y_AXIS));
 		favoritesContent.setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -129,7 +129,7 @@ class FriendsPanel extends PartyCardPanel
 		sections.add(friendsHeader);
 		sections.add(friendsContent);
 		sections.add(Box.createVerticalStrut(6));
-		sections.add(favHeader);
+		sections.add(favoritesHeader);
 		sections.add(favoritesContent);
 		sections.add(Box.createVerticalStrut(6));
 		sections.add(Box.createVerticalGlue());
@@ -149,14 +149,14 @@ class FriendsPanel extends PartyCardPanel
 				});
 			}
 			// 1131 = WORLD_SWITCHER_STAR_MEMBERS
-			if (favTitleLabel != null)
+			if (favoritesTitleLabel != null)
 			{
 				spriteManager.getSpriteAsync(1131, 0, img -> {
 					if (img != null)
 					{
 						java.awt.image.BufferedImage scaled = ImageUtil.resizeImage(img, 12, 12);
-						favTitleLabel.setIcon(new javax.swing.ImageIcon(scaled));
-						favTitleLabel.setText("  Favorites");
+						favoritesTitleLabel.setIcon(new javax.swing.ImageIcon(scaled));
+						favoritesTitleLabel.setText("  Favorites");
 					}
 				});
 			}
@@ -257,7 +257,7 @@ class FriendsPanel extends PartyCardPanel
 
 		Set<String> friends = friendNamesSupplier != null ? friendNamesSupplier.get() : null;
 
-		List<Advertisement> faves = new ArrayList<>();
+		List<Advertisement> favorites = new ArrayList<>();
 		List<Advertisement> friendParties = new ArrayList<>();
 
 		for (Advertisement p : lastAll)
@@ -278,7 +278,7 @@ class FriendsPanel extends PartyCardPanel
 
 			if (isFave)
 			{
-				faves.add(p);
+				favorites.add(p);
 			}
 			// Friends section: only show if NOT already in favorites (avoid duplication)
 			if (isFriend && !isFave)
@@ -288,22 +288,22 @@ class FriendsPanel extends PartyCardPanel
 		}
 
 		// Sort newest first inside each section
-		faves.sort((a, b) -> Long.compare(b.getCreatedAt(), a.getCreatedAt()));
+		favorites.sort((a, b) -> Long.compare(b.getCreatedAt(), a.getCreatedAt()));
 		friendParties.sort((a, b) -> Long.compare(b.getCreatedAt(), a.getCreatedAt()));
 
-		populateSection(favoritesContent, faves, favExpanded,
-			faves.isEmpty() ? "No open parties with favorited players." : null);
+		populateSection(favoritesContent, favorites, favoritesExpanded,
+			favorites.isEmpty() ? "No open parties with favorited players." : null);
 		populateSection(friendsContent, friendParties, friendsExpanded,
 			friendParties.isEmpty() ? "No open parties from OSRS friends." : null);
 
-		updateCountBadge(favoritesCount, faves.size());
+		updateCountBadge(favoritesCount, favorites.size());
 		updateCountBadge(friendsCount, friendParties.size());
 
-		updateCaret(favoritesCaret, favExpanded);
+		updateCaret(favoritesCaret, favoritesExpanded);
 		updateCaret(friendsCaret, friendsExpanded);
 
 		// Counts live in the per-section badges; the status line only carries the empty state.
-		int total = faves.size() + friendParties.size();
+		int total = favorites.size() + friendParties.size();
 		setStatus(total == 0 ? "No parties to show." : "");
 
 		updateAllButtons();

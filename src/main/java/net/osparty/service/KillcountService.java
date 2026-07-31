@@ -50,7 +50,7 @@ public class KillcountService
 			return !unavailable && (hardMode ? hardModeKillCount : killCount) >= 0;
 		}
 
-		private boolean isStale()
+		private boolean shouldRetryFailure()
 		{
 			return unavailable && System.currentTimeMillis() - fetchedAt > FAILURE_RETRY_MS;
 		}
@@ -95,7 +95,7 @@ public class KillcountService
 		synchronized (lock)
 		{
 			Killcount cached = cache.get(key);
-			if (cached == null || cached.isStale())
+			if (cached == null || cached.shouldRetryFailure())
 			{
 				if (onComplete != null)
 				{
