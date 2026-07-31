@@ -6,7 +6,7 @@ import lombok.NoArgsConstructor;
 
 /**
  * The host-authoritative snapshot of an advertised party's settings, published over the live room so
- * members track edits to the ad. A member's {@link Party} is the copy it took from the search card when it
+ * members track edits to the ad. A member's {@link Advertisement} is the copy it took from the search card when it
  * applied and is never re-fetched, so without this the Party tab keeps showing the description, world,
  * requirements and host it saw at join time — for the rest of the party's life.
  *
@@ -27,7 +27,7 @@ public class PartyMeta
 	private int minKillCount;
 	private int minHardModeKillCount;
 	private String lootRule;
-	private boolean privateParty;
+	private boolean privateAd;
 	private boolean ironmanOnly;
 	private int invocation;
 	private boolean hardMode;
@@ -37,7 +37,7 @@ public class PartyMeta
 	private boolean learner;
 	private boolean teacher;
 
-	public static PartyMeta from(Party party)
+	public static PartyMeta from(Advertisement party)
 	{
 		PartyMeta meta = new PartyMeta();
 		meta.host = party.getHost();
@@ -47,7 +47,7 @@ public class PartyMeta
 		meta.minKillCount = party.getMinKillCount();
 		meta.minHardModeKillCount = party.getMinHardModeKillCount();
 		meta.lootRule = party.getLootRule();
-		meta.privateParty = party.isPrivateParty();
+		meta.privateAd = party.isPrivateAd();
 		meta.ironmanOnly = party.isIronmanOnly();
 		meta.invocation = party.getInvocation();
 		meta.hardMode = party.isHardMode();
@@ -60,7 +60,7 @@ public class PartyMeta
 	}
 
 	/** Overwrite {@code party}'s advertised settings with ours. */
-	public void applyTo(Party party)
+	public void applyTo(Advertisement party)
 	{
 		party.setHost(host);
 		party.setDescription(description);
@@ -69,7 +69,7 @@ public class PartyMeta
 		party.setMinKillCount(minKillCount);
 		party.setMinHardModeKillCount(minHardModeKillCount);
 		party.setLootRule(lootRule);
-		party.setPrivateParty(privateParty);
+		party.setPrivateAd(privateAd);
 		party.setIronmanOnly(ironmanOnly);
 		party.setInvocation(invocation);
 		party.setHardMode(hardMode);

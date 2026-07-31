@@ -4,7 +4,7 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 
 import net.osparty.OSPartyConfig;
-import net.osparty.model.Party;
+import net.osparty.model.Advertisement;
 import net.osparty.store.FlagKind;
 import net.osparty.store.PartyStore;
 import net.osparty.store.PlayerFlag;
@@ -64,9 +64,9 @@ public class FavoritesService extends PlayerFlagService
 		return isFlagged(name);
 	}
 
-	public boolean hasAnyFavorite(Party party)
+	public boolean hasAnyFavorite(Advertisement ad)
 	{
-		return hasAnyFlagged(party);
+		return hasAnyFlagged(ad);
 	}
 
 	/** Static normalisation shim retained for callers that used {@code FavoritesService.normalize}. */

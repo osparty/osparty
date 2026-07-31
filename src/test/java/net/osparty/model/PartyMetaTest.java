@@ -18,7 +18,7 @@ public class PartyMetaTest
 	@Test
 	public void roundTripsEveryAdvertisedField()
 	{
-		Party original = new Party();
+		Advertisement original = new Advertisement();
 		original.setId("p1");
 		original.setActivity("cox");
 		original.setHost("Host");
@@ -28,7 +28,7 @@ public class PartyMetaTest
 		original.setMinKillCount(50);
 		original.setMinHardModeKillCount(10);
 		original.setLootRule("FFA");
-		original.setPrivateParty(true);
+		original.setPrivateAd(true);
 		original.setIronmanOnly(true);
 		original.setInvocation(300);
 		original.setHardMode(true);
@@ -42,7 +42,7 @@ public class PartyMetaTest
 		assertEquals(PartyMeta.from(original), sent);
 
 		// The member's stale copy: same party, settings as they were when it applied.
-		Party stale = new Party();
+		Advertisement stale = new Advertisement();
 		stale.setId("p1");
 		stale.setActivity("cox");
 		stale.setHost("Host");
@@ -59,14 +59,14 @@ public class PartyMetaTest
 	@Test
 	public void carriesTheHostSoATransferReachesBystanders()
 	{
-		Party party = new Party();
-		party.setHost("OldHost");
+		Advertisement ad = new Advertisement();
+		ad.setHost("OldHost");
 		PartyMeta fromNewHost = new PartyMeta();
 		fromNewHost.setHost("NewHost");
 
-		fromNewHost.applyTo(party);
+		fromNewHost.applyTo(ad);
 
-		assertEquals("NewHost", party.getHost());
-		assertTrue(!PartyMeta.from(party).equals(new PartyMeta()));
+		assertEquals("NewHost", ad.getHost());
+		assertTrue(!PartyMeta.from(ad).equals(new PartyMeta()));
 	}
 }

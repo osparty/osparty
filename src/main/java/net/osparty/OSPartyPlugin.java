@@ -1,12 +1,12 @@
 package net.osparty;
 
-import net.osparty.api.PartyApiClient;
-import net.osparty.api.PartyService;
+import net.osparty.api.BoardApiClient;
+import net.osparty.api.BoardService;
 import net.osparty.service.*;
 import net.osparty.tools.*;
 import net.osparty.model.Activity;
 import net.osparty.model.Applicant;
-import net.osparty.model.Party;
+import net.osparty.model.Advertisement;
 import net.osparty.party.FcRequestMessage;
 import net.osparty.party.HostTransferMessage;
 import net.osparty.party.LivePartyBackend;
@@ -111,7 +111,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private OverlayManager overlayManager;
 
 	@Inject
-	private PartyApiClient apiClient;
+	private BoardApiClient apiClient;
 
 	@Inject
 	private ItemManager itemManager;
@@ -166,7 +166,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private OSPartyConfig config;
 
 	@Inject
-	private net.osparty.api.PartySocket partySocket;
+	private net.osparty.api.OSPartySocket socket;
 
 	@Inject
 	private FavoritesService favoritesService;
@@ -314,9 +314,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	protected void startUp()
 	{
 		// Discovery/advertising and the live party share one socket, demultiplexed by Mux.
-		PartyService partyService = apiClient;
+		BoardService boardService = apiClient;
 
-		partySocket.start();
+		socket.start();
 
 		applicantOverlay = new ApplicantOverlay(config);
 		overlayManager.add(applicantOverlay);
@@ -381,7 +381,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// A player can't block themselves.
 		blockListService.setSelf(this::getAccountHash, this::getSelfName);
 
-		panel = new OSPartyPanel(partyService, config, this::getPlayerName, this,
+		panel = new OSPartyPanel(boardService, config, this::getPlayerName, this,
 			this::getFriendsChatOwner, this::getCurrentWorld, itemManager, liveParty, runeWatchService,
 			this::getAccountType, killcountService, skillIconManager, this::getMapRegions,
 			this::regionForWorld, this::getCoxLayout, configManager, gson,
@@ -396,7 +396,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		panel.setOnDeactivated(this::onPanelDeactivated);
 		panel.setInviteHandlers(invite -> resolveInvite(invite, true), invite -> resolveInvite(invite, false));
 		apiClient.setInviteListener(this::onPartyInvite);
-		log.info("OSParty started (API {})", PartyApiClient.apiBaseUrl());
+		log.info("OSParty started (API {})", BoardApiClient.apiBaseUrl());
 	}
 
 	@Override
@@ -411,7 +411,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			panel.dispose();
 		}
-		partySocket.stop();
+		socket.stop();
 		if (navBlinkTimer != null)
 		{
 			navBlinkTimer.stop();
@@ -732,20 +732,20 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			return; // already in a party
 		}
-		apiClient.getPartyByHost(rsn,
-			party -> SwingUtilities.invokeLater(() -> onRejoinFound(party)),
+		apiClient.getAdByHost(rsn,
+			ad -> SwingUtilities.invokeLater(() -> onRejoinFound(ad)),
 			error -> { /* no party for this host - normal, nothing to do */ });
 	}
 
-	private void onRejoinFound(Party party)
+	private void onRejoinFound(Advertisement ad)
 	{
-		if (panel == null || party == null)
+		if (panel == null || ad == null)
 		{
 			return;
 		}
-		panel.resumeHostedParty(party);
-		Activity activity = Activity.fromId(party.getActivity());
-		String name = activity != null ? activity.getDisplayName() : party.getActivity();
+		panel.resumeHostedParty(ad);
+		Activity activity = Activity.fromId(ad.getActivity());
+		String name = activity != null ? activity.getDisplayName() : ad.getActivity();
 		gameMessage("Rejoined your " + name + " party - disband it from the OSParty panel if you're done.");
 	}
 
@@ -1083,8 +1083,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			return;
 		}
-		Party party = currentPanel.currentBackendParty();
-		if (party == null || party.getId() == null)
+		Advertisement ad = currentPanel.currentAd();
+		if (ad == null || ad.getId() == null)
 		{
 			return; // not hosting or in a party — nothing to invite to
 		}
@@ -1106,16 +1106,16 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 				return;
 			}
 		}
-		String partyId = party.getId();
+		String adId = ad.getId();
 		client.createMenuEntry(-1)
 			.setOption("Invite to party")
 			.setTarget(event.getTarget())
 			.setType(MenuAction.RUNELITE)
-			.onClick(e -> sendInvite(partyId, friend));
+			.onClick(e -> sendInvite(adId, friend));
 	}
 
 	/** Send a party invite to {@code friend} and report the outcome in the chatbox. Rate-limited per friend. */
-	private void sendInvite(String partyId, String friend)
+	private void sendInvite(String adId, String friend)
 	{
 		String normalized = normalizeName(friend);
 		long now = System.currentTimeMillis();
@@ -1129,7 +1129,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		lastInviteAt.put(normalized, now);
 		String myName = playerName;
 		long myHash = accountHash;
-		apiClient.inviteFriend(partyId, myName, myHash, friend, delivered ->
+		apiClient.inviteFriend(adId, myName, myHash, friend, delivered ->
 		{
 			if (delivered)
 			{
@@ -1185,12 +1185,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private void onPartyInvite(PartyInvite invite)
 	{
 		InviteDisplay mode = config.inviteDisplay();
-		Party party = invite.getParty();
-		if (mode == null || mode == InviteDisplay.DISABLED || party == null)
+		Advertisement ad = invite.getAd();
+		if (mode == null || mode == InviteDisplay.DISABLED || ad == null)
 		{
 			return;
 		}
-		activeInvites.put(party.getId(), invite);
+		activeInvites.put(ad.getId(), invite);
 		desktopNotify(inviterName(invite) + " invited you to their party.");
 		if (mode.showsInGame())
 		{
@@ -1214,8 +1214,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	/** Resolve an invite (Accept or Decline) from either surface; dismisses both and joins on accept. */
 	private void resolveInvite(PartyInvite invite, boolean accept)
 	{
-		Party party = invite.getParty();
-		String key = party == null ? null : party.getId();
+		Advertisement ad = invite.getAd();
+		String key = ad == null ? null : ad.getId();
 		boolean firstResolution = key != null && activeInvites.remove(key) != null;
 		// Dismiss both surfaces regardless of which one the player used (idempotent).
 		SwingUtilities.invokeLater(() ->
@@ -1259,7 +1259,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 	private static String inviterName(PartyInvite invite)
 	{
-		String from = invite.getFromName() != null ? invite.getFromName() : invite.getParty().getHost();
+		String from = invite.getFromName() != null ? invite.getFromName() : invite.getAd().getHost();
 		return from != null ? from : "A friend";
 	}
 
@@ -1280,13 +1280,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	/** Open the chatbox Accept/Decline prompt for a received invite; Accept joins via the invite code. */
 	private void openInvitePrompt(PartyInvite invite)
 	{
-		Party party = invite.getParty();
-		String key = party.getId();
+		Advertisement ad = invite.getAd();
+		String key = ad.getId();
 		if (key == null || !activeInvites.containsKey(key))
 		{
 			return; // resolved via the sidebar banner before we got to it
 		}
-		Activity activity = Activity.fromId(party.getActivity());
+		Activity activity = Activity.fromId(ad.getActivity());
 		String label = activity != null ? activity.getDisplayName() + " party" : "their party";
 
 		promptOpen = true;
@@ -1315,8 +1315,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	/** Accept an invite: join the party by its invite code, reusing the standard join flow. */
 	private void acceptInvite(PartyInvite invite)
 	{
-		Party party = invite.getParty();
-		String code = party.getInviteCode();
+		Advertisement ad = invite.getAd();
+		String code = ad.getInviteCode();
 		OSPartyPanel currentPanel = panel;
 		if (code == null || code.isEmpty() || currentPanel == null)
 		{

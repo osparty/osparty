@@ -4,7 +4,7 @@ import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import javax.inject.Inject;
 import javax.inject.Singleton;
-import net.osparty.model.Party;
+import net.osparty.model.Advertisement;
 import net.osparty.store.FlagKind;
 import net.osparty.store.PartyStore;
 import net.osparty.store.PlayerFlag;
@@ -44,9 +44,9 @@ public class BlockListService extends PlayerFlagService
 		return isFlagged(name);
 	}
 
-	public boolean hasAnyBlocked(Party party)
+	public boolean hasAnyBlocked(Advertisement ad)
 	{
-		return hasAnyFlagged(party);
+		return hasAnyFlagged(ad);
 	}
 
 	/**

@@ -4,12 +4,17 @@ import java.util.List;
 import lombok.Data;
 
 /**
- * A party as returned by the queue API. The {@code activity} field is the
- * activity id (see {@link Activity#getId()}) so the model stays decoupled from
- * the client's enum when (de)serialising.
+ * One advertisement from the board: what a host is running, who is in it, and how to reach it. Not the
+ * party — the party is the live room, reached over the same socket on the other channel.
+ *
+ * <p>The {@code activity} field is the activity id (see {@link Activity#getId()}) so the model stays
+ * decoupled from the client's enum when (de)serialising.
+ *
+ * <p>Field names here are the wire, and they must match the server's {@code net.osparty.api.model
+ * .Advertisement} exactly — neither side annotates, so both serialise by field name.
  */
 @Data
-public class Party
+public class Advertisement
 {
 	private String id;
 	private String activity;
@@ -45,7 +50,7 @@ public class Party
 
 	private int minKillCount;
 	private int minHardModeKillCount;
-	private boolean privateParty;
+	private boolean privateAd;
 	/**
 	 * The pod the host's live room is on, reported by the host. Null on an ad from a plugin that predates
 	 * it, in which case joining costs a redirect exactly as it always did.

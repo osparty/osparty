@@ -3,10 +3,10 @@ package net.osparty.ui;
 import net.osparty.service.FavoritesService;
 import net.osparty.service.KillcountService;
 import net.osparty.tools.WorldPinger;
-import net.osparty.api.PartyService;
-import net.osparty.api.PartySubscription;
+import net.osparty.api.BoardService;
+import net.osparty.api.BoardSubscription;
 import net.osparty.model.Activity;
-import net.osparty.model.Party;
+import net.osparty.model.Advertisement;
 import net.osparty.party.LivePartyBackend;
 import java.awt.BorderLayout;
 import java.awt.Component;
@@ -43,8 +43,8 @@ import net.runelite.http.api.worlds.WorldRegion;
  */
 class FriendsPanel extends PartyCardPanel
 {
-	private List<Party> lastAll = new ArrayList<>();
-	private PartySubscription subscription;
+	private List<Advertisement> lastAll = new ArrayList<>();
+	private BoardSubscription subscription;
 
 	// ---- UI ----------------------------------------------------------------
 	private final JLabel statusLabel;
@@ -78,7 +78,7 @@ class FriendsPanel extends PartyCardPanel
 
 	// ---- constructor -------------------------------------------------------
 
-	FriendsPanel(PartyService partyService, Supplier<String> playerNameSupplier,
+	FriendsPanel(BoardService boardService, Supplier<String> playerNameSupplier,
 		PartyState partyState, LivePartyBackend liveParty,
 		Supplier<AccountType> accountTypeSupplier,
 		KillcountService killcountService,
@@ -91,7 +91,7 @@ class FriendsPanel extends PartyCardPanel
 		SpriteManager spriteManager,
 		net.osparty.OSPartyConfig config)
 	{
-		super(partyService, playerNameSupplier, partyState, liveParty, accountTypeSupplier,
+		super(boardService, playerNameSupplier, partyState, liveParty, accountTypeSupplier,
 			killcountService, worldPinger, worldRegionResolver, worldAddressResolver,
 			favoritesService, blockListService, friendNamesSupplier, spriteManager, config);
 
@@ -208,14 +208,14 @@ class FriendsPanel extends PartyCardPanel
 
 	/** When a star is toggled in this panel, re-render (unfavouriting removes a card). */
 	@Override
-	protected void onFavoriteToggled(Party party)
+	protected void onFavoriteToggled(Advertisement ad)
 	{
 		SwingUtilities.invokeLater(this::render);
 	}
 
 	/** When a host is blocked/unblocked here, re-render (updates the Blocked list and favourite cards). */
 	@Override
-	protected void onBlockToggled(Party party)
+	protected void onBlockToggled(Advertisement ad)
 	{
 		SwingUtilities.invokeLater(this::render);
 	}
@@ -228,8 +228,8 @@ class FriendsPanel extends PartyCardPanel
 		{
 			return;
 		}
-		subscription = partyService.subscribeParties(
-			parties -> SwingUtilities.invokeLater(() -> acceptParties(parties)),
+		subscription = boardService.subscribeAds(
+			ads -> SwingUtilities.invokeLater(() -> acceptAds(ads)),
 			error -> { /* transient socket drop; a reconnect re-subscribes and re-snapshots */ });
 	}
 
@@ -242,31 +242,31 @@ class FriendsPanel extends PartyCardPanel
 		}
 	}
 
-	private void acceptParties(List<Party> parties)
+	private void acceptAds(List<Advertisement> ads)
 	{
-		lastAll = parties != null ? parties : new ArrayList<>();
+		lastAll = ads != null ? ads : new ArrayList<>();
 		render();
 	}
 
 	void render()
 	{
 		applyButtons.clear();
-		partiesById.clear();
+		adsById.clear();
 		reasonLabels.clear();
 		rolePickers.clear();
 
 		Set<String> friends = friendNamesSupplier != null ? friendNamesSupplier.get() : null;
 
-		List<Party> faves = new ArrayList<>();
-		List<Party> friendParties = new ArrayList<>();
+		List<Advertisement> faves = new ArrayList<>();
+		List<Advertisement> friendParties = new ArrayList<>();
 
-		for (Party p : lastAll)
+		for (Advertisement p : lastAll)
 		{
 			// Keep favourite/block entries' names current as we see these accounts live.
-			favoritesService.observeParty(p);
+			favoritesService.observeAd(p);
 			if (blockListService != null)
 			{
-				blockListService.observeParty(p);
+				blockListService.observeAd(p);
 			}
 			if (p.isFull())
 			{
@@ -309,7 +309,7 @@ class FriendsPanel extends PartyCardPanel
 		updateAllButtons();
 	}
 
-	private void populateSection(JPanel content, List<Party> parties, boolean expanded, String emptyMsg)
+	private void populateSection(JPanel content, List<Advertisement> ads, boolean expanded, String emptyMsg)
 	{
 		content.removeAll();
 		if (!expanded)
@@ -318,7 +318,7 @@ class FriendsPanel extends PartyCardPanel
 			content.repaint();
 			return;
 		}
-		if (parties.isEmpty() && emptyMsg != null)
+		if (ads.isEmpty() && emptyMsg != null)
 		{
 			JLabel empty = new JLabel(emptyMsg);
 			empty.setFont(FontManager.getRunescapeSmallFont());
@@ -327,10 +327,10 @@ class FriendsPanel extends PartyCardPanel
 			empty.setAlignmentX(Component.LEFT_ALIGNMENT);
 			content.add(empty);
 		}
-		for (Party party : parties)
+		for (Advertisement ad : ads)
 		{
-			Activity activity = Activity.fromId(party.getActivity());
-			JPanel card = buildPartyCard(activity, party);
+			Activity activity = Activity.fromId(ad.getActivity());
+			JPanel card = buildPartyCard(activity, ad);
 			card.setAlignmentX(Component.LEFT_ALIGNMENT);
 			content.add(card);
 			content.add(Box.createVerticalStrut(4));

@@ -5,8 +5,8 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
-import net.osparty.api.PartyService;
-import net.osparty.model.Party;
+import net.osparty.api.BoardService;
+import net.osparty.model.Advertisement;
 import net.osparty.party.HostTransferMessage;
 import net.osparty.party.LivePartyBackend;
 import net.osparty.party.PartyStatus;
@@ -28,7 +28,7 @@ public class HostTransferHandler
 	private static final int HANDSHAKE_TIMEOUT_MS = 12_000;
 
 	private final LivePartyBackend liveParty;
-	private final PartyService partyService;
+	private final BoardService boardService;
 	private final PartyState partyState;
 	private final Supplier<String> localNameSupplier;
 	private final Consumer<String> notifier;
@@ -38,11 +38,11 @@ public class HostTransferHandler
 	/** New host: an offer we've accepted and are awaiting the COMMIT for. Null when idle. */
 	private IncomingTransfer incoming;
 
-	HostTransferHandler(LivePartyBackend liveParty, PartyService partyService, PartyState partyState,
+	HostTransferHandler(LivePartyBackend liveParty, BoardService boardService, PartyState partyState,
 		Supplier<String> localNameSupplier, Consumer<String> notifier)
 	{
 		this.liveParty = liveParty;
-		this.partyService = partyService;
+		this.boardService = boardService;
 		this.partyState = partyState;
 		this.localNameSupplier = localNameSupplier;
 		this.notifier = notifier;
@@ -58,8 +58,8 @@ public class HostTransferHandler
 		{
 			return;
 		}
-		Party party = partyState.getCurrentParty();
-		if (party == null)
+		Advertisement ad = partyState.getCurrentAd();
+		if (ad == null)
 		{
 			return;
 		}
@@ -126,7 +126,7 @@ public class HostTransferHandler
 			return; // not aimed at us
 		}
 		// We can only take over if we're actually an admitted member of a party we don't already host.
-		if (liveParty.isHosting() || !liveParty.isLocalAdmitted() || partyState.getCurrentParty() == null)
+		if (liveParty.isHosting() || !liveParty.isLocalAdmitted() || partyState.getCurrentAd() == null)
 		{
 			return;
 		}
@@ -145,8 +145,8 @@ public class HostTransferHandler
 		{
 			return;
 		}
-		Party party = partyState.getCurrentParty();
-		if (party == null)
+		Advertisement ad = partyState.getCurrentAd();
+		if (ad == null)
 		{
 			clearIncoming();
 			return;
@@ -156,9 +156,9 @@ public class HostTransferHandler
 		liveParty.promoteToHost(localName);
 		// The backend re-keyed the ad to us; mirror that locally or host-name lookups (and the
 		// ad-still-exists check) would keep asking about the old host and fold the tab.
-		party.setHost(localName);
-		partyService.adoptHostedParty(party.getId(), key);
-		partyState.setHosting(party, key);
+		ad.setHost(localName);
+		boardService.adoptHostedAd(ad.getId(), key);
+		partyState.setHosting(ad, key);
 		notifier.accept("You are now the host of this party.");
 		clearIncoming();
 	}
@@ -180,20 +180,20 @@ public class HostTransferHandler
 		{
 			return;
 		}
-		Party party = partyState.getCurrentParty();
-		if (party == null)
+		Advertisement ad = partyState.getCurrentAd();
+		if (ad == null)
 		{
 			clearOutgoing();
 			return;
 		}
 		outgoing.stopTimeout();
 		final OutgoingTransfer transfer = outgoing;
-		partyService.transferHost(party.getId(), partyState.getHostKey(), transfer.targetName, transfer.newKey,
-			ignored -> SwingUtilities.invokeLater(() -> onTransferAcked(party, transfer)),
+		boardService.transferHost(ad.getId(), partyState.getHostKey(), transfer.targetName, transfer.newKey,
+			ignored -> SwingUtilities.invokeLater(() -> onTransferAcked(ad, transfer)),
 			error -> SwingUtilities.invokeLater(() -> onTransferFailed(transfer)));
 	}
 
-	private void onTransferAcked(Party party, OutgoingTransfer transfer)
+	private void onTransferAcked(Advertisement ad, OutgoingTransfer transfer)
 	{
 		// Guard against a party that ended (or a second transfer) while the ack was in flight.
 		if (outgoing != transfer)
@@ -202,11 +202,11 @@ public class HostTransferHandler
 		}
 		liveParty.commitHostTransfer(transfer.targetId, transfer.newKey, transfer.hostStays);
 		liveParty.demoteToMember();
-		partyService.releaseHostedParty(party.getId());
-		party.setHost(transfer.targetName);
+		boardService.releaseHostedAd(ad.getId());
+		ad.setHost(transfer.targetName);
 		if (transfer.hostStays)
 		{
-			partyState.demoteToMember(party);
+			partyState.demoteToMember(ad);
 			notifier.accept("You handed the party to " + transfer.targetName + " and are now a member.");
 		}
 		else

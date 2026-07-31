@@ -4,12 +4,12 @@ import net.osparty.service.FavoritesService;
 import net.osparty.service.KillcountService;
 import net.osparty.OSPartyConfig;
 import net.osparty.tools.WorldPinger;
-import net.osparty.api.PartyService;
-import net.osparty.api.PartySubscription;
+import net.osparty.api.BoardService;
+import net.osparty.api.BoardSubscription;
 import net.osparty.model.Activity;
 import net.osparty.model.LootRule;
 import net.osparty.model.Member;
-import net.osparty.model.Party;
+import net.osparty.model.Advertisement;
 import net.osparty.model.Role;
 import net.osparty.party.LivePartyBackend;
 import java.awt.BorderLayout;
@@ -194,7 +194,7 @@ class SearchPanel extends PartyCardPanel
 	private JPanel disconnectedPanel;
 	private boolean showingDisconnected;
 
-	private List<Party> lastResults;
+	private List<Advertisement> lastResults;
 	private String renderedSignature;
 	/** Rendered card per party id, reused across refreshes so a push only touches changed cards. */
 	private final Map<String, JComponent> cardsById = new HashMap<>();
@@ -202,9 +202,9 @@ class SearchPanel extends PartyCardPanel
 	private final Map<String, String> cardSignatures = new HashMap<>();
 	private Timer autoRefreshTimer;
 	/** Live party-list socket; non-null only while the Search tab is visible. */
-	private PartySubscription subscription;
+	private BoardSubscription subscription;
 
-	SearchPanel(PartyService partyService, Supplier<String> playerNameSupplier,
+	SearchPanel(BoardService boardService, Supplier<String> playerNameSupplier,
                 Supplier<String> friendsChatOwnerSupplier, IntSupplier worldSupplier, PartyState partyState,
                 LivePartyBackend liveParty, Supplier<AccountType> accountTypeSupplier, Supplier<int[]> mapRegionsSupplier,
                 IntFunction<WorldRegion> worldRegionResolver, KillcountService killcountService, ConfigManager configManager,
@@ -213,7 +213,7 @@ class SearchPanel extends PartyCardPanel
                 BlockListService blockListService, SpriteManager spriteManager,
                 OSPartyConfig config)
 	{
-		super(partyService, playerNameSupplier, partyState, liveParty, accountTypeSupplier,
+		super(boardService, playerNameSupplier, partyState, liveParty, accountTypeSupplier,
 			killcountService, worldPinger, worldRegionResolver, worldAddressResolver,
 			favoritesService, blockListService, friendNamesSupplier, spriteManager, config);
 		this.friendsChatOwnerSupplier = friendsChatOwnerSupplier;
@@ -613,7 +613,7 @@ class SearchPanel extends PartyCardPanel
 	}
 
 	/** Whether a party passes the role filter: it must still need one of this activity's ticked roles. */
-	private boolean matchesRoleFilter(Party party, Activity activity)
+	private boolean matchesRoleFilter(Advertisement ad, Activity activity)
 	{
 		if (activity == null || !activity.hasRoles())
 		{
@@ -632,18 +632,18 @@ class SearchPanel extends PartyCardPanel
 		{
 			return true; // this activity's box is unconstrained
 		}
-		List<String> needed = neededRolesOf(party);
+		List<String> needed = neededRolesOf(ad);
 		if (needed == null || needed.isEmpty())
 		{
 			return true; // no role info on the ad - don't over-filter
 		}
 		// The party's difficulty selects which wildcard/Fill applies (CM party uses the CM Fill, etc.).
-		Role any = activity.anyRole(party.isHardMode());
+		Role any = activity.anyRole(ad.isHardMode());
 		if (any != null && picked.contains(any))
 		{
 			return true; // "I'll do any role"
 		}
-		Role fill = activity.fillRole(party.isHardMode());
+		Role fill = activity.fillRole(ad.isHardMode());
 		if (fill != null && needed.contains(fill.getId()))
 		{
 			return true; // an advertised Fill slot accepts anyone
@@ -1017,17 +1017,17 @@ class SearchPanel extends PartyCardPanel
 		{
 			boolean showBlocked = Boolean.parseBoolean(
 				configManager.getConfiguration(OSPartyConfig.GROUP, "showBlockedParties"));
-			for (Party party : lastResults)
+			for (Advertisement ad : lastResults)
 			{
-				if (party.isFull())
+				if (ad.isFull())
 				{
 					continue;
 				}
-				if (!showBlocked && blockListService.hasAnyBlocked(party))
+				if (!showBlocked && blockListService.hasAnyBlocked(ad))
 				{
 					continue;
 				}
-				Activity act = Activity.fromId(party.getActivity());
+				Activity act = Activity.fromId(ad.getActivity());
 				if (act != null)
 				{
 					counts.merge(act, 1, Integer::sum);
@@ -1284,39 +1284,39 @@ class SearchPanel extends PartyCardPanel
 			return;
 		}
 		status.accept("Looking up code " + trimmed + "...");
-		partyService.getPartyByCode(trimmed,
-			party -> SwingUtilities.invokeLater(() -> joinFetched(party, status, invited)),
+		boardService.getAdByCode(trimmed,
+			ad -> SwingUtilities.invokeLater(() -> joinFetched(ad, status, invited)),
 			error -> SwingUtilities.invokeLater(() -> status.accept("No party found for code " + trimmed + ".")));
 	}
 
-	private void joinFetched(Party party, Consumer<String> status, boolean invited)
+	private void joinFetched(Advertisement ad, Consumer<String> status, boolean invited)
 	{
-		if (party == null)
+		if (ad == null)
 		{
 			status.accept("No party found for that code.");
 			return;
 		}
-		if (isOwnParty(party))
+		if (isOwnParty(ad))
 		{
 			status.accept("That's your own party.");
 			return;
 		}
-		if (!meetsIronmanRule(party))
+		if (!meetsIronmanRule(ad))
 		{
 			status.accept("That party is for ironman accounts.");
 			return;
 		}
-		if (kcStatus(party) == KcStatus.BELOW)
+		if (kcStatus(ad) == KcStatus.BELOW)
 		{
 			status.accept("You don't meet that party's minimum killcount.");
 			return;
 		}
 
-		Activity activity = Activity.fromId(party.getActivity());
+		Activity activity = Activity.fromId(ad.getActivity());
 		String role = null;
 		if (activity != null && activity.hasRoles())
 		{
-			role = promptForRole(party, activity);
+			role = promptForRole(ad, activity);
 			if (role == null)
 			{
 				return; // cancelled the role dialog
@@ -1324,7 +1324,7 @@ class SearchPanel extends PartyCardPanel
 		}
 
 		final String chosenRole = role;
-		leaveCurrentThen(() -> doApply(party, chosenRole, false, invited));
+		leaveCurrentThen(() -> doApply(ad, chosenRole, false, invited));
 	}
 
 	private LootRule lootFilterValue()
@@ -1352,14 +1352,14 @@ class SearchPanel extends PartyCardPanel
 
 	/** Blocking a host from a card hides it (unless "Show blocked parties" is on): re-filter now. */
 	@Override
-	protected void onBlockToggled(Party party)
+	protected void onBlockToggled(Advertisement ad)
 	{
 		renderCurrent();
 	}
 
 	/** Favouriting from a card's menu: re-render so the card (and its menu label) reflect the new state. */
 	@Override
-	protected void onFavoriteToggled(Party party)
+	protected void onFavoriteToggled(Advertisement ad)
 	{
 		renderCurrent();
 	}
@@ -1371,8 +1371,8 @@ class SearchPanel extends PartyCardPanel
 		{
 			return;
 		}
-		subscription = partyService.subscribeParties(
-			parties -> SwingUtilities.invokeLater(() -> acceptPushedParties(parties)),
+		subscription = boardService.subscribeAds(
+			ads -> SwingUtilities.invokeLater(() -> acceptPushedAds(ads)),
 			error -> SwingUtilities.invokeLater(this::updateConnectionView),
 			scopeActivityId());
 		updateConnectionView();
@@ -1467,13 +1467,13 @@ class SearchPanel extends PartyCardPanel
 	}
 
 	/** A list pushed by the socket: kept as the latest result even when hidden, repainted only when visible. */
-	private void acceptPushedParties(List<Party> parties)
+	private void acceptPushedAds(List<Advertisement> ads)
 	{
-		lastResults = parties;
+		lastResults = ads;
 		updateConnectionView();
 		if (isShowing())
 		{
-			showResults(parties);
+			showResults(ads);
 		}
 	}
 
@@ -1487,9 +1487,9 @@ class SearchPanel extends PartyCardPanel
 		stopSubscription();
 	}
 
-	private void showResults(List<Party> parties)
+	private void showResults(List<Advertisement> ads)
 	{
-		lastResults = parties;
+		lastResults = ads;
 		// Badges refresh on every push, even when the visible-card render below is skipped.
 		updateActivityCounts();
 
@@ -1516,69 +1516,69 @@ class SearchPanel extends PartyCardPanel
 			configManager.getConfiguration(OSPartyConfig.GROUP, "showBlockedParties"));
 
 		// Show only joinable parties matching every active filter (full ones hidden).
-		List<Party> visible = new ArrayList<>();
+		List<Advertisement> visible = new ArrayList<>();
 		int totalOpen = 0; // all joinable parties, before filters (for the "X of total" count)
-		if (parties != null)
+		if (ads != null)
 		{
-			for (Party party : parties)
+			for (Advertisement ad : ads)
 			{
 				// Record current names for favourited/blocked accounts we see (name-change detection + hash backfill).
-				favoritesService.observeParty(party);
-				blockListService.observeParty(party);
+				favoritesService.observeAd(ad);
+				blockListService.observeAd(ad);
 
-				if (party.isFull())
+				if (ad.isFull())
 				{
 					continue;
 				}
-				if (!showBlocked && blockListService.hasAnyBlocked(party))
+				if (!showBlocked && blockListService.hasAnyBlocked(ad))
 				{
 					continue;
 				}
 				totalOpen++;
-				Activity act = Activity.fromId(party.getActivity());
+				Activity act = Activity.fromId(ad.getActivity());
 				if (act == null || !selectedActivities.contains(act))
 				{
 					continue;
 				}
-				if (wantLoot != null && LootRule.fromName(party.getLootRule()) != wantLoot)
+				if (wantLoot != null && LootRule.fromName(ad.getLootRule()) != wantLoot)
 				{
 					continue;
 				}
-				if (ironOnly && !party.isIronmanOnly())
+				if (ironOnly && !ad.isIronmanOnly())
 				{
 					continue;
 				}
 				// Learner-raid filter (feature 6).
-				if (learnerIdx == 1 && !party.isLearnerRaid())
+				if (learnerIdx == 1 && !ad.isLearnerRaid())
 				{
 					continue; // "Learner only" — hide non-learner parties
 				}
-				if (learnerIdx == 2 && party.isLearnerRaid())
+				if (learnerIdx == 2 && ad.isLearnerRaid())
 				{
 					continue; // "Hide learner raids" — hide learner parties
 				}
 				// Hide-ineligible filter (feature 5): a PENDING KC check is never treated as BELOW.
 				if (hideIneligible)
 				{
-					if (!meetsIronmanRule(party))
+					if (!meetsIronmanRule(ad))
 					{
 						continue;
 					}
-					if (kcStatus(party) == KcStatus.BELOW)
+					if (kcStatus(ad) == KcStatus.BELOW)
 					{
 						continue;
 					}
 				}
-				if (!matchesRoleFilter(party, act))
+				if (!matchesRoleFilter(ad, act))
 				{
 					continue;
 				}
-				if (!text.isEmpty() && !matchesText(party, act, text))
+				if (!text.isEmpty() && !matchesText(ad, act, text))
 				{
 					continue;
 				}
 
-				Integer worldNum = parseWorldNum(party);
+				Integer worldNum = parseWorldNum(ad);
 
 				// Region filter: skip parties whose host world has a deselected region.
 				if (regionFilterActive && worldNum != null)
@@ -1600,19 +1600,19 @@ class SearchPanel extends PartyCardPanel
 					}
 				}
 
-				visible.add(party);
+				visible.add(ad);
 			}
 		}
 
 		// Sort the visible list by the chosen order, then float friends to the top.
-		Comparator<Party> comp = buildComparator();
+		Comparator<Advertisement> comp = buildComparator();
 		if (friendNamesSupplier != null)
 		{
 			Set<String> friends = friendNamesSupplier.get();
 			if (friends != null && !friends.isEmpty())
 			{
-				Comparator<Party> friendFirst = Comparator.comparingInt(
-					(Party p) -> {
+				Comparator<Advertisement> friendFirst = Comparator.comparingInt(
+					(Advertisement p) -> {
 						String key = p.getHost() == null ? "" : normalize(p.getHost()).toLowerCase();
 						return friends.contains(key) ? 0 : 1;
 					});
@@ -1624,9 +1624,9 @@ class SearchPanel extends PartyCardPanel
 		// Request pings for all visible parties. No-op if already cached or in flight.
 		if (worldPinger != null)
 		{
-			for (Party party : visible)
+			for (Advertisement ad : visible)
 			{
-				Integer worldNum = parseWorldNum(party);
+				Integer worldNum = parseWorldNum(ad);
 				if (worldNum != null)
 				{
 					String address = worldAddressResolver != null ? worldAddressResolver.apply(worldNum) : null;
@@ -1701,9 +1701,9 @@ class SearchPanel extends PartyCardPanel
 		// Reconcile the card list in place: drop departed cards, rebuild only changed ones, reorder the rest,
 		// so a push doesn't flicker the panel or disturb the scroll position or an open role picker.
 		Set<String> visibleIds = new HashSet<>();
-		for (Party party : visible)
+		for (Advertisement ad : visible)
 		{
-			visibleIds.add(party.getId());
+			visibleIds.add(ad.getId());
 		}
 		for (Iterator<Map.Entry<String, JComponent>> it = cardsById.entrySet().iterator(); it.hasNext(); )
 		{
@@ -1714,16 +1714,16 @@ class SearchPanel extends PartyCardPanel
 				it.remove();
 				cardSignatures.remove(entry.getKey());
 				applyButtons.remove(entry.getKey());
-				partiesById.remove(entry.getKey());
+				adsById.remove(entry.getKey());
 				reasonLabels.remove(entry.getKey());
 				rolePickers.remove(entry.getKey());
 			}
 		}
 		int index = 0;
-		for (Party party : visible)
+		for (Advertisement ad : visible)
 		{
-			String id = party.getId();
-			String cardSig = cardSignature(party);
+			String id = ad.getId();
+			String cardSig = cardSignature(ad);
 			JComponent card = cardsById.get(id);
 			if (card != null && !cardSig.equals(cardSignatures.get(id)))
 			{
@@ -1732,12 +1732,12 @@ class SearchPanel extends PartyCardPanel
 			}
 			if (card == null)
 			{
-				card = wrapCard(buildPartyCard(Activity.fromId(party.getActivity()), party));
+				card = wrapCard(buildPartyCard(Activity.fromId(ad.getActivity()), ad));
 				cardsById.put(id, card);
 				cardSignatures.put(id, cardSig);
 			}
 			// Keep actions on fresh data even when the card is reused (e.g. a rotated passphrase).
-			partiesById.put(id, party);
+			adsById.put(id, ad);
 			if (index >= resultsPanel.getComponentCount() || resultsPanel.getComponent(index) != card)
 			{
 				resultsPanel.add(card, index); // moves the card if it is already a child
@@ -1784,14 +1784,14 @@ class SearchPanel extends PartyCardPanel
 		return wrap;
 	}
 
-	private static boolean matchesText(Party party, Activity activity, String lowerQuery)
+	private static boolean matchesText(Advertisement ad, Activity activity, String lowerQuery)
 	{
-		if (contains(party.getHost(), lowerQuery) || contains(party.getDescription(), lowerQuery))
+		if (contains(ad.getHost(), lowerQuery) || contains(ad.getDescription(), lowerQuery))
 		{
 			return true;
 		}
 		// The CoX team-size scaling as shown on the card, e.g. "3+4" (so "4", "3" and "3+4" all match).
-		if (contains(coxScaleOf(party), lowerQuery))
+		if (contains(coxScaleOf(ad), lowerQuery))
 		{
 			return true;
 		}
@@ -1832,47 +1832,47 @@ class SearchPanel extends PartyCardPanel
 	}
 
 	/** A stable signature of the visible parties (incl. age in minutes) so unchanged refreshes can no-op. */
-	private static String signatureOf(List<Party> parties)
+	private static String signatureOf(List<Advertisement> ads)
 	{
 		long now = System.currentTimeMillis();
 		StringBuilder sb = new StringBuilder();
-		for (Party party : parties)
+		for (Advertisement ad : ads)
 		{
-			sb.append(party.getId()).append(':').append(partyContentSignature(party, now)).append(';');
+			sb.append(ad.getId()).append(':').append(adContentSignature(ad, now)).append(';');
 		}
 		return sb.toString();
 	}
 
 	/** The party-payload fields a card renders; shared by the list and per-card signatures. */
-	private static String partyContentSignature(Party party, long now)
+	private static String adContentSignature(Advertisement ad, long now)
 	{
-		return new StringBuilder().append(party.getSize())
-			.append('/').append(party.getCapacity())
-			.append('w').append(party.getWorld() == null ? "" : party.getWorld())
-			.append('L').append(party.getLayout() == null ? "" : party.getLayout())
-			.append('R').append(neededRolesOf(party) == null ? "" : neededRolesOf(party))
-			.append('d').append(party.isHardMode() ? "h" : "").append(party.getInvocation())
-			.append('c').append(party.getCoxScale() == null ? "" : party.getCoxScale())
+		return new StringBuilder().append(ad.getSize())
+			.append('/').append(ad.getCapacity())
+			.append('w').append(ad.getWorld() == null ? "" : ad.getWorld())
+			.append('L').append(ad.getLayout() == null ? "" : ad.getLayout())
+			.append('R').append(neededRolesOf(ad) == null ? "" : neededRolesOf(ad))
+			.append('d').append(ad.isHardMode() ? "h" : "").append(ad.getInvocation())
+			.append('c').append(ad.getCoxScale() == null ? "" : ad.getCoxScale())
 			// Host-editable card content, so an edit invalidates the cached render.
-			.append('K').append(party.getMinKillCount()).append('/').append(party.getMinHardModeKillCount())
-			.append('o').append(party.getLootRule() == null ? "" : party.getLootRule())
-			.append('i').append(party.isIronmanOnly() ? '1' : '0')
-			.append('l').append(party.isLearnerRaid() ? '1' : '0')
-			.append('D').append(party.getDescription() == null ? "" : party.getDescription())
-			.append('@').append(ageMinutes(now, party.getCreatedAt()))
+			.append('K').append(ad.getMinKillCount()).append('/').append(ad.getMinHardModeKillCount())
+			.append('o').append(ad.getLootRule() == null ? "" : ad.getLootRule())
+			.append('i').append(ad.isIronmanOnly() ? '1' : '0')
+			.append('l').append(ad.isLearnerRaid() ? '1' : '0')
+			.append('D').append(ad.getDescription() == null ? "" : ad.getDescription())
+			.append('@').append(ageMinutes(now, ad.getCreatedAt()))
 			.toString();
 	}
 
 	/** Everything a card renders (payload + live decorations) so a refresh rebuilds it only when it changed. */
-	private String cardSignature(Party party)
+	private String cardSignature(Advertisement ad)
 	{
-		StringBuilder sb = new StringBuilder(partyContentSignature(party, System.currentTimeMillis()));
-		sb.append('h').append(party.getHost() == null ? "" : party.getHost())
-			.append('t').append(party.getHostAccountType() == null ? "" : party.getHostAccountType());
+		StringBuilder sb = new StringBuilder(adContentSignature(ad, System.currentTimeMillis()));
+		sb.append('h').append(ad.getHost() == null ? "" : ad.getHost())
+			.append('t').append(ad.getHostAccountType() == null ? "" : ad.getHostAccountType());
 		// Host Discord-role badges — without this, a badge change in a members delta wouldn't rebuild the card.
 		if (config == null || config.showDiscordBadges())
 		{
-			List<Member> sigMembers = party.getMembers();
+			List<Member> sigMembers = ad.getMembers();
 			if (sigMembers != null && !sigMembers.isEmpty() && sigMembers.get(0).getBadges() != null)
 			{
 				sb.append('B').append(sigMembers.get(0).getBadges());
@@ -1882,36 +1882,36 @@ class SearchPanel extends PartyCardPanel
 		{
 			sb.append("B-off");
 		}
-		Integer worldNum = parseWorldNum(party);
+		Integer worldNum = parseWorldNum(ad);
 		if (worldNum != null && worldPinger != null)
 		{
 			Integer ping = worldPinger.getCachedPing(worldNum);
 			sb.append('p').append(ping != null ? ping : "?");
 		}
 		Set<String> friends = friendNamesSupplier != null ? friendNamesSupplier.get() : null;
-		sb.append('F').append(friends != null && party.getHost() != null
-			&& friends.contains(normalize(party.getHost()).toLowerCase()) ? '1' : '0');
+		sb.append('F').append(friends != null && ad.getHost() != null
+			&& friends.contains(normalize(ad.getHost()).toLowerCase()) ? '1' : '0');
 		if (favoritesService != null)
 		{
-			sb.append('v').append(favoritesService.hasAnyFavorite(party) ? '1' : '0')
-				.append(favoritesService.isFavorite(party.getHostAccountHash(), party.getHost()) ? 'H' : '_');
+			sb.append('v').append(favoritesService.hasAnyFavorite(ad) ? '1' : '0')
+				.append(favoritesService.isFavorite(ad.getHostAccountHash(), ad.getHost()) ? 'H' : '_');
 		}
 		if (blockListService != null)
 		{
-			sb.append('b').append(blockListService.isBlocked(party.getHostAccountHash(), party.getHost()) ? '1' : '0');
+			sb.append('b').append(blockListService.isBlocked(ad.getHostAccountHash(), ad.getHost()) ? '1' : '0');
 		}
 		return sb.toString();
 	}
 
 	/** Signature of which visible-party hosts are blocked (rendered greyed when shown at all). */
-	private String blockSignatureOf(List<Party> parties)
+	private String blockSignatureOf(List<Advertisement> ads)
 	{
 		if (blockListService == null)
 		{
 			return "";
 		}
 		StringBuilder sb = new StringBuilder();
-		for (Party p : parties)
+		for (Advertisement p : ads)
 		{
 			if (blockListService.isBlocked(p.getHostAccountHash(), p.getHost()))
 			{
@@ -1954,14 +1954,14 @@ class SearchPanel extends PartyCardPanel
 	}
 
 	/** Signature of cached pings so a ping arriving via callback re-renders the world label. */
-	private String pingSignatureOf(List<Party> parties)
+	private String pingSignatureOf(List<Advertisement> ads)
 	{
 		if (worldPinger == null)
 		{
 			return "";
 		}
 		StringBuilder sb = new StringBuilder();
-		for (Party p : parties)
+		for (Advertisement p : ads)
 		{
 			Integer wn = parseWorldNum(p);
 			if (wn != null)
@@ -1974,7 +1974,7 @@ class SearchPanel extends PartyCardPanel
 	}
 
 	/** Build a sort comparator for the chosen sort order. */
-	private Comparator<Party> buildComparator()
+	private Comparator<Advertisement> buildComparator()
 	{
 		String selected = (String) sortComboBox.getSelectedItem();
 		if (selected == null)
@@ -1984,7 +1984,7 @@ class SearchPanel extends PartyCardPanel
 		switch (selected)
 		{
 			case SORT_OLDEST:
-				return Comparator.comparingLong(Party::getCreatedAt);
+				return Comparator.comparingLong(Advertisement::getCreatedAt);
 			case SORT_PING:
 				return (a, b) -> Integer.compare(pingForSort(a), pingForSort(b));
 			case SORT_FULL:
@@ -1999,9 +1999,9 @@ class SearchPanel extends PartyCardPanel
 	}
 
 	/** Ping value used for sorting: unknown near-last, unreachable last. */
-	private int pingForSort(Party party)
+	private int pingForSort(Advertisement ad)
 	{
-		Integer wn = parseWorldNum(party);
+		Integer wn = parseWorldNum(ad);
 		if (wn == null || worldPinger == null)
 		{
 			return Integer.MAX_VALUE - 1;
@@ -2015,7 +2015,7 @@ class SearchPanel extends PartyCardPanel
 	}
 
 	/** Signature of which visible-party hosts are friends, so sort changes trigger a re-render. */
-	private String friendSignatureOf(List<Party> parties)
+	private String friendSignatureOf(List<Advertisement> ads)
 	{
 		if (friendNamesSupplier == null)
 		{
@@ -2027,7 +2027,7 @@ class SearchPanel extends PartyCardPanel
 			return "";
 		}
 		StringBuilder sb = new StringBuilder();
-		for (Party p : parties)
+		for (Advertisement p : ads)
 		{
 			String key = p.getHost() == null ? "" : normalize(p.getHost()).toLowerCase();
 			if (friends.contains(key))
@@ -2039,14 +2039,14 @@ class SearchPanel extends PartyCardPanel
 	}
 
 	/** Signature of which visible parties are favourited, so toggling a star rebuilds the icons. */
-	private String favSignatureOf(List<Party> parties)
+	private String favSignatureOf(List<Advertisement> ads)
 	{
 		if (favoritesService == null)
 		{
 			return "";
 		}
 		StringBuilder sb = new StringBuilder();
-		for (Party p : parties)
+		for (Advertisement p : ads)
 		{
 			if (favoritesService.hasAnyFavorite(p))
 			{

@@ -3,14 +3,14 @@ package net.osparty.model;
 import java.util.List;
 
 /**
- * A partial update for an existing {@link Party}, mirroring the server's {@code PartyDelta}.
+ * A partial update for an existing {@link Advertisement}, mirroring the server's {@code AdvertisementDelta}.
  * Only the fields actually changed (plus {@code id}/{@code activity}) are populated in an
  * {@code updated} entry of a {@code batch} frame; the rest are null and left untouched on merge.
  *
  * <p>Boxed types matter: a primitive {@code 0}/{@code false} is indistinguishable from "absent",
  * so the nullable wrappers let {@link #applyTo} merge only the fields the server actually sent.
  */
-public class PartyDelta
+public class AdvertisementDelta
 {
 	private String id;
 	private String activity;
@@ -24,7 +24,7 @@ public class PartyDelta
 	private Integer capacity;
 	private String lootRule;
 	private Boolean ironmanOnly;
-	private Boolean privateParty;
+	private Boolean privateAd;
 	private Integer minKillCount;
 	private Integer minHardModeKillCount;
 	private Integer invocation;
@@ -37,7 +37,7 @@ public class PartyDelta
 	}
 
 	/** Merge the present (non-null) fields of this delta onto an existing party in place. */
-	public void applyTo(Party p)
+	public void applyTo(Advertisement p)
 	{
 		if (host != null)
 		{
@@ -79,9 +79,9 @@ public class PartyDelta
 		{
 			p.setIronmanOnly(ironmanOnly);
 		}
-		if (privateParty != null)
+		if (privateAd != null)
 		{
-			p.setPrivateParty(privateParty);
+			p.setPrivateAd(privateAd);
 		}
 		if (minKillCount != null)
 		{

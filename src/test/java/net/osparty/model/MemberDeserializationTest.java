@@ -19,21 +19,21 @@ public class MemberDeserializationTest
 	{
 		String json = "{\"id\":\"p1\",\"host\":\"protodefend\","
 			+ "\"members\":[{\"name\":\"protodefend\",\"accountHash\":123456789012}]}";
-		Party party = gson.fromJson(json, Party.class);
+		Advertisement ad = gson.fromJson(json, Advertisement.class);
 
-		assertEquals("protodefend", party.getMembers().get(0).getName());
-		assertEquals(123456789012L, party.getMembers().get(0).getAccountHash());
-		assertEquals(123456789012L, party.getHostAccountHash());
+		assertEquals("protodefend", ad.getMembers().get(0).getName());
+		assertEquals(123456789012L, ad.getMembers().get(0).getAccountHash());
+		assertEquals(123456789012L, ad.getHostAccountHash());
 	}
 
 	@Test
 	public void toleratesLegacyStringMembers()
 	{
 		String json = "{\"id\":\"p2\",\"host\":\"x\",\"members\":[\"x\"]}";
-		Party party = gson.fromJson(json, Party.class);
+		Advertisement ad = gson.fromJson(json, Advertisement.class);
 
-		assertEquals("x", party.getMembers().get(0).getName());
-		assertEquals(0L, party.getHostAccountHash());
+		assertEquals("x", ad.getMembers().get(0).getName());
+		assertEquals(0L, ad.getHostAccountHash());
 	}
 
 	@Test
@@ -42,10 +42,10 @@ public class MemberDeserializationTest
 		String json = "{\"id\":\"p3\",\"host\":\"x\","
 			+ "\"members\":[{\"name\":\"x\",\"accountHash\":1,\"badges\":[\"developer\",\"backer\"]},"
 			+ "{\"name\":\"y\",\"accountHash\":2}]}";
-		Party party = gson.fromJson(json, Party.class);
+		Advertisement ad = gson.fromJson(json, Advertisement.class);
 
-		assertEquals(java.util.List.of("developer", "backer"), party.getMembers().get(0).getBadges());
-		assertNull(party.getMembers().get(1).getBadges());
+		assertEquals(java.util.List.of("developer", "backer"), ad.getMembers().get(0).getBadges());
+		assertNull(ad.getMembers().get(1).getBadges());
 	}
 
 	@Test

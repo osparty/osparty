@@ -1,8 +1,8 @@
 package net.osparty.api;
 
-import net.osparty.model.Party;
-import net.osparty.model.PartyDelta;
-import net.osparty.model.PartyRequest;
+import net.osparty.model.Advertisement;
+import net.osparty.model.AdvertisementDelta;
+import net.osparty.model.AdvertisementRequest;
 import com.google.gson.Gson;
 import java.io.IOException;
 import java.time.Duration;
@@ -43,7 +43,7 @@ import okhttp3.WebSocketListener;
  */
 @Slf4j
 @Singleton
-public class PartySocket extends WebSocketListener
+public class OSPartySocket extends WebSocketListener
 {
 	private static final long MIN_BACKOFF_MS = 1_000;
 	private static final long MAX_BACKOFF_MS = 30_000;
@@ -80,7 +80,7 @@ public class PartySocket extends WebSocketListener
 		void onLiveClosed();
 	}
 
-	private final Map<String, Party> parties = new LinkedHashMap<>();
+	private final Map<String, Advertisement> ads = new LinkedHashMap<>();
 	// Recreated on each start(): stop() shuts the executor down for good.
 	private volatile ScheduledExecutorService reconnects;
 
@@ -94,7 +94,7 @@ public class PartySocket extends WebSocketListener
 		});
 	}
 
-	private final List<Consumer<List<Party>>> searchListeners = new CopyOnWriteArrayList<>();
+	private final List<Consumer<List<Advertisement>>> searchListeners = new CopyOnWriteArrayList<>();
 	// Activity to scope the live list to (null = all). Kept across reconnects so onOpen re-sends it.
 	private volatile String subscribeActivity;
 	/**
@@ -104,8 +104,8 @@ public class PartySocket extends WebSocketListener
 	 */
 	private volatile long boardSeq;
 	// One-shot lookups awaiting a directed byCode/byHost reply, keyed by the echoed code/host.
-	private final Map<String, Consumer<Party>> pendingByCode = new ConcurrentHashMap<>();
-	private final Map<String, Consumer<Party>> pendingByHost = new ConcurrentHashMap<>();
+	private final Map<String, Consumer<Advertisement>> pendingByCode = new ConcurrentHashMap<>();
+	private final Map<String, Consumer<Advertisement>> pendingByHost = new ConcurrentHashMap<>();
 	// Host createVoiceChannel requests awaiting a voiceChannel reply (or a matching error), keyed by party id.
 	private final Map<String, VoicePending> pendingVoiceChannel = new ConcurrentHashMap<>();
 	// Discord link: the in-flight startDiscordLink request, and getDiscordLink polls keyed by accountHash.
@@ -138,7 +138,7 @@ public class PartySocket extends WebSocketListener
 	private volatile String publishedNode;
 
 	@Inject
-	PartySocket(OkHttpClient httpClient, Gson gson)
+	OSPartySocket(OkHttpClient httpClient, Gson gson)
 	{
 		// A WebSocket must not inherit the REST read timeout; the ping keeps it alive.
 		this.client = httpClient.newBuilder()
@@ -147,10 +147,10 @@ public class PartySocket extends WebSocketListener
 			.build();
 		this.gson = gson;
 		// OkHttp upgrades the https URL to a WebSocket.
-		HttpUrl parsed = HttpUrl.parse(PartyApiClient.apiBaseUrl());
+		HttpUrl parsed = HttpUrl.parse(BoardApiClient.apiBaseUrl());
 		if (parsed == null)
 		{
-			throw new IllegalStateException("Invalid API base URL: " + PartyApiClient.apiBaseUrl());
+			throw new IllegalStateException("Invalid API base URL: " + BoardApiClient.apiBaseUrl());
 		}
 		this.base = parsed;
 	}
@@ -353,13 +353,13 @@ public class PartySocket extends WebSocketListener
 	// --- Search read ---
 
 	/** Register the listener that wants the live party list; pushes the current list now. */
-	public void setSearchListener(Consumer<List<Party>> listener)
+	public void setSearchListener(Consumer<List<Advertisement>> listener)
 	{
 		setSearchListener(listener, null);
 	}
 
 	/** Register the live-list listener, scoping the feed to one activity ({@code null} = all). */
-	public void setSearchListener(Consumer<List<Party>> listener, String activity)
+	public void setSearchListener(Consumer<List<Advertisement>> listener, String activity)
 	{
 		subscribeActivity = blankToNull(activity);
 		searchListeners.add(listener);
@@ -386,7 +386,7 @@ public class PartySocket extends WebSocketListener
 	}
 
 	/** Stop receiving the list firehose (the connection stays up for hosting). */
-	public void clearSearchListener(Consumer<List<Party>> listener)
+	public void clearSearchListener(Consumer<List<Advertisement>> listener)
 	{
 		if (searchListeners.remove(listener) && searchListeners.isEmpty())
 		{
@@ -401,7 +401,7 @@ public class PartySocket extends WebSocketListener
 	// --- Host write ---
 
 	/** Advertise a new ad over the socket; the {@code hosted} ack carries the server's id. */
-	public void host(PartyRequest request, String key, Consumer<Party> onSuccess, Consumer<Throwable> onError)
+	public void host(AdvertisementRequest request, String key, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError)
 	{
 		hostingKey = key;
 		lastSentPatch = null;
@@ -482,7 +482,7 @@ public class PartySocket extends WebSocketListener
 	 * failed transfer leaves us keeping the ad alive as before.
 	 */
 	public void transferHost(String id, String oldKey, String newHost, String newKey,
-		Consumer<Party> onSuccess, Consumer<Throwable> onError)
+		Consumer<Advertisement> onSuccess, Consumer<Throwable> onError)
 	{
 		if (id == null || !connected)
 		{
@@ -510,7 +510,7 @@ public class PartySocket extends WebSocketListener
 	// --- One-shot lookups (request/response over the socket) ---
 
 	/** Look up a party by invite code; {@code onResult} gets the party, or null if none/offline. */
-	public void getByCode(String code, Consumer<Party> onResult)
+	public void getByCode(String code, Consumer<Advertisement> onResult)
 	{
 		if (code == null || !connected)
 		{
@@ -522,7 +522,7 @@ public class PartySocket extends WebSocketListener
 	}
 
 	/** Look up the ad hosted by a player; {@code onResult} gets the party, or null if none/offline. */
-	public void getByHost(String host, Consumer<Party> onResult)
+	public void getByHost(String host, Consumer<Advertisement> onResult)
 	{
 		if (host == null || !connected)
 		{
@@ -612,7 +612,7 @@ public class PartySocket extends WebSocketListener
 		send(gson.toJson(new KickVoiceFrame(id, key, accountHash)));
 	}
 
-	public void reportParty(String id)
+	public void reportAd(String id)
 	{
 		if (id == null || !connected)
 		{
@@ -662,16 +662,16 @@ public class PartySocket extends WebSocketListener
 	 * Invite an online friend to a party we're in. {@code onResult} gets true if the invite reached the
 	 * friend's client, false if they weren't online in OSParty (or we're offline).
 	 */
-	public void invite(String partyId, String fromName, long fromAccountHash, String target,
+	public void invite(String adId, String fromName, long fromAccountHash, String target,
 		Consumer<Boolean> onResult)
 	{
-		if (partyId == null || target == null || !connected)
+		if (adId == null || target == null || !connected)
 		{
 			onResult.accept(false);
 			return;
 		}
 		pendingInvite.put(normalizeName(target), onResult);
-		send(gson.toJson(new InviteFrame(partyId, fromName, fromAccountHash, target)));
+		send(gson.toJson(new InviteFrame(adId, fromName, fromAccountHash, target)));
 	}
 
 	// --- WebSocket callbacks ---
@@ -803,10 +803,10 @@ public class PartySocket extends WebSocketListener
 		switch (frame.type)
 		{
 			case "snapshot":
-				synchronized (parties)
+				synchronized (ads)
 				{
-					parties.clear();
-					putAll(frame.parties);
+					ads.clear();
+					putAll(frame.ads);
 				}
 				// A snapshot means the server declined to resume us, so this is the new baseline.
 				boardSeq = frame.seq == null ? 0 : frame.seq;
@@ -814,11 +814,11 @@ public class PartySocket extends WebSocketListener
 				break;
 			case "created":
 			case "updated":
-				if (frame.party != null && frame.party.getId() != null)
+				if (frame.ad != null && frame.ad.getId() != null)
 				{
-					synchronized (parties)
+					synchronized (ads)
 					{
-						parties.put(frame.party.getId(), frame.party);
+						ads.put(frame.ad.getId(), frame.ad);
 					}
 					emitSearch();
 				}
@@ -826,9 +826,9 @@ public class PartySocket extends WebSocketListener
 			case "removed":
 				if (frame.id != null)
 				{
-					synchronized (parties)
+					synchronized (ads)
 					{
-						parties.remove(frame.id);
+						ads.remove(frame.id);
 					}
 					emitSearch();
 				}
@@ -841,7 +841,7 @@ public class PartySocket extends WebSocketListener
 				}
 				break;
 			case "hosted":
-				handleHosted(frame.party);
+				handleHosted(frame.ad);
 				break;
 			case "gone":
 				handleGone(frame.id);
@@ -865,16 +865,16 @@ public class PartySocket extends WebSocketListener
 				handleError(frame.id, frame.detail);
 				break;
 			case "byCode":
-				completeLookup(pendingByCode, frame.id, frame.party);
+				completeLookup(pendingByCode, frame.id, frame.ad);
 				break;
 			case "byHost":
-				completeLookup(pendingByHost, frame.id, frame.party);
+				completeLookup(pendingByHost, frame.id, frame.ad);
 				break;
 			case "presence":
 				onlineUsers = frame.online;
 				break;
 			case "invited":
-				handleInvited(frame.party, frame.from);
+				handleInvited(frame.ad, frame.from);
 				break;
 			case "inviteAck":
 				completeInviteAck(frame.id, frame.delivered);
@@ -937,28 +937,28 @@ public class PartySocket extends WebSocketListener
 	private void applyBatch(Frame frame)
 	{
 		boolean changed = false;
-		synchronized (parties)
+		synchronized (ads)
 		{
 			if (frame.created != null)
 			{
-				for (Party party : frame.created)
+				for (Advertisement ad : frame.created)
 				{
-					if (party != null && party.getId() != null)
+					if (ad != null && ad.getId() != null)
 					{
-						parties.put(party.getId(), party);
+						ads.put(ad.getId(), ad);
 						changed = true;
 					}
 				}
 			}
 			if (frame.updated != null)
 			{
-				for (PartyDelta delta : frame.updated)
+				for (AdvertisementDelta delta : frame.updated)
 				{
 					if (delta == null || delta.getId() == null)
 					{
 						continue;
 					}
-					Party existing = parties.get(delta.getId());
+					Advertisement existing = ads.get(delta.getId());
 					if (existing != null)
 					{
 						// Unknown ids are ignored; the next snapshot (e.g. on reconnect) heals the gap.
@@ -971,7 +971,7 @@ public class PartySocket extends WebSocketListener
 			{
 				for (String id : frame.removed)
 				{
-					if (id != null && parties.remove(id) != null)
+					if (id != null && ads.remove(id) != null)
 					{
 						changed = true;
 					}
@@ -984,22 +984,22 @@ public class PartySocket extends WebSocketListener
 		}
 	}
 
-	private void handleHosted(Party party)
+	private void handleHosted(Advertisement ad)
 	{
-		if (party == null || party.getId() == null)
+		if (ad == null || ad.getId() == null)
 		{
 			return;
 		}
-		hostingId = party.getId();
+		hostingId = ad.getId();
 		HostPending pending = pendingHost;
 		pendingHost = null;
 		if (pending != null)
 		{
-			pending.onSuccess.accept(party);
+			pending.onSuccess.accept(ad);
 		}
 	}
 
-	/** Invoked (off EDT) with the party id when the server reports our hosted ad no longer exists. */
+	/** Invoked (off EDT) with the ad id when the server reports our hosted ad no longer exists. */
 	private volatile Consumer<String> onHostedGone;
 
 	public void setOnHostedGone(Consumer<String> callback)
@@ -1140,12 +1140,12 @@ public class PartySocket extends WebSocketListener
 		}
 	}
 
-	private void handleInvited(Party party, String from)
+	private void handleInvited(Advertisement ad, String from)
 	{
 		Consumer<PartyInvite> listener = inviteListener;
-		if (listener != null && party != null)
+		if (listener != null && ad != null)
 		{
-			listener.accept(new PartyInvite(party, from));
+			listener.accept(new PartyInvite(ad, from));
 		}
 	}
 
@@ -1208,43 +1208,43 @@ public class PartySocket extends WebSocketListener
 		{
 			return;
 		}
-		List<Party> snap = snapshot();
-		for (Consumer<List<Party>> listener : searchListeners)
+		List<Advertisement> snap = snapshot();
+		for (Consumer<List<Advertisement>> listener : searchListeners)
 		{
 			listener.accept(snap);
 		}
 	}
 
-	private static void completeLookup(Map<String, Consumer<Party>> pending, String key, Party party)
+	private static void completeLookup(Map<String, Consumer<Advertisement>> pending, String key, Advertisement ad)
 	{
 		if (key == null)
 		{
 			return;
 		}
-		Consumer<Party> callback = pending.remove(key);
+		Consumer<Advertisement> callback = pending.remove(key);
 		if (callback != null)
 		{
-			callback.accept(party);
+			callback.accept(ad);
 		}
 	}
 
-	private List<Party> snapshot()
+	private List<Advertisement> snapshot()
 	{
-		synchronized (parties)
+		synchronized (ads)
 		{
-			return new ArrayList<>(parties.values());
+			return new ArrayList<>(ads.values());
 		}
 	}
 
-	private void putAll(Party[] list)
+	private void putAll(Advertisement[] list)
 	{
 		if (list != null)
 		{
-			for (Party party : list)
+			for (Advertisement ad : list)
 			{
-				if (party != null && party.getId() != null)
+				if (ad != null && ad.getId() != null)
 				{
-					parties.put(party.getId(), party);
+					ads.put(ad.getId(), ad);
 				}
 			}
 		}
@@ -1314,10 +1314,10 @@ public class PartySocket extends WebSocketListener
 
 	private static final class HostPending
 	{
-		final Consumer<Party> onSuccess;
+		final Consumer<Advertisement> onSuccess;
 		final Consumer<Throwable> onError;
 
-		HostPending(Consumer<Party> onSuccess, Consumer<Throwable> onError)
+		HostPending(Consumer<Advertisement> onSuccess, Consumer<Throwable> onError)
 		{
 			this.onSuccess = onSuccess;
 			this.onError = onError;
@@ -1329,10 +1329,10 @@ public class PartySocket extends WebSocketListener
 	{
 		String type;
 		long version;
-		Party[] parties;
+		Advertisement[] ads;
 		// Board revision this frame is current to; absent from a server that predates resume.
 		Long seq;
-		Party party;
+		Advertisement ad;
 		String id;
 		String detail;
 		// "voiceChannel"/"discordLinkUrl" frame: an invite or OAuth authorize URL.
@@ -1342,8 +1342,8 @@ public class PartySocket extends WebSocketListener
 		Long accountHash;
 		Boolean badgesVisible;
 		// "batch" frame: a tick's worth of changes, applied together.
-		Party[] created;
-		PartyDelta[] updated;
+		Advertisement[] created;
+		AdvertisementDelta[] updated;
 		String[] removed;
 		// "presence" frame: the global count of connected plugin clients.
 		int online;
@@ -1358,10 +1358,10 @@ public class PartySocket extends WebSocketListener
 	private static final class HostFrame
 	{
 		final String type = "host";
-		final PartyRequest request;
+		final AdvertisementRequest request;
 		final String key;
 
-		HostFrame(PartyRequest request, String key)
+		HostFrame(AdvertisementRequest request, String key)
 		{
 			this.request = request;
 			this.key = key;

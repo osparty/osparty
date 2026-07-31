@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import net.osparty.model.Member;
-import net.osparty.model.Party;
+import net.osparty.model.Advertisement;
 import net.osparty.store.FlagKind;
 import net.osparty.store.PartyStore;
 import net.osparty.store.PlayerFlag;
@@ -77,18 +77,18 @@ public abstract class PlayerFlagService
 		return isFlagged(0L, name);
 	}
 
-	/** True when the host or any listed member of {@code party} is flagged. */
-	public synchronized boolean hasAnyFlagged(Party party)
+	/** True when the host or any listed member of {@code ad} is flagged. */
+	public synchronized boolean hasAnyFlagged(Advertisement ad)
 	{
-		if (party == null)
+		if (ad == null)
 		{
 			return false;
 		}
-		if (isFlagged(party.getHostAccountHash(), party.getHost()))
+		if (isFlagged(ad.getHostAccountHash(), ad.getHost()))
 		{
 			return true;
 		}
-		List<Member> members = party.getMembers();
+		List<Member> members = ad.getMembers();
 		if (members != null)
 		{
 			for (Member member : members)
@@ -178,17 +178,17 @@ public abstract class PlayerFlagService
 		}
 	}
 
-	/** Apply {@link #observe} to the host and every listed member of a party. */
-	public synchronized void observeParty(Party party)
+	/** Apply {@link #observe} to the host and every listed member of an ad. */
+	public synchronized void observeAd(Advertisement ad)
 	{
-		if (party == null)
+		if (ad == null)
 		{
 			return;
 		}
-		observe(party.getHostAccountHash(), party.getHost());
-		if (party.getMembers() != null)
+		observe(ad.getHostAccountHash(), ad.getHost());
+		if (ad.getMembers() != null)
 		{
-			for (Member member : party.getMembers())
+			for (Member member : ad.getMembers())
 			{
 				if (member != null)
 				{

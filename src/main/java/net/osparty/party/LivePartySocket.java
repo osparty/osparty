@@ -11,7 +11,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
-import net.osparty.api.PartySocket;
+import net.osparty.api.OSPartySocket;
 
 /**
  * The plugin's live-party channel. Frame semantics live in {@link LiveParty}; what this class owns is the
@@ -20,7 +20,7 @@ import net.osparty.api.PartySocket;
  *
  * <p>It no longer owns a connection. The live party used to open a second WebSocket for the duration of a
  * party, which meant every user actually in one cost the gateway twice what a browsing user did; it now rides
- * on {@link PartySocket}'s session-long connection as a tagged channel. Starting and stopping are therefore
+ * on {@link OSPartySocket}'s session-long connection as a tagged channel. Starting and stopping are therefore
  * about attaching to that connection, not about opening anything — the socket is up either way.
  *
  * <p>What did not change is that the server holds no durable live state: on every (re)connect this fires
@@ -28,14 +28,14 @@ import net.osparty.api.PartySocket;
  * (PARTY_V2_MIGRATION.md recovery).
  *
  * <p>P2 node-hint routing still applies, and now moves the whole connection: a {@code redirect} frame pins
- * {@link PartySocket} to the owning pod, and leaving the party releases the pin without moving again — the
+ * {@link OSPartySocket} to the owning pod, and leaving the party releases the pin without moving again — the
  * board is served identically everywhere, so there is nothing to go back for. P4 {@code ownerPending}: a room
  * whose owner drained answers with a retry delay rather than an error, and this re-announces after it rather
  * than treating the party as gone — a member reconnects faster than its host re-hosts, and without this it
  * would arrive to "no room" and silently fall out of the party.
  */
 @Slf4j
-public class LivePartySocket implements PartySocket.LiveChannel {
+public class LivePartySocket implements OSPartySocket.LiveChannel {
 	/** Retry delay used when an {@code ownerPending} frame does not name one. */
 	private static final long DEFAULT_RETRY_MS = 1_000;
 	/**
@@ -45,7 +45,7 @@ public class LivePartySocket implements PartySocket.LiveChannel {
 	 */
 	private static final int MAX_PENDING_RETRIES = 20;
 
-	private final PartySocket connection;
+	private final OSPartySocket connection;
 	private final Gson gson;
 
 	private volatile ScheduledExecutorService retries;
@@ -58,7 +58,7 @@ public class LivePartySocket implements PartySocket.LiveChannel {
 	private volatile int pendingRetries;
 
 	@javax.inject.Inject
-	public LivePartySocket(PartySocket connection, Gson gson) {
+	public LivePartySocket(OSPartySocket connection, Gson gson) {
 		this.connection = connection;
 		this.gson = gson;
 	}
@@ -76,7 +76,7 @@ public class LivePartySocket implements PartySocket.LiveChannel {
 	 * Attach the live channel: from here the shared connection carries this party's frames.
 	 *
 	 * <p>Nothing is opened. If the connection is already up — which it is, unless the network is down —
-	 * {@link PartySocket#setLiveChannel} fires the announce callback straight away, so the caller sees the
+	 * {@link OSPartySocket#setLiveChannel} fires the announce callback straight away, so the caller sees the
 	 * same "we are connected, say who we are" moment a fresh socket used to give it.
 	 */
 	public synchronized void start() {

@@ -19,7 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.osparty.OSPartyConfig;
 import net.osparty.model.HistoryMember;
 import net.osparty.model.Member;
-import net.osparty.model.Party;
+import net.osparty.model.Advertisement;
 import net.osparty.model.PartyHistoryEntry;
 import net.runelite.client.RuneLite;
 
@@ -69,14 +69,14 @@ public class PartyHistoryService
 		List<PartyHistoryEntry> entries = new ArrayList<>();
 	}
 
-	/** Record that the player just entered {@code party}. No-op for null or an already-recorded party. */
-	public synchronized void record(Party party, boolean hosted)
+	/** Record that the player just entered the party behind {@code ad}. No-op for null or an already-recorded party. */
+	public synchronized void record(Advertisement ad, boolean hosted)
 	{
-		if (party == null)
+		if (ad == null)
 		{
 			return;
 		}
-		String id = party.getId();
+		String id = ad.getId();
 		if (id != null)
 		{
 			for (PartyHistoryEntry e : entries)
@@ -88,11 +88,11 @@ public class PartyHistoryService
 			}
 		}
 		long now = System.currentTimeMillis();
-		List<HistoryMember> snapshot = snapshotMembers(party, now);
+		List<HistoryMember> snapshot = snapshotMembers(ad, now);
 		// size = present-member count; fall back to the ad's size only for a member-less (legacy) ad.
-		int size = snapshot.isEmpty() ? party.getSize() : snapshot.size();
-		entries.add(0, new PartyHistoryEntry(id, party.getActivity(), party.getHost(), hosted,
-			size, party.getCapacity(), party.isHardMode(), party.getInvocation(),
+		int size = snapshot.isEmpty() ? ad.getSize() : snapshot.size();
+		entries.add(0, new PartyHistoryEntry(id, ad.getActivity(), ad.getHost(), hosted,
+			size, ad.getCapacity(), ad.isHardMode(), ad.getInvocation(),
 			now, snapshot));
 		trim();
 		save();
@@ -265,10 +265,10 @@ public class PartyHistoryService
 	}
 
 	/** The party's initial roster as present members joined at {@code now}; empty when the ad had none. */
-	private static List<HistoryMember> snapshotMembers(Party party, long now)
+	private static List<HistoryMember> snapshotMembers(Advertisement ad, long now)
 	{
 		List<HistoryMember> out = new ArrayList<>();
-		List<Member> live = party.getMembers();
+		List<Member> live = ad.getMembers();
 		if (live == null)
 		{
 			return out;

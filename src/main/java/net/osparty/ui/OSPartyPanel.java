@@ -6,9 +6,9 @@ import net.osparty.tools.HostApplicationHandler;
 import net.osparty.service.KillcountService;
 import net.osparty.OSPartyConfig;
 import net.osparty.api.DiscordLinkStatus;
-import net.osparty.api.PartyService;
+import net.osparty.api.BoardService;
 import net.osparty.service.PartyHistoryService;
-import net.osparty.model.Party;
+import net.osparty.model.Advertisement;
 import net.osparty.party.HostTransferMessage;
 import net.osparty.party.LivePartyBackend;
 import com.google.gson.Gson;
@@ -88,9 +88,9 @@ public class OSPartyPanel extends PluginPanel
 
 	private final PartyState partyState;
 	private final LivePartyBackend liveParty;
-	private final PartyService partyService;
+	private final BoardService boardService;
 	/** The backend party we're in (host or member), mirrored for off-EDT reads (invite menu); null when none. */
-	private volatile Party contextParty;
+	private volatile Advertisement contextAd;
 	/** Run when the side panel is opened (used to stop the sidebar invite blink). */
 	private volatile Runnable onActivated;
 	/** Run when the side panel is closed (used to restore the normal sidebar icon). */
@@ -138,7 +138,7 @@ public class OSPartyPanel extends PluginPanel
 	/** Whether the host is editing their party (the create form is shown alongside the roster). */
 	private boolean editing;
 
-	public OSPartyPanel(PartyService partyService, OSPartyConfig config, Supplier<String> playerNameSupplier,
+	public OSPartyPanel(BoardService boardService, OSPartyConfig config, Supplier<String> playerNameSupplier,
 		HostApplicationHandler hostApplicationHandler, Supplier<String> friendsChatOwnerSupplier,
 		IntSupplier worldSupplier, ItemManager itemManager, LivePartyBackend liveParty,
 		RuneWatchService runeWatchService, Supplier<AccountType> accountTypeSupplier,
@@ -153,11 +153,11 @@ public class OSPartyPanel extends PluginPanel
 		super(false);
 
 		this.liveParty = liveParty;
-		this.partyService = partyService;
+		this.boardService = boardService;
 		this.accountHashSupplier = accountHashSupplier;
 		this.historyService = historyService;
 		this.partyState = new PartyState(configManager);
-		this.hostTransferHandler = new HostTransferHandler(liveParty, partyService, partyState,
+		this.hostTransferHandler = new HostTransferHandler(liveParty, boardService, partyState,
 			playerNameSupplier, gameMessage);
 
 		setLayout(new BorderLayout());
@@ -165,12 +165,12 @@ public class OSPartyPanel extends PluginPanel
 		// super(false) skips PluginPanel's default border, so add our own padding.
 		setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
-		searchPanel = new SearchPanel(partyService, playerNameSupplier,
+		searchPanel = new SearchPanel(boardService, playerNameSupplier,
 			friendsChatOwnerSupplier, worldSupplier, partyState, liveParty, accountTypeSupplier,
 			mapRegionsSupplier, worldRegionResolver, killcountService, configManager,
 			worldPinger, worldAddressResolver, friendNamesSupplier, favoritesService, blockListService,
 			spriteManager, config);
-		favoritesPanel = new FriendsPanel(partyService, playerNameSupplier, partyState,
+		favoritesPanel = new FriendsPanel(boardService, playerNameSupplier, partyState,
 			liveParty, accountTypeSupplier, killcountService, worldPinger, worldRegionResolver,
 			worldAddressResolver, favoritesService, blockListService, friendNamesSupplier, spriteManager,
 			config);
@@ -182,11 +182,11 @@ public class OSPartyPanel extends PluginPanel
 		searchPanel.setOnBlockChanged(() -> { favoritesPanel.render(); blockedPanel.render(); });
 		favoritesPanel.setOnBlockChanged(() -> { searchPanel.renderCurrent(); blockedPanel.render(); });
 		blockedPanel.setOnBlockChanged(() -> { searchPanel.renderCurrent(); favoritesPanel.render(); });
-		createPanel = new CreatePanel(partyService, config, playerNameSupplier, partyState, liveParty,
+		createPanel = new CreatePanel(boardService, config, playerNameSupplier, partyState, liveParty,
 			accountTypeSupplier, accountHashSupplier, mapRegionsSupplier, coxLayoutSupplier, configManager, gson,
 			killcountService, worldSupplier);
 		createPanel.setJoinByCodeHandler(searchPanel::joinByCode);
-		partyPanel = new PartyPanel(partyService, playerNameSupplier,
+		partyPanel = new PartyPanel(boardService, playerNameSupplier,
 			hostApplicationHandler, partyState, itemManager, liveParty, runeWatchService, killcountService,
 			skillIconManager, worldSupplier, friendsChatOwnerSupplier, coxLayoutSupplier,
 			config, configManager, favoritesService, blockListService, spriteManager,
@@ -366,7 +366,7 @@ public class OSPartyPanel extends PluginPanel
 
 	private void updateActiveUsers()
 	{
-		int online = partyService.onlineUsers();
+		int online = boardService.onlineUsers();
 		activeUsersLabel.setText(online < 0 ? "" : online + " online");
 
 		// Only re-query link status when the logged-in account changes, not every tick.
@@ -435,7 +435,7 @@ public class OSPartyPanel extends PluginPanel
 		{
 			return;
 		}
-		partyService.setBadgeVisibility(hash, visible,
+		boardService.setBadgeVisibility(hash, visible,
 			status -> SwingUtilities.invokeLater(() -> applyLinkStatus(status)));
 	}
 
@@ -447,7 +447,7 @@ public class OSPartyPanel extends PluginPanel
 		{
 			return;
 		}
-		partyService.unlinkDiscord(hash);
+		boardService.unlinkDiscord(hash);
 		applyLinkStatus(null); // reset the button (and re-gate the Party tab's voice buttons)
 	}
 
@@ -460,7 +460,7 @@ public class OSPartyPanel extends PluginPanel
 			applyLinkStatus(null);
 			return;
 		}
-		partyService.getDiscordLink(hash, status -> SwingUtilities.invokeLater(() -> applyLinkStatus(status)));
+		boardService.getDiscordLink(hash, status -> SwingUtilities.invokeLater(() -> applyLinkStatus(status)));
 	}
 
 	private void applyLinkStatus(DiscordLinkStatus status)
@@ -514,7 +514,7 @@ public class OSPartyPanel extends PluginPanel
 		}
 		discordLinkButton.setEnabled(false);
 		discordLinkButton.setText("Linking…");
-		partyService.startDiscordLink(hash,
+		boardService.startDiscordLink(hash,
 			url -> SwingUtilities.invokeLater(() ->
 			{
 				LinkBrowser.browse(url);
@@ -541,7 +541,7 @@ public class OSPartyPanel extends PluginPanel
 		linkPollTimer = new Timer(2000, e ->
 		{
 			ticks[0]++;
-			partyService.getDiscordLink(hash, status -> SwingUtilities.invokeLater(() ->
+			boardService.getDiscordLink(hash, status -> SwingUtilities.invokeLater(() ->
 			{
 				if (status != null && status.isLinked())
 				{
@@ -576,10 +576,10 @@ public class OSPartyPanel extends PluginPanel
 		searchPanel.dispose();
 	}
 
-	/** The backend party we're currently in (host or member), or null. Safe to read off the EDT. */
-	public Party currentBackendParty()
+	/** The ad for the party we're currently in (host or member), or null. Safe to read off the EDT. */
+	public Advertisement currentAd()
 	{
-		return contextParty;
+		return contextAd;
 	}
 
 	/** Register a callback invoked when the side panel is opened (used to clear the invite blink). */
@@ -633,22 +633,22 @@ public class OSPartyPanel extends PluginPanel
 	/** Show an Accept/Decline invite banner at the top of the panel. Idempotent per party. EDT only. */
 	public void addInvite(net.osparty.api.PartyInvite invite)
 	{
-		Party party = invite.getParty();
-		if (party == null || party.getId() == null || inviteBanners.containsKey(party.getId()))
+		Advertisement ad = invite.getAd();
+		if (ad == null || ad.getId() == null || inviteBanners.containsKey(ad.getId()))
 		{
 			return;
 		}
 		JPanel banner = buildInviteBanner(invite);
-		inviteBanners.put(party.getId(), banner);
+		inviteBanners.put(ad.getId(), banner);
 		invitePanel.add(banner);
 		invitePanel.revalidate();
 		invitePanel.repaint();
 	}
 
 	/** Remove the invite banner for a party (once accepted/declined elsewhere). EDT only. */
-	public void removeInvite(String partyId)
+	public void removeInvite(String adId)
 	{
-		JPanel banner = partyId == null ? null : inviteBanners.remove(partyId);
+		JPanel banner = adId == null ? null : inviteBanners.remove(adId);
 		if (banner != null)
 		{
 			invitePanel.remove(banner);
@@ -659,13 +659,13 @@ public class OSPartyPanel extends PluginPanel
 
 	private JPanel buildInviteBanner(net.osparty.api.PartyInvite invite)
 	{
-		Party party = invite.getParty();
-		String from = invite.getFromName() != null ? invite.getFromName() : party.getHost();
+		Advertisement ad = invite.getAd();
+		String from = invite.getFromName() != null ? invite.getFromName() : ad.getHost();
 		if (from == null)
 		{
 			from = "A friend";
 		}
-		net.osparty.model.Activity activity = net.osparty.model.Activity.fromId(party.getActivity());
+		net.osparty.model.Activity activity = net.osparty.model.Activity.fromId(ad.getActivity());
 		String label = activity != null ? activity.getDisplayName() : "a party";
 
 		JPanel banner = new JPanel(new BorderLayout(0, 4));
@@ -717,17 +717,17 @@ public class OSPartyPanel extends PluginPanel
 	}
 
 	/** Restore a party the player was hosting before a restart. No-op if already in a party. */
-	public void resumeHostedParty(Party party)
+	public void resumeHostedParty(Advertisement ad)
 	{
-		if (partyState.isInParty() || party == null || party.getPassphrase() == null)
+		if (partyState.isInParty() || ad == null || ad.getPassphrase() == null)
 		{
 			return;
 		}
 		// The room lives on the owner node, so hosting again rejoins the existing room with its roster
 		// intact — members who were already in it stay admitted rather than coming back as applicants.
-		liveParty.hostParty(party.getPassphrase(), party.getHost(), party.getActivity(), party.getCapacity(), false,
-			party.getHostRole(), party.isLearner(), party.isTeacher());
-		partyState.resumeHosting(party);
+		liveParty.hostParty(ad.getPassphrase(), ad.getHost(), ad.getActivity(), ad.getCapacity(), false,
+			ad.getHostRole(), ad.isLearner(), ad.isTeacher());
+		partyState.resumeHosting(ad);
 	}
 
 	/** Route an inbound host-transfer handshake message (from the plugin's party-bus subscription). */
@@ -740,7 +740,7 @@ public class OSPartyPanel extends PluginPanel
 	{
 		boolean inParty = partyState.isInParty();
 		// Mirror the current backend party so the in-game invite menu (client thread) can read it safely.
-		contextParty = partyState.getCurrentParty();
+		contextAd = partyState.getCurrentAd();
 
 		// The party ended while editing — drop edit mode (and its tab layout) first.
 		if (!inParty && editing)
@@ -771,12 +771,12 @@ public class OSPartyPanel extends PluginPanel
 		{
 			// Entered a party. Only admitted players get a history row; a joiner's record is deferred
 			// to syncHistoryRoster() until the host admits them.
-			Party party = partyState.getCurrentParty();
-			currentHistoryPartyId = party == null ? null : party.getId();
+			Advertisement ad = partyState.getCurrentAd();
+			currentHistoryPartyId = ad == null ? null : ad.getId();
 			historyRecorded = false;
 			if (liveParty.isLocalAdmitted())
 			{
-				historyService.record(party, partyState.isHost());
+				historyService.record(ad, partyState.isHost());
 				historyRecorded = true;
 				historyPanel.refresh();
 			}
@@ -808,19 +808,19 @@ public class OSPartyPanel extends PluginPanel
 		{
 			return;
 		}
-		Party party = partyState.getCurrentParty();
-		if (party == null)
+		Advertisement ad = partyState.getCurrentAd();
+		if (ad == null)
 		{
 			return;
 		}
 		// Deferred record for joiners: the host just admitted us, so record now (see onPartyStateChanged).
 		if (!historyRecorded && liveParty.isLocalAdmitted())
 		{
-			historyService.record(party, partyState.isHost());
+			historyService.record(ad, partyState.isHost());
 			historyRecorded = true;
 			historyPanel.refresh();
 		}
-		if (historyService.updateRoster(party.getId(), liveParty.currentMembers()))
+		if (historyService.updateRoster(ad.getId(), liveParty.currentMembers()))
 		{
 			historyPanel.refresh();
 		}
@@ -873,13 +873,13 @@ public class OSPartyPanel extends PluginPanel
 	/** Host clicked "Edit party": open the create form in edit mode beside the Party (roster) tab. */
 	private void openEditParty()
 	{
-		Party party = partyState.getCurrentParty();
-		if (party == null || !partyState.isHost())
+		Advertisement ad = partyState.getCurrentAd();
+		if (ad == null || !partyState.isHost())
 		{
 			return;
 		}
 		editing = true;
-		createPanel.enterEditMode(party);
+		createPanel.enterEditMode(ad);
 		createTab.setIcon(TabIcons.EDIT);
 		createTab.setToolTipText("Edit party");
 		rebuildTabsForEdit();

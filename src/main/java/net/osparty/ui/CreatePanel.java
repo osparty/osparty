@@ -1,14 +1,14 @@
 package net.osparty.ui;
 
 import net.osparty.OSPartyConfig;
-import net.osparty.api.PartyService;
+import net.osparty.api.BoardService;
 import net.osparty.model.AccountTypes;
 import net.osparty.model.Activity;
 import net.osparty.model.LootRule;
-import net.osparty.model.Party;
-import net.osparty.model.PartyEditRequest;
-import net.osparty.model.PartyPreset;
-import net.osparty.model.PartyRequest;
+import net.osparty.model.Advertisement;
+import net.osparty.model.AdvertisementEditRequest;
+import net.osparty.model.AdvertisementPreset;
+import net.osparty.model.AdvertisementRequest;
 import net.osparty.model.Role;
 import net.osparty.party.LivePartyBackend;
 import net.osparty.party.PartyStatus;
@@ -75,7 +75,7 @@ class CreatePanel extends JPanel implements Scrollable
 	private static final String KEY_LAST_PRESET = "lastPreset";
 	private static final String KEY_FAVOURITES = "favourites";
 
-	private final PartyService partyService;
+	private final BoardService boardService;
 	private final OSPartyConfig config;
 	private final Supplier<String> playerNameSupplier;
 	private final PartyState partyState;
@@ -180,7 +180,7 @@ class CreatePanel extends JPanel implements Scrollable
 	/** Invoked after a successful edit so the owning panel can return to the Party tab. */
 	private Runnable onEditDone;
 
-	CreatePanel(PartyService partyService, OSPartyConfig config, Supplier<String> playerNameSupplier,
+	CreatePanel(BoardService boardService, OSPartyConfig config, Supplier<String> playerNameSupplier,
 		PartyState partyState, LivePartyBackend liveParty, Supplier<AccountType> accountTypeSupplier,
 		LongSupplier accountHashSupplier, Supplier<int[]> mapRegionsSupplier, Supplier<String> coxLayoutSupplier,
 		ConfigManager configManager, Gson gson, KillcountService killcountService, IntSupplier worldSupplier)
@@ -188,7 +188,7 @@ class CreatePanel extends JPanel implements Scrollable
 		this.gson = gson;
 		this.killcountService = killcountService;
 		this.worldSupplier = worldSupplier;
-		this.partyService = partyService;
+		this.boardService = boardService;
 		this.config = config;
 		this.playerNameSupplier = playerNameSupplier;
 		this.partyState = partyState;
@@ -1253,14 +1253,14 @@ class CreatePanel extends JPanel implements Scrollable
 		// The passphrase must be built on the client thread (reads item names), so this is async.
 		final long hostAccountHash = accountHashSupplier != null ? accountHashSupplier.getAsLong() : 0L;
 		liveParty.generatePassphrase(passphrase -> {
-			PartyRequest request = new PartyRequest(
+			AdvertisementRequest request = new AdvertisementRequest(
 				activityId, player, hostAccountHash, advertisedDescription, capacity, world, minKc, minHardKc,
 				passphrase, privateParty, lootRule, ironmanOnly, hostAccountType, hardMode, invocation, coxScale,
 				requiredRoles, hostRole, learner, teacher);
 
-			partyService.createParty(request, hostKey,
-				party -> SwingUtilities.invokeLater(
-					() -> onCreated(party, passphrase, player, capacity, advertiseLayout, hostRole, learner, teacher,
+			boardService.createAd(request, hostKey,
+				ad -> SwingUtilities.invokeLater(
+					() -> onCreated(ad, passphrase, player, capacity, advertiseLayout, hostRole, learner, teacher,
 						hostKey)),
 				error -> SwingUtilities.invokeLater(() -> {
 					creating = false;
@@ -1270,7 +1270,7 @@ class CreatePanel extends JPanel implements Scrollable
 		});
 	}
 
-	private void onCreated(Party party, String passphrase, String host, int capacity, boolean advertiseLayout,
+	private void onCreated(Advertisement ad, String passphrase, String host, int capacity, boolean advertiseLayout,
 		String hostRole, boolean hostLearner, boolean hostTeacher, String hostKey)
 	{
 		creating = false;
@@ -1279,16 +1279,16 @@ class CreatePanel extends JPanel implements Scrollable
 		// Remember whether to advertise the live CoX layout, for the Party tab's heartbeat.
 		partyState.setAdvertiseLayout(advertiseLayout);
 		// Host the live room now the ad is up; applicants are pending until admitted.
-		liveParty.hostParty(passphrase, host, party.getActivity(), capacity, false, hostRole, hostLearner, hostTeacher);
-		if (party.isPrivateParty() && party.getInviteCode() != null)
+		liveParty.hostParty(passphrase, host, ad.getActivity(), capacity, false, hostRole, hostLearner, hostTeacher);
+		if (ad.isPrivateAd() && ad.getInviteCode() != null)
 		{
-			setSuccess("Private party created — invite code " + party.getInviteCode() + " (also on the Party tab).");
+			setSuccess("Private party created — invite code " + ad.getInviteCode() + " (also on the Party tab).");
 		}
 		else
 		{
 			setSuccess("Party created — manage it on the Party tab.");
 		}
-		partyState.setHosting(party, hostKey);
+		partyState.setHosting(ad, hostKey);
 	}
 
 	/** The "Join existing" section: invite-code field + Join button; the apply is delegated to {@link #joinByCodeHandler}. */
@@ -1505,16 +1505,16 @@ class CreatePanel extends JPanel implements Scrollable
 		this.onEditDone = onEditDone;
 	}
 
-	/** Switch to edit mode, pre-filled from {@code party}. The activity is locked (it keys the live room). */
-	void enterEditMode(Party party)
+	/** Switch to edit mode, pre-filled from {@code ad}. The activity is locked (it keys the live room). */
+	void enterEditMode(Advertisement ad)
 	{
-		if (party == null)
+		if (ad == null)
 		{
 			return;
 		}
 		editing = true;
-		joinExistingSection.setVisible(false); // editing an existing party, not joining another
-		applyPreset(partyToPreset(party));
+		joinExistingSection.setVisible(false); // editing an existing ad, not joining another
+		applyPreset(adToPreset(ad));
 		activityDropdown.setEnabled(false);
 		createButton.setText("Save changes");
 		createButton.setEnabled(true);
@@ -1544,34 +1544,34 @@ class CreatePanel extends JPanel implements Scrollable
 		updateLoginState();
 	}
 
-	/** Map a hosted {@link Party} onto a {@link PartyPreset} so {@link #applyPreset} can fill the form. */
-	private PartyPreset partyToPreset(Party party)
+	/** Map a hosted {@link Advertisement} onto an {@link AdvertisementPreset} so {@link #applyPreset} can fill the form. */
+	private AdvertisementPreset adToPreset(Advertisement ad)
 	{
-		PartyPreset preset = new PartyPreset();
-		preset.setActivityId(party.getActivity());
-		preset.setCapacity(party.getCapacity());
-		preset.setLootRule(party.getLootRule());
-		preset.setMinKc(party.getMinKillCount());
-		preset.setHardKc(party.getMinHardModeKillCount());
-		preset.setWorld(party.getWorld());
-		preset.setDescription(party.getDescription());
-		preset.setPrivateParty(party.isPrivateParty());
-		preset.setIronmanOnly(party.isIronmanOnly());
+		AdvertisementPreset preset = new AdvertisementPreset();
+		preset.setActivityId(ad.getActivity());
+		preset.setCapacity(ad.getCapacity());
+		preset.setLootRule(ad.getLootRule());
+		preset.setMinKc(ad.getMinKillCount());
+		preset.setHardKc(ad.getMinHardModeKillCount());
+		preset.setWorld(ad.getWorld());
+		preset.setDescription(ad.getDescription());
+		preset.setPrivateParty(ad.isPrivateAd());
+		preset.setIronmanOnly(ad.isIronmanOnly());
 		preset.setIncludeLayout(partyState.isAdvertiseLayout());
-		preset.setHardMode(party.isHardMode());
-		preset.setInvocation(party.getInvocation());
-		preset.setCoxScale(party.getCoxScale());
-		preset.setLearner(party.isLearner());
-		preset.setTeacher(party.isTeacher());
-		preset.setRequiredRoles(party.getRequiredRoles());
-		preset.setHostRole(party.getHostRole());
+		preset.setHardMode(ad.isHardMode());
+		preset.setInvocation(ad.getInvocation());
+		preset.setCoxScale(ad.getCoxScale());
+		preset.setLearner(ad.isLearner());
+		preset.setTeacher(ad.isTeacher());
+		preset.setRequiredRoles(ad.getRequiredRoles());
+		preset.setHostRole(ad.getHostRole());
 		return preset;
 	}
 
 	private void saveEdit()
 	{
-		Party party = partyState.getCurrentParty();
-		if (party == null || !partyState.isHost())
+		Advertisement ad = partyState.getCurrentAd();
+		if (ad == null || !partyState.isHost())
 		{
 			setError("You're not hosting a party to edit.");
 			return;
@@ -1633,14 +1633,14 @@ class CreatePanel extends JPanel implements Scrollable
 		// Remember the new settings so a future create is pre-filled with them too.
 		saveLastPreset(captureForm(null));
 
-		PartyEditRequest edit = new PartyEditRequest(description, capacity, world, minKc, minHardKc, lootRule,
+		AdvertisementEditRequest edit = new AdvertisementEditRequest(description, capacity, world, minKc, minHardKc, lootRule,
 			privateParty, ironmanOnly, invocation, hardMode, coxScale, selection.requiredRoles, selection.hostRole,
 			learner, teacher);
 
 		createButton.setEnabled(false);
 		setStatus("Saving changes…");
-		partyService.editParty(party.getId(), partyState.getHostKey(), edit,
-			ignored -> SwingUtilities.invokeLater(() -> onEdited(party, edit, advertiseLayout)),
+		boardService.editAd(ad.getId(), partyState.getHostKey(), edit,
+			ignored -> SwingUtilities.invokeLater(() -> onEdited(ad, edit, advertiseLayout)),
 			error -> SwingUtilities.invokeLater(() -> {
 				createButton.setEnabled(true);
 				setError("Edit failed — " + net.osparty.api.PartyErrors.friendly(error));
@@ -1648,29 +1648,29 @@ class CreatePanel extends JPanel implements Scrollable
 	}
 
 	/** Apply the saved edit to our local party copy and the live room, then leave edit mode. */
-	private void onEdited(Party party, PartyEditRequest edit, boolean advertiseLayout)
+	private void onEdited(Advertisement ad, AdvertisementEditRequest edit, boolean advertiseLayout)
 	{
 		createButton.setEnabled(true);
 
 		// Reflect the edit locally so the Party tab updates at once (the server broadcast only refreshes search).
-		party.setDescription(edit.getDescription());
-		party.setCapacity(edit.getCapacity());
-		party.setWorld(edit.getWorld());
-		party.setMinKillCount(edit.getMinKillCount());
-		party.setMinHardModeKillCount(edit.getMinHardModeKillCount());
-		party.setLootRule(edit.getLootRule());
-		party.setPrivateParty(edit.isPrivateParty());
-		party.setIronmanOnly(edit.isIronmanOnly());
-		party.setInvocation(edit.getInvocation());
-		party.setHardMode(edit.isHardMode());
-		party.setCoxScale(edit.getCoxScale());
-		party.setRequiredRoles(edit.getRequiredRoles());
-		party.setHostRole(edit.getHostRole());
-		party.setLearner(edit.isLearner());
-		party.setTeacher(edit.isTeacher());
+		ad.setDescription(edit.getDescription());
+		ad.setCapacity(edit.getCapacity());
+		ad.setWorld(edit.getWorld());
+		ad.setMinKillCount(edit.getMinKillCount());
+		ad.setMinHardModeKillCount(edit.getMinHardModeKillCount());
+		ad.setLootRule(edit.getLootRule());
+		ad.setPrivateAd(edit.isPrivateAd());
+		ad.setIronmanOnly(edit.isIronmanOnly());
+		ad.setInvocation(edit.getInvocation());
+		ad.setHardMode(edit.isHardMode());
+		ad.setCoxScale(edit.getCoxScale());
+		ad.setRequiredRoles(edit.getRequiredRoles());
+		ad.setHostRole(edit.getHostRole());
+		ad.setLearner(edit.isLearner());
+		ad.setTeacher(edit.isTeacher());
 
 		partyState.setAdvertiseLayout(advertiseLayout);
-		partyState.update(party);
+		partyState.update(ad);
 
 		// Sync the live room so admit limits, host role and learner/teacher markers follow the edit.
 		liveParty.setCapacity(edit.getCapacity());
@@ -1767,7 +1767,7 @@ class CreatePanel extends JPanel implements Scrollable
 			{
 				return; // placeholder row
 			}
-			List<PartyPreset> favourites = loadFavourites();
+			List<AdvertisementPreset> favourites = loadFavourites();
 			if (idx - 1 < favourites.size())
 			{
 				applyPreset(favourites.get(idx - 1));
@@ -1806,7 +1806,7 @@ class CreatePanel extends JPanel implements Scrollable
 		rebuildingFavourites = true;
 		favouriteDropdown.removeAllItems();
 		favouriteDropdown.addItem(FAV_PLACEHOLDER);
-		for (PartyPreset preset : loadFavourites())
+		for (AdvertisementPreset preset : loadFavourites())
 		{
 			favouriteDropdown.addItem(preset.getName());
 		}
@@ -1828,7 +1828,7 @@ class CreatePanel extends JPanel implements Scrollable
 			setError("Enter a name for the preset.");
 			return;
 		}
-		List<PartyPreset> favourites = loadFavourites();
+		List<AdvertisementPreset> favourites = loadFavourites();
 		String chosen = name;
 		favourites.removeIf(f -> chosen.equalsIgnoreCase(f.getName())); // overwrite a same-named one
 		favourites.add(captureForm(chosen));
@@ -1846,7 +1846,7 @@ class CreatePanel extends JPanel implements Scrollable
 			setError("Select a preset to remove.");
 			return;
 		}
-		List<PartyPreset> favourites = loadFavourites();
+		List<AdvertisementPreset> favourites = loadFavourites();
 		if (idx - 1 < favourites.size())
 		{
 			String removed = favourites.remove(idx - 1).getName();
@@ -1857,9 +1857,9 @@ class CreatePanel extends JPanel implements Scrollable
 	}
 
 	/** Snapshot the current form into a preset (raw description, no appended layout). */
-	private PartyPreset captureForm(String name)
+	private AdvertisementPreset captureForm(String name)
 	{
-		PartyPreset preset = new PartyPreset();
+		AdvertisementPreset preset = new AdvertisementPreset();
 		preset.setName(name);
 		Activity activity = (Activity) activityDropdown.getSelectedItem();
 		preset.setActivityId(activity != null ? activity.getId() : null);
@@ -1886,7 +1886,7 @@ class CreatePanel extends JPanel implements Scrollable
 		return preset;
 	}
 
-	private void applyPreset(PartyPreset preset)
+	private void applyPreset(AdvertisementPreset preset)
 	{
 		if (preset == null)
 		{
@@ -1926,7 +1926,7 @@ class CreatePanel extends JPanel implements Scrollable
 	}
 
 	/** Restore the saved role composition + host role into the (already-rebuilt) controls. */
-	private void applyRolePreset(PartyPreset preset)
+	private void applyRolePreset(AdvertisementPreset preset)
 	{
 		// Restore CoX count spinners (ToB has none - its composition is fixed by size).
 		if (!roleCountSpinners.isEmpty() && preset.getRequiredRoles() != null)
@@ -1951,12 +1951,12 @@ class CreatePanel extends JPanel implements Scrollable
 		}
 	}
 
-	private void saveLastPreset(PartyPreset preset)
+	private void saveLastPreset(AdvertisementPreset preset)
 	{
 		configManager.setConfiguration(OSPartyConfig.GROUP, KEY_LAST_PRESET, gson.toJson(preset));
 	}
 
-	private PartyPreset loadLastPreset()
+	private AdvertisementPreset loadLastPreset()
 	{
 		String json = configManager.getConfiguration(OSPartyConfig.GROUP, KEY_LAST_PRESET);
 		if (json == null || json.isEmpty())
@@ -1965,7 +1965,7 @@ class CreatePanel extends JPanel implements Scrollable
 		}
 		try
 		{
-			return gson.fromJson(json, PartyPreset.class);
+			return gson.fromJson(json, AdvertisementPreset.class);
 		}
 		catch (RuntimeException e)
 		{
@@ -1973,7 +1973,7 @@ class CreatePanel extends JPanel implements Scrollable
 		}
 	}
 
-	private List<PartyPreset> loadFavourites()
+	private List<AdvertisementPreset> loadFavourites()
 	{
 		String json = configManager.getConfiguration(OSPartyConfig.GROUP, KEY_FAVOURITES);
 		if (json == null || json.isEmpty())
@@ -1982,7 +1982,7 @@ class CreatePanel extends JPanel implements Scrollable
 		}
 		try
 		{
-			PartyPreset[] favourites = gson.fromJson(json, PartyPreset[].class);
+			AdvertisementPreset[] favourites = gson.fromJson(json, AdvertisementPreset[].class);
 			return favourites == null ? new ArrayList<>() : new ArrayList<>(Arrays.asList(favourites));
 		}
 		catch (RuntimeException e)
@@ -1991,7 +1991,7 @@ class CreatePanel extends JPanel implements Scrollable
 		}
 	}
 
-	private void saveFavourites(List<PartyPreset> favourites)
+	private void saveFavourites(List<AdvertisementPreset> favourites)
 	{
 		configManager.setConfiguration(OSPartyConfig.GROUP, KEY_FAVOURITES, gson.toJson(favourites));
 	}

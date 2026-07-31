@@ -5,8 +5,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 import javax.swing.SwingUtilities;
-import net.osparty.api.PartyService;
-import net.osparty.model.Party;
+import net.osparty.api.BoardService;
+import net.osparty.model.Advertisement;
 import net.osparty.party.HostTransferMessage;
 import net.osparty.party.LivePartyBackend;
 import net.osparty.party.PartyStatus;
@@ -26,7 +26,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Drives the {@link HostTransferHandler} handshake against a mocked {@link LivePartyBackend}/{@link PartyService}
+ * Drives the {@link HostTransferHandler} handshake against a mocked {@link LivePartyBackend}/{@link BoardService}
  * to cover the three outcomes: the old host handing off (staying or leaving), and the new host taking over.
  * Inbound messages and socket acks are dispatched via the EDT, so the tests flush it before asserting.
  */
@@ -36,25 +36,25 @@ public class HostTransferTest
 	private static final long NEW_HOST_ID = 2L;
 
 	private LivePartyBackend liveParty;
-	private PartyService partyService;
+	private BoardService boardService;
 	private PartyState partyState;
 	private List<String> notes;
 	private HostTransferHandler handler;
-	private Party party;
+	private Advertisement ad;
 
 	@Before
 	public void setUp()
 	{
 		liveParty = mock(LivePartyBackend.class);
-		partyService = mock(PartyService.class);
+		boardService = mock(BoardService.class);
 		partyState = new PartyState(mock(ConfigManager.class));
 		notes = new ArrayList<>();
-		handler = new HostTransferHandler(liveParty, partyService, partyState, () -> "LocalName", notes::add);
+		handler = new HostTransferHandler(liveParty, boardService, partyState, () -> "LocalName", notes::add);
 
-		party = new Party();
-		party.setId("p1");
-		party.setHost("OldHost");
-		party.setPassphrase("pp");
+		ad = new Advertisement();
+		ad.setId("p1");
+		ad.setHost("OldHost");
+		ad.setPassphrase("pp");
 	}
 
 	private static RosterMember member(long id, String name, PartyStatus status, boolean local)
@@ -71,7 +71,7 @@ public class HostTransferTest
 	public void oldHostOfferAndStayHandsOffWithoutLeaving() throws Exception
 	{
 		// We are hosting; NEW_HOST_ID is an admitted online member we can hand off to.
-		partyState.setHosting(party, "old-key");
+		partyState.setHosting(ad, "old-key");
 		when(liveParty.isHosting()).thenReturn(true);
 		when(liveParty.roster()).thenReturn(List.of(
 			member(OLD_HOST_ID, "LocalName", PartyStatus.HOST, true),
@@ -79,10 +79,10 @@ public class HostTransferTest
 		when(liveParty.isForLocalMember(OLD_HOST_ID)).thenReturn(true);
 		// The backend re-key succeeds immediately.
 		doAnswer(inv -> {
-			Consumer<Party> onSuccess = inv.getArgument(4);
+			Consumer<Advertisement> onSuccess = inv.getArgument(4);
 			onSuccess.accept(null);
 			return null;
-		}).when(partyService).transferHost(eq("p1"), eq("old-key"), eq("NewHost"), any(), any(), any());
+		}).when(boardService).transferHost(eq("p1"), eq("old-key"), eq("NewHost"), any(), any(), any());
 
 		handler.offerTransfer(NEW_HOST_ID, true);
 		verify(liveParty).offerHostTransfer(eq(NEW_HOST_ID), any(), eq("LocalName"), eq(true));
@@ -94,26 +94,26 @@ public class HostTransferTest
 
 		verify(liveParty).commitHostTransfer(eq(NEW_HOST_ID), any(), eq(true));
 		verify(liveParty).demoteToMember();
-		verify(partyService).releaseHostedParty("p1");
+		verify(boardService).releaseHostedAd("p1");
 		verify(liveParty, never()).leave();
 		assertFalse("old host is no longer the host", partyState.isHost());
-		assertEquals(party, partyState.getCurrentParty());
-		assertEquals("the ad now belongs to the new host", "NewHost", party.getHost());
+		assertEquals(ad, partyState.getCurrentAd());
+		assertEquals("the ad now belongs to the new host", "NewHost", ad.getHost());
 	}
 
 	@Test
 	public void oldHostTransferAndLeaveLeavesTheRoom() throws Exception
 	{
-		partyState.setHosting(party, "old-key");
+		partyState.setHosting(ad, "old-key");
 		when(liveParty.isHosting()).thenReturn(true);
 		when(liveParty.roster()).thenReturn(List.of(
 			member(NEW_HOST_ID, "NewHost", PartyStatus.MEMBER, false)));
 		when(liveParty.isForLocalMember(OLD_HOST_ID)).thenReturn(true);
 		doAnswer(inv -> {
-			Consumer<Party> onSuccess = inv.getArgument(4);
+			Consumer<Advertisement> onSuccess = inv.getArgument(4);
 			onSuccess.accept(null);
 			return null;
-		}).when(partyService).transferHost(any(), any(), any(), any(), any(), any());
+		}).when(boardService).transferHost(any(), any(), any(), any(), any(), any());
 
 		handler.offerTransfer(NEW_HOST_ID, false);
 		handler.onMessage(accept(NEW_HOST_ID, OLD_HOST_ID));
@@ -128,7 +128,7 @@ public class HostTransferTest
 	@Test
 	public void failedReKeyAbortsAndKeepsUsHost() throws Exception
 	{
-		partyState.setHosting(party, "old-key");
+		partyState.setHosting(ad, "old-key");
 		when(liveParty.isHosting()).thenReturn(true);
 		when(liveParty.roster()).thenReturn(List.of(
 			member(NEW_HOST_ID, "NewHost", PartyStatus.MEMBER, false)));
@@ -137,7 +137,7 @@ public class HostTransferTest
 			Consumer<Throwable> onError = inv.getArgument(5);
 			onError.accept(new RuntimeException("nope"));
 			return null;
-		}).when(partyService).transferHost(any(), any(), any(), any(), any(), any());
+		}).when(boardService).transferHost(any(), any(), any(), any(), any(), any());
 
 		handler.offerTransfer(NEW_HOST_ID, true);
 		handler.onMessage(accept(NEW_HOST_ID, OLD_HOST_ID));
@@ -153,7 +153,7 @@ public class HostTransferTest
 	public void newHostAcceptsThenTakesOverOnCommit() throws Exception
 	{
 		// We are a plain member being offered the party.
-		partyState.setMember(party);
+		partyState.setMember(ad);
 		when(liveParty.isHosting()).thenReturn(false);
 		when(liveParty.isLocalAdmitted()).thenReturn(true);
 		when(liveParty.isForLocalMember(NEW_HOST_ID)).thenReturn(true);
@@ -166,16 +166,16 @@ public class HostTransferTest
 		flushEdt();
 
 		verify(liveParty).promoteToHost("LocalName");
-		verify(partyService).adoptHostedParty("p1", "new-key");
+		verify(boardService).adoptHostedAd("p1", "new-key");
 		assertTrue("new host now hosts the party", partyState.isHost());
-		assertEquals("the ad is ours now, so lookups use our name", "LocalName", party.getHost());
+		assertEquals("the ad is ours now, so lookups use our name", "LocalName", ad.getHost());
 		assertTrue(notes.stream().anyMatch(n -> n.contains("now the host")));
 	}
 
 	@Test
 	public void commitFromANonOfferingPeerIsIgnored() throws Exception
 	{
-		partyState.setMember(party);
+		partyState.setMember(ad);
 		when(liveParty.isForLocalMember(NEW_HOST_ID)).thenReturn(true);
 
 		// A COMMIT arrives without us ever having accepted an offer — ignore it.
@@ -183,7 +183,7 @@ public class HostTransferTest
 		flushEdt();
 
 		verify(liveParty, never()).promoteToHost(any());
-		verify(partyService, never()).adoptHostedParty(any(), any());
+		verify(boardService, never()).adoptHostedAd(any(), any());
 		assertFalse(partyState.isHost());
 	}
 

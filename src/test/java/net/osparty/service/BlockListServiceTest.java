@@ -6,7 +6,7 @@ import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.Collections;
 import net.osparty.model.Member;
-import net.osparty.model.Party;
+import net.osparty.model.Advertisement;
 import net.osparty.store.JsonPartyStore;
 import net.osparty.store.PartyStore;
 import net.osparty.store.PlayerFlag;
@@ -133,17 +133,17 @@ public class BlockListServiceTest
 	{
 		blocks.toggle(999L, "BadHost");
 
-		Party party = new Party();
-		party.setHost("BadHost");
-		party.setMembers(Collections.singletonList(new Member("BadHost", 999L)));
-		assertTrue(blocks.hasAnyBlocked(party));
+		Advertisement ad = new Advertisement();
+		ad.setHost("BadHost");
+		ad.setMembers(Collections.singletonList(new Member("BadHost", 999L)));
+		assertTrue(blocks.hasAnyBlocked(ad));
 
-		Party renamedHost = new Party();
+		Advertisement renamedHost = new Advertisement();
 		renamedHost.setHost("BadHostRenamed");
 		renamedHost.setMembers(Arrays.asList(new Member("BadHostRenamed", 999L)));
 		assertTrue("still blocked after the host renamed", blocks.hasAnyBlocked(renamedHost));
 
-		Party clean = new Party();
+		Advertisement clean = new Advertisement();
 		clean.setHost("GoodHost");
 		clean.setMembers(Collections.singletonList(new Member("GoodHost", 1L)));
 		assertFalse(blocks.hasAnyBlocked(clean));

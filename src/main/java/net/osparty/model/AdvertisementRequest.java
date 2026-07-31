@@ -10,7 +10,7 @@ import lombok.Data;
  */
 @Data
 @AllArgsConstructor
-public class PartyRequest
+public class AdvertisementRequest
 {
 	private String activity;
 	private String host;
@@ -24,7 +24,7 @@ public class PartyRequest
 
 	private String passphrase;
 
-	private boolean privateParty;
+	private boolean privateAd;
 	private String lootRule;
 	private boolean ironmanOnly;
 	private String hostAccountType;

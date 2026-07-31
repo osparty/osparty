@@ -4,12 +4,15 @@ import java.util.List;
 import lombok.Data;
 
 /**
- * A saved snapshot of the Create-party form. Used both for the implicit
- * "last used" recall and for named favourites. Persisted as JSON via
- * ConfigManager, so fields stay simple/serializable.
+ * A saved snapshot of the Create form. Used both for the implicit "last used" recall and for named
+ * favourites. Persisted as JSON via ConfigManager, so fields stay simple/serializable.
+ *
+ * <p>{@link #privateParty} keeps its old name deliberately: this is the on-disk shape, and renaming it
+ * would silently clear that checkbox on every favourite a user has already saved. The mapping to
+ * {@code AdvertisementRequest.privateAd} is explicit in {@code CreatePanel}.
  */
 @Data
-public class PartyPreset
+public class AdvertisementPreset
 {
 	/** null/empty marks the implicit "last used" preset. */
 	private String name;
