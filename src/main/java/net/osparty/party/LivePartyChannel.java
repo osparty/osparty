@@ -278,6 +278,7 @@ public class LivePartyChannel implements OSPartySocket.LiveChannel {
 
 	/** One member's live update inside a {@code memberUpdates} frame. */
 	public static final class MemberUpdate {
+		@SerializedName("m")
 		public long memberId;
 		@SerializedName("s")
 		public JsonObject state;
