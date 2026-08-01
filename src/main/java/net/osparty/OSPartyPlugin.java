@@ -250,6 +250,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		int twin = graveTwin(bind.getKeyCode());
 		if (release)
 		{
+			// A modifier-only bind (Shift, Ctrl, ...) is normalised to VK_UNDEFINED with the
+			// modifier in the mask, so there is no key code to compare; Keybind knows how to
+			// match its release.
+			if (bind.getKeyCode() == KeyEvent.VK_UNDEFINED)
+			{
+				return bind.matches(e);
+			}
 			// Match the key alone so releasing a modifier first can't leave the hotkey stuck down.
 			return e.getKeyCode() == bind.getKeyCode()
 				|| (twin != KeyEvent.VK_UNDEFINED && e.getKeyCode() == twin);
@@ -281,6 +288,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			{
 				pingHotkeyDown = false;
 			}
+		}
+
+		@Override
+		public void focusLost()
+		{
+			// A key released while the client is unfocused delivers no keyReleased.
+			pingHotkeyDown = false;
 		}
 	};
 
