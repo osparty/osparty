@@ -19,12 +19,12 @@ import lombok.NoArgsConstructor;
  *   <li>{@link Kind#ABORT} (old host -> target): the transfer failed; the target stays a member.</li>
  * </ol>
  *
- * <p>{@code newHostKey} travels over the live socket, and the server delivers it only to the target
+ * <p>{@code newHostKey} travels over the live channel, and the server delivers it only to the target
  * member. The previous host's key is invalidated by the re-key, so the only exposure is the new host's
  * key to the one player being handed the party.
  *
  * <p>Rebuilt from an inbound frame by the live-party backend and posted on RuneLite's {@code EventBus},
- * which is how {@code HostTransferHandler} still receives it unchanged.
+ * where {@code HostTransferHandler} picks it up.
  */
 @Data
 @NoArgsConstructor

@@ -28,9 +28,9 @@ import net.osparty.tools.DefenceTracker;
 public enum BossDefence
 {
 	// name, Defence, Magic, Attack, Strength, magic-def bonus, Defence floor, flags
-	ABYSSAL_PORTAL("Abyssal portal", 176, 176, 1, 1, 60, 0, Flag.COX_MAGIC_IS_DEFENSIVE),
+	ABYSSAL_PORTAL("Abyssal portal", 176, 176, 1, 1, 60, 0, Flag.COX_SCALED, Flag.COX_MAGIC_IS_DEFENSIVE),
 	// The Sire's magic-def bonus drops to -40 once it's stunned in phase 3; 20 covers the rest.
-	ABYSSAL_SIRE("Abyssal Sire", 250, 200, 180, 136, 20, 0),
+	ABYSSAL_SIRE("Abyssal Sire", 250, 200, 180, 136, 20, 0, Flag.DEMON),
 	AKKHA("Akkha", 80, 100, 100, 140, 10, 70),
 	AKKHAS_SHADOW("Akkha's Shadow", 30, 100, 100, 140, 10, 0),
 	ALCHEMICAL_HYDRA("Alchemical Hydra", 100, 260, 100, 100, 150, 0),
@@ -48,23 +48,25 @@ public enum BossDefence
 	DAGANNOTH_PRIME("Dagannoth Prime", 255, 255, 255, 255, 255, 0),
 	DAGANNOTH_REX("Dagannoth Rex", 255, 0, 255, 255, 10, 0),
 	DAGANNOTH_SUPREME("Dagannoth Supreme", 128, 255, 255, 255, 255, 0),
-	DEATHLY_MAGE("Deathly mage", 155, 210, 1, 1, 0, 0),
-	DEATHLY_RANGER("Deathly ranger", 155, 155, 1, 1, 0, 0, Flag.COX_MAGIC_IS_DEFENSIVE),
+	DEATHLY_MAGE("Deathly mage", 155, 210, 1, 1, 0, 0, Flag.COX_SCALED),
+	DEATHLY_RANGER("Deathly ranger", 155, 155, 1, 1, 0, 0, Flag.COX_SCALED, Flag.COX_MAGIC_IS_DEFENSIVE),
 	// Wardens phase 3 (the drainable one); the phase-2 core is tracked as CORE.
 	ELIDINIS_WARDEN("Elidinis' Warden", 150, 150, 150, 150, 20, 120),
 	GENERAL_GRAARDOR("General Graardor", 250, 80, 280, 350, 298, 0),
 	GIANT_MOLE("Giant Mole", 200, 200, 200, 200, 80, 0),
-	GREAT_OLM("Great Olm", 150, 250, 250, 250, 200, 0),
-	GREAT_OLM_LEFT_CLAW("Great Olm (Left claw)", 175, 175, 250, 250, 200, 0, Flag.COX_MAGIC_IS_DEFENSIVE),
-	GREAT_OLM_RIGHT_CLAW("Great Olm (Right claw)", 175, 87, 250, 250, 50, 0, Flag.COX_MAGIC_IS_DEFENSIVE),
-	ICE_DEMON("Ice Demon", 160, 390, 1, 1, 40, 0, Flag.MAGIC_USES_DEFENCE),
+	GREAT_OLM("Great Olm", 150, 250, 250, 250, 200, 0, Flag.COX_SCALED),
+	GREAT_OLM_LEFT_CLAW("Great Olm (Left claw)", 175, 175, 250, 250, 200, 0,
+		Flag.COX_SCALED, Flag.COX_MAGIC_IS_DEFENSIVE),
+	GREAT_OLM_RIGHT_CLAW("Great Olm (Right claw)", 175, 87, 250, 250, 50, 0,
+		Flag.COX_SCALED, Flag.COX_MAGIC_IS_DEFENSIVE),
+	ICE_DEMON("Ice Demon", 160, 390, 1, 1, 40, 0, Flag.COX_SCALED, Flag.MAGIC_USES_DEFENCE),
 	// The Queen's magic-def bonus is 10 while airborne; 100 is the crawling (meleeable) form.
 	KALPHITE_QUEEN("Kalphite Queen", 300, 150, 300, 300, 100, 0),
 	KEPHRI("Kephri", 80, 125, 0, 0, 200, 60),
 	KING_BLACK_DRAGON("King Black Dragon", 240, 240, 240, 240, 80, 0),
 	KREE_ARRA("Kree'arra", 260, 200, 300, 200, 200, 0),
-	KRIL_TSUTSAROTH("K'ril Tsutsaroth", 270, 200, 340, 300, 80, 0),
-	LIZARDMAN_SHAMAN("Lizardman shaman", 140, 130, 120, 120, 50, 0),
+	KRIL_TSUTSAROTH("K'ril Tsutsaroth", 270, 200, 340, 300, 80, 0, Flag.DEMON),
+	LIZARDMAN_SHAMAN("Lizardman shaman", 140, 130, 120, 120, 50, 0, Flag.COX_SCALED),
 	NEX("Nex", 260, 230, 315, 200, 300, 250),
 	NYLOCAS_VASILIAS("Nylocas Vasilias", 50, 50, 400, 350, 0, 0),
 	OBELISK("<col=00ffff>Obelisk</col>", 100, 100, 200, 150, 50, 60),
@@ -74,12 +76,14 @@ public enum BossDefence
 	PHOSANIS_NIGHTMARE("Phosani's Nightmare", 150, 150, 150, 150, 600, 120),
 	SARACHNIS("Sarachnis", 150, 150, 200, 240, 150, 0),
 	SCORPIA("Scorpia", 180, 1, 250, 150, 44, 0),
-	SKELETAL_MYSTIC("Skeletal Mystic", 187, 140, 140, 140, 140, 0),
+	SKELETAL_MYSTIC("Skeletal Mystic", 187, 140, 140, 140, 140, 0, Flag.COX_SCALED),
 	SKOTIZO("Skotizo", 200, 280, 240, 250, 80, 0),
 	SOTETSEG("Sotetseg", 200, 250, 250, 250, 30, 100),
 	SPINDEL("Spindel", 225, 235, 200, 130, 205, 0),
-	TEKTON("Tekton", 205, 205, 390, 390, 0, 0, Flag.COX_MAGIC_IS_DEFENSIVE),
-	TEKTON_ENRAGED("Tekton (enraged)", 205, 205, 390, 390, 0, 0, Flag.COX_MAGIC_IS_DEFENSIVE),
+	TEKTON("Tekton", 205, 205, 390, 390, 0, 0,
+		Flag.COX_SCALED, Flag.COX_MAGIC_IS_DEFENSIVE, Flag.COX_CM_SMALL_DEFENCE_BUMP),
+	TEKTON_ENRAGED("Tekton (enraged)", 205, 205, 390, 390, 0, 0,
+		Flag.COX_SCALED, Flag.COX_MAGIC_IS_DEFENSIVE, Flag.COX_CM_SMALL_DEFENCE_BUMP),
 	THE_HUEYCOATL("The Hueycoatl", 125, 50, 150, 50, 200, 120),
 	THE_MAIDEN_OF_SUGADINTI("The Maiden of Sugadinti", 200, 350, 350, 350, 0, 0),
 	THE_NIGHTMARE("The Nightmare", 150, 150, 150, 150, 600, 120),
@@ -88,14 +92,14 @@ public enum BossDefence
 	TZTOK_JAD("TzTok-Jad", 480, 480, 640, 960, 0, 0),
 	// Vardorvis has no Defence level at all, so only his magic defence can move.
 	VARDORVIS("Vardorvis", 0, 215, 280, 0, 580, 0),
-	VASA("Vasa Nistirio", 175, 230, 1, 1, 400, 0),
+	VASA("Vasa Nistirio", 175, 230, 1, 1, 400, 0, Flag.COX_SCALED),
 	VENENATIS("Venenatis", 321, 300, 300, 200, 300, 0),
 	// Phase 3 (the long damage phase); Verzik ignores defence drains entirely, hence the floor.
 	VERZIK_VITUR("Verzik Vitur", 150, 300, 400, 400, 100, 150, Flag.MAGIC_USES_DEFENCE),
 	VETION("Vet'ion", 395, 300, 430, 430, 250, 0),
 	VORKATH("Vorkath", 214, 150, 560, 308, 240, 0),
 	XARPUS("Xarpus", 250, 220, 1, 1, 0, 0),
-	YAMA("Yama", 225, 250, 320, 350, 0, 145),
+	YAMA("Yama", 225, 250, 320, 350, 0, 145, Flag.DEMON),
 	ZEBAK("Zebak", 70, 100, 250, 140, 200, 50),
 	// Zulrah's magic-def bonus is form-dependent (-45 serpentine, 0 magma, 300 tanzanite); using 0.
 	// A single-value entry can't follow the rotation, so the Eye of ayak drain won't read exactly per form.
@@ -106,7 +110,13 @@ public enum BossDefence
 		/** The monster rolls magic defence off its Defence level rather than its Magic level. */
 		MAGIC_USES_DEFENCE,
 		/** In CoX the monster's Magic level scales with the defensive party-size factor, not the offensive one. */
-		COX_MAGIC_IS_DEFENSIVE
+		COX_MAGIC_IS_DEFENSIVE,
+		/** A Chambers of Xeric monster, so its levels take the party-size and Challenge Mode scaling. */
+		COX_SCALED,
+		/** Takes a smaller Challenge Mode defensive bump than the rest of CoX (Tekton). */
+		COX_CM_SMALL_DEFENCE_BUMP,
+		/** A demon, so the arclight family drains it harder. */
+		DEMON
 	}
 
 	private final String npcName;
@@ -136,16 +146,29 @@ public enum BossDefence
 		return flags.contains(flag);
 	}
 
-	/** The entry whose npcName contains {@code name}, so a partial in-game name still matches. */
+	/**
+	 * The entry for an in-game NPC name. Exact first, then a word-boundary prefix so a
+	 * phase suffix the table doesn't list still matches its base entry (e.g. "Vet'ion Reborn").
+	 */
 	public static BossDefence matchingNpcName(String name)
 	{
-		if (name == null)
+		if (name == null || name.trim().isEmpty())
 		{
 			return null;
 		}
+		String trimmed = name.trim();
 		for (BossDefence boss : values())
 		{
-			if (boss.npcName.contains(name))
+			if (boss.npcName.equalsIgnoreCase(trimmed))
+			{
+				return boss;
+			}
+		}
+		for (BossDefence boss : values())
+		{
+			if (trimmed.regionMatches(true, 0, boss.npcName, 0, boss.npcName.length())
+				&& trimmed.length() > boss.npcName.length()
+				&& trimmed.charAt(boss.npcName.length()) == ' ')
 			{
 				return boss;
 			}

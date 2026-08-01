@@ -5,7 +5,7 @@ import lombok.Data;
 
 /**
  * A player applying to join a hosted party, populated from the applicant's live
- * live self-report (see {@code PlayerUpdate}).
+ * self-report (see {@code PlayerUpdate}).
  */
 @Data
 public class Applicant

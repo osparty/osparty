@@ -12,6 +12,7 @@ import java.awt.RenderingHints;
 import java.awt.Shape;
 import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
+import java.util.HashMap;
 import java.util.Map;
 import net.runelite.api.Client;
 import net.runelite.api.Perspective;
@@ -33,6 +34,8 @@ public class PlayerMarkerOverlay extends Overlay
 	private final OSPartyConfig config;
 	private final BufferedImage learnerIcon;
 	private final BufferedImage teacherIcon;
+	/** Raw scene name -> marker key. Scene names repeat every frame, so normalising is cached. */
+	private final Map<String, String> normalizedNames = new HashMap<>();
 
 	public PlayerMarkerOverlay(Client client, LivePartyBackend liveParty, OSPartyConfig config,
 		BufferedImage learnerIcon, BufferedImage teacherIcon)
@@ -67,21 +70,46 @@ public class PlayerMarkerOverlay extends Overlay
 			{
 				continue;
 			}
-			PartyMarker marker = markers.get(PlayerNames.normalize(player.getName()));
+			PartyMarker marker = markers.get(normalized(player.getName()));
 			if (marker == null || marker == PartyMarker.NONE)
+			{
+				continue;
+			}
+			LocalPoint lp = player.getLocalLocation();
+			if (lp == null)
+			{
+				continue;
+			}
+			Polygon tile = Perspective.getCanvasTilePoly(client, lp);
+			if (tile == null)
 			{
 				continue;
 			}
 			if (tiles)
 			{
-				drawTile(graphics, player, colorFor(marker));
+				drawTile(graphics, tile, colorFor(marker));
 			}
 			if (icons)
 			{
-				drawTileIcon(graphics, player, marker == PartyMarker.TEACHER ? teacherIcon : learnerIcon);
+				drawTileIcon(graphics, tile, marker == PartyMarker.TEACHER ? teacherIcon : learnerIcon);
 			}
 		}
 		return null;
+	}
+
+	private String normalized(String name)
+	{
+		String key = normalizedNames.get(name);
+		if (key == null)
+		{
+			if (normalizedNames.size() > 512)
+			{
+				normalizedNames.clear();
+			}
+			key = PlayerNames.normalize(name);
+			normalizedNames.put(name, key);
+		}
+		return key;
 	}
 
 	private Color colorFor(PartyMarker marker)
@@ -89,18 +117,8 @@ public class PlayerMarkerOverlay extends Overlay
 		return marker == PartyMarker.TEACHER ? config.teacherColor() : config.learnerColor();
 	}
 
-	private void drawTile(Graphics2D graphics, Player player, Color color)
+	private void drawTile(Graphics2D graphics, Polygon tile, Color color)
 	{
-		LocalPoint lp = player.getLocalLocation();
-		if (lp == null)
-		{
-			return;
-		}
-		Polygon tile = Perspective.getCanvasTilePoly(client, lp);
-		if (tile == null)
-		{
-			return;
-		}
 		int maxAlpha = Math.max(0, Math.min(255, config.markerTileMaxAlpha()));
 		graphics.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(),
 			Math.min(maxAlpha, color.getAlpha())));
@@ -110,19 +128,9 @@ public class PlayerMarkerOverlay extends Overlay
 	}
 
 	/** Draw the role icon flat on the player's tile, in perspective, like a ground decal. */
-	private void drawTileIcon(Graphics2D graphics, Player player, BufferedImage icon)
+	private void drawTileIcon(Graphics2D graphics, Polygon tile, BufferedImage icon)
 	{
-		if (icon == null)
-		{
-			return;
-		}
-		LocalPoint lp = player.getLocalLocation();
-		if (lp == null)
-		{
-			return;
-		}
-		Polygon tile = Perspective.getCanvasTilePoly(client, lp);
-		if (tile == null || tile.npoints < 4)
+		if (icon == null || tile.npoints < 4)
 		{
 			return;
 		}

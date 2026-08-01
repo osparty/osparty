@@ -40,13 +40,6 @@ public class Advertisement
 	private long createdAt;
 
 	/**
-	 * Cluster-wide revision, bumped by the server on every meaningful write and never on a TTL touch.
-	 * What lets a client that already holds the board resume from where it got to instead of being sent
-	 * all of it again.
-	 */
-	private long seq;
-
-	/**
 	 * Live room backing this ad. Roster and live member state travel over the live socket, not the
 	 * advertisement. {@code null} for seed ads with no live room.
 	 */

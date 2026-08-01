@@ -35,9 +35,7 @@ import net.runelite.client.callback.ClientThread;
  * then feeds {@link DefenceTracker} and broadcasts a {@link SpecDrainEvent} so
  * every party member aggregates the whole group's draining.
  *
- * <p>This replicates the relevant detection from RuneLite's Special Attack
- * Counter plugin so OSParty no longer needs that plugin installed or enabled.
- * The event methods are driven from the plugin's {@code @Subscribe} handlers,
+ * <p>The event methods are driven from the plugin's {@code @Subscribe} handlers,
  * matching how {@link DefenceTracker} is wired.
  */
 @Singleton
@@ -120,11 +118,12 @@ public class SpecialAttackTracker
 		clientThread.invokeLater(() ->
 		{
 			specWeapon = equippedSpecWeapon();
-			if (specWeapon == null)
+			Player local = client.getLocalPlayer();
+			if (specWeapon == null || local == null)
 			{
-				return;
+				return; // logged out between the energy drop and this deferred run
 			}
-			Actor target = client.getLocalPlayer().getInteracting();
+			Actor target = local.getInteracting();
 			specTarget = target instanceof NPC ? (NPC) target : null;
 			specHpChange = lastHpChangeCycle == client.getGameCycle();
 			hitsplatTick = serverTicks + getHitDelay(specWeapon, target);

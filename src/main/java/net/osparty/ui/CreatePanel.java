@@ -16,8 +16,6 @@ import com.google.gson.Gson;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
-import java.awt.Cursor;
-import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Insets;
@@ -49,7 +47,6 @@ import javax.swing.JSpinner;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SpinnerNumberModel;
-import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.event.AncestorEvent;
@@ -59,16 +56,14 @@ import net.osparty.service.KillcountService;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
-import java.awt.Rectangle;
 import java.util.function.IntSupplier;
-import javax.swing.Scrollable;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.text.AbstractDocument;
 import javax.swing.text.DocumentFilter;
 
 /** "Create" tab: a form to host a new party (only while not already in one). */
-class CreatePanel extends JPanel implements Scrollable
+class CreatePanel extends ScrollableColumn
 {
 	private static final int DESC_MAX = 200;
 
@@ -84,7 +79,6 @@ class CreatePanel extends JPanel implements Scrollable
 	private final Supplier<AccountType> accountTypeSupplier;
 	private final LongSupplier accountHashSupplier;
 	private final Supplier<int[]> mapRegionsSupplier;
-	private final Supplier<String> coxLayoutSupplier;
 	private final ConfigManager configManager;
 	private final Gson gson;
 	private final KillcountService killcountService;
@@ -113,14 +107,7 @@ class CreatePanel extends JPanel implements Scrollable
 	private final JTextField coxScaleField = new JTextField();
 	private JPanel coxScaleRow;
 	private final JButton createButton = new JButton("Create party");
-	private final JTextArea statusLabel = new JTextArea()
-	{
-		@Override
-		public Dimension getMaximumSize()
-		{
-			return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-		}
-	};
+	private final JTextArea statusLabel = PanelWidgets.wrappingText();
 
 	/** "Join existing" section: apply to a party by invite code (delegates the apply logic to the Search tab). */
 	private final JTextField joinCodeField = new JTextField();
@@ -148,28 +135,15 @@ class CreatePanel extends JPanel implements Scrollable
 	private final JSpinner hardKcSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 100_000, 10));
 	private JPanel minKcField;
 	private JPanel hardKcField;
-	private final JTextArea kcWarningLabel = new JTextArea()
-	{
-		@Override
-		public Dimension getMaximumSize()
-		{
-			return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-		}
-	};
+	private final JTextArea kcWarningLabel = PanelWidgets.wrappingText();
+	/** Latches the one-time auto-expand of Requirements while a blocking KC message is up. */
+	private boolean kcBlockShown;
 
 	private final JComboBox<Role> myRoleDropdown = new JComboBox<>();
 	private JPanel rolesSection;
 	private JPanel roleCountsPanel;
 	/** Composition hint under "My role"; a wrapping text area so long summaries (BA, 4/5-man ToB) never truncate to "…". */
-	private final JTextArea roleTotalLabel = new JTextArea()
-	{
-		@Override
-		public Dimension getMaximumSize()
-		{
-			// BoxLayout may stretch children; cap the height so it only grows when the text wraps.
-			return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-		}
-	};
+	private final JTextArea roleTotalLabel = PanelWidgets.wrappingText();
 	private final LinkedHashMap<String, JSpinner> roleCountSpinners = new LinkedHashMap<>();
 	private boolean rebuildingRoles;
 
@@ -181,11 +155,15 @@ class CreatePanel extends JPanel implements Scrollable
 	/** Invoked after a successful edit so the owning panel can return to the Party tab. */
 	private Runnable onEditDone;
 
+	private final Timer recommendationTimer;
+	private final Timer loginStateTimer;
+
 	CreatePanel(BoardService boardService, OSPartyConfig config, Supplier<String> playerNameSupplier,
 		PartyState partyState, LivePartyBackend liveParty, Supplier<AccountType> accountTypeSupplier,
-		LongSupplier accountHashSupplier, Supplier<int[]> mapRegionsSupplier, Supplier<String> coxLayoutSupplier,
+		LongSupplier accountHashSupplier, Supplier<int[]> mapRegionsSupplier,
 		ConfigManager configManager, Gson gson, KillcountService killcountService, IntSupplier worldSupplier)
 	{
+		super(null);
 		this.gson = gson;
 		this.killcountService = killcountService;
 		this.worldSupplier = worldSupplier;
@@ -197,7 +175,6 @@ class CreatePanel extends JPanel implements Scrollable
 		this.accountTypeSupplier = accountTypeSupplier;
 		this.accountHashSupplier = accountHashSupplier;
 		this.mapRegionsSupplier = mapRegionsSupplier;
-		this.coxLayoutSupplier = coxLayoutSupplier;
 		this.configManager = configManager;
 
 		int defaultCapacity = Math.max(1, config.defaultCapacity());
@@ -214,7 +191,7 @@ class CreatePanel extends JPanel implements Scrollable
 		add(joinExistingSection);
 
 		// ---- Basics ----
-		add(sectionHeader("Basics"));
+		add(SectionHeader.formDivider("Basics"));
 		add(field("Activity", activityDropdown));
 		add(field("Party size", capacitySpinner));
 		add(field("Loot rule", lootDropdown));
@@ -223,7 +200,7 @@ class CreatePanel extends JPanel implements Scrollable
 		descriptionArea.setWrapStyleWord(true);
 		descriptionArea.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		descriptionArea.setForeground(Color.WHITE);
-		// Cap the description length and show a live used/limit counter (point 24).
+		// Cap the description length and show a live used/limit counter.
 		((AbstractDocument) descriptionArea.getDocument()).setDocumentFilter(new DocumentFilter()
 		{
 			@Override
@@ -275,21 +252,14 @@ class CreatePanel extends JPanel implements Scrollable
 		add(descCounter);
 
 		// ---- Requirements ---- (collapsible, collapsed by default)
-		add(collapsibleHeader(requirementsToggle, "Requirements", this::toggleRequirements));
-		requirementsContent = column();
+		add(SectionHeader.formToggleRow(requirementsToggle, "Requirements", this::toggleRequirements));
+		requirementsContent = PanelWidgets.cappedColumn();
 		minKcField = field("Minimum KC", minKcSpinner);
 		requirementsContent.add(minKcField);
 		hardKcField = field(hardKcLabel, hardKcSpinner);
 		requirementsContent.add(hardKcField);
-		kcWarningLabel.setFont(FontManager.getRunescapeSmallFont());
 		kcWarningLabel.setForeground(ColorScheme.PROGRESS_INPROGRESS_COLOR);
-		kcWarningLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
 		kcWarningLabel.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
-		kcWarningLabel.setLineWrap(true);
-		kcWarningLabel.setWrapStyleWord(true);
-		kcWarningLabel.setEditable(false);
-		kcWarningLabel.setFocusable(false);
-		kcWarningLabel.setOpaque(false);
 		kcWarningLabel.setVisible(false);
 		requirementsContent.add(kcWarningLabel);
 		minKcSpinner.addChangeListener(e -> updateKcWarning());
@@ -300,9 +270,9 @@ class CreatePanel extends JPanel implements Scrollable
 		add(requirementsContent);
 
 		// ---- Difficulty ---- (collapsible; header + rows hidden by applyActivityBounds when N/A)
-		difficultyHeader = collapsibleHeader(difficultyToggle, "Difficulty", this::toggleDifficulty);
+		difficultyHeader = SectionHeader.formToggleRow(difficultyToggle, "Difficulty", this::toggleDifficulty);
 		add(difficultyHeader);
-		difficultyContent = column();
+		difficultyContent = PanelWidgets.cappedColumn();
 		// Chambers of Xeric only: shown/hidden by applyActivityBounds.
 		includeLayoutRow = checkBoxRow(includeLayoutCheck);
 		includeLayoutRow.setVisible(false);
@@ -359,7 +329,7 @@ class CreatePanel extends JPanel implements Scrollable
 
 		// ---- Roles ---- (ToB/CoX only): the host's own role plus a count per role.
 		// Collapsible and collapsed by default; only shown at all for role activities.
-		rolesHeader = collapsibleHeader(rolesToggle, "Roles", this::toggleRolesSection);
+		rolesHeader = SectionHeader.formToggleRow(rolesToggle, "Roles", this::toggleRolesSection);
 		add(rolesHeader);
 		rolesSection = buildRolesSection();
 		rolesSection.setVisible(false);
@@ -404,22 +374,13 @@ class CreatePanel extends JPanel implements Scrollable
 				create();
 			}
 		});
-		// Full-width row so the button lines up with the fields above it.
-		JPanel createRow = column();
-		createRow.setLayout(new BorderLayout());
+		JPanel createRow = PanelWidgets.cappedRow(new BorderLayout());
 		createRow.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
 		createRow.add(createButton, BorderLayout.CENTER);
 		add(createRow);
 
 		statusLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		statusLabel.setFont(FontManager.getRunescapeSmallFont());
-		statusLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
 		statusLabel.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
-		statusLabel.setLineWrap(true);
-		statusLabel.setWrapStyleWord(true);
-		statusLabel.setEditable(false);
-		statusLabel.setFocusable(false);
-		statusLabel.setOpaque(false);
 		add(statusLabel);
 
 		activityDropdown.setRenderer(new ActivityRenderer());
@@ -430,9 +391,15 @@ class CreatePanel extends JPanel implements Scrollable
 				applyActivityBounds();
 			}
 		});
-		applyActivityBounds();
-
-		applyPreset(loadLastPreset());
+		AdvertisementPreset last = loadLastPreset();
+		if (last != null)
+		{
+			applyPreset(last);
+		}
+		else
+		{
+			applyActivityBounds();
+		}
 
 		addAncestorListener(new AncestorListener()
 		{
@@ -455,21 +422,30 @@ class CreatePanel extends JPanel implements Scrollable
 			{
 			}
 		});
-		new Timer(10_000, e -> {
+		recommendationTimer = new Timer(10_000, e -> {
 			if (isShowing())
 			{
 				applyRecommendation();
 			}
-		}).start();
+		});
+		recommendationTimer.start();
 
-		new Timer(1_000, e -> {
+		loginStateTimer = new Timer(1_000, e -> {
 			if (isShowing())
 			{
 				updateLoginState();
 			}
-		}).start();
+		});
+		loginStateTimer.start();
 
 		updateLoginState();
+	}
+
+	/** Stop the ticks; called when the plugin shuts down (a running Timer holds the panel alive). */
+	void dispose()
+	{
+		recommendationTimer.stop();
+		loginStateTimer.stop();
 	}
 
 	/** The form stays usable logged out; only the Create button is gated on login. */
@@ -491,7 +467,7 @@ class CreatePanel extends JPanel implements Scrollable
 		}
 	}
 
-	/** Disable the ironman-only toggle for non-ironman accounts, with a why tooltip (point 21). */
+	/** Disable the ironman-only toggle for non-ironman accounts, with a why tooltip. */
 	private void updateIronmanToggle()
 	{
 		boolean iron = AccountTypes.isIronman(accountTypeSupplier.get());
@@ -520,13 +496,9 @@ class CreatePanel extends JPanel implements Scrollable
 			// Mirror create(): use captureRequiredRoles, not assignedRoleTotal() (0 for ToB).
 			int capacity = (Integer) capacitySpinner.getValue();
 			List<String> req = captureRequiredRoles(activity, capacity);
-			if (!activity.hasFlexibleRoles())
+			if (!activity.hasFlexibleRoles() && req.size() != capacity)
 			{
-				int assigned = req == null ? 0 : req.size();
-				if (assigned != capacity)
-				{
-					return false;
-				}
+				return false;
 			}
 			Role mine = (Role) myRoleDropdown.getSelectedItem();
 			String hostRole = mine != null ? mine.getId() : null;
@@ -547,10 +519,10 @@ class CreatePanel extends JPanel implements Scrollable
 	private boolean hasFillSlot(Activity activity, List<String> requiredRoles)
 	{
 		Role fill = activity.fillRole(hardModeCheck.isSelected());
-		return fill != null && requiredRoles != null && requiredRoles.contains(fill.getId());
+		return fill != null && requiredRoles.contains(fill.getId());
 	}
 
-	/** Enable/disable Create live based on validity (point 18); the role total label shows why. */
+	/** Enable/disable Create live based on validity; the role total label shows why. */
 	private void refreshValidation()
 	{
 		boolean loggedIn = playerNameSupplier.get() != null;
@@ -567,9 +539,14 @@ class CreatePanel extends JPanel implements Scrollable
 			? ColorScheme.PROGRESS_ERROR_COLOR : ColorScheme.LIGHT_GRAY_COLOR);
 	}
 
-	/** Float the nearby activity to the top and select it; no-op when unchanged (don't fight a manual pick). */
+	/** Float the nearby activity to the top of the list, but never move the selection off the host's pick. */
 	private void applyRecommendation()
 	{
+		if (editing)
+		{
+			// The activity is locked to the hosted party's; reordering would reselect it programmatically.
+			return;
+		}
 		Activity near = Activity.nearby(mapRegionsSupplier.get());
 		if (near == recommended)
 		{
@@ -591,7 +568,8 @@ class CreatePanel extends JPanel implements Scrollable
 				activityDropdown.addItem(activity);
 			}
 		}
-		Activity select = near != null ? near : current;
+		// Only a form with nothing picked yet lands on the nearby activity.
+		Activity select = current != null ? current : near;
 		if (select != null)
 		{
 			activityDropdown.setSelectedItem(select);
@@ -615,18 +593,9 @@ class CreatePanel extends JPanel implements Scrollable
 
 	private JPanel field(JLabel label, Component input)
 	{
-		// Cap height to the preferred size dynamically; a fixed max collapses the field under BoxLayout.
-		JPanel panel = new JPanel(new BorderLayout(0, 4))
-		{
-			@Override
-			public Dimension getMaximumSize()
-			{
-				return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-			}
-		};
-		panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		// cappedRow tracks the preferred height; a fixed max collapses the field under BoxLayout.
+		JPanel panel = PanelWidgets.cappedRow(new BorderLayout(0, 4));
 		panel.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
-		panel.setAlignmentX(Component.LEFT_ALIGNMENT);
 
 		label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		panel.add(label, BorderLayout.NORTH);
@@ -640,17 +609,8 @@ class CreatePanel extends JPanel implements Scrollable
 		box.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		box.setFocusPainted(false);
 
-		JPanel panel = new JPanel(new BorderLayout())
-		{
-			@Override
-			public Dimension getMaximumSize()
-			{
-				return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-			}
-		};
-		panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		JPanel panel = PanelWidgets.cappedRow(new BorderLayout());
 		panel.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
-		panel.setAlignmentX(Component.LEFT_ALIGNMENT);
 		panel.add(box, BorderLayout.WEST);
 		return panel;
 	}
@@ -787,9 +747,18 @@ class CreatePanel extends JPanel implements Scrollable
 		kcWarningLabel.setForeground(blocking
 			? ColorScheme.PROGRESS_ERROR_COLOR : ColorScheme.PROGRESS_INPROGRESS_COLOR);
 		kcWarningLabel.setVisible(message != null);
-		if (blocking && !requirementsExpanded)
+		// Expand once when the block first appears; a 1s tick re-asserting it would make Requirements uncollapsible.
+		if (!blocking)
 		{
-			toggleRequirements();
+			kcBlockShown = false;
+		}
+		else if (!kcBlockShown)
+		{
+			kcBlockShown = true;
+			if (!requirementsExpanded)
+			{
+				toggleRequirements();
+			}
 		}
 		refreshValidation();
 	}
@@ -802,6 +771,24 @@ class CreatePanel extends JPanel implements Scrollable
 			return;
 		}
 
+		applyCapacityBounds(activity);
+		applyKcRows(activity);
+		applyDifficultyRows(activity);
+		applyRoleRows(activity);
+
+		// Hide a section header when none of its rows apply to this activity.
+		boolean anyDifficulty = anyDifficultyRows();
+		difficultyHeader.setVisible(anyDifficulty);
+		difficultyContent.setVisible(anyDifficulty && difficultyExpanded);
+
+		updateKcWarning();
+		refreshValidation();
+		revalidate();
+		repaint();
+	}
+
+	private void applyCapacityBounds(Activity activity)
+	{
 		SpinnerNumberModel model = (SpinnerNumberModel) capacitySpinner.getModel();
 		model.setMinimum(activity.getMinPartySize());
 		model.setMaximum(activity.getMaxPartySize());
@@ -815,7 +802,10 @@ class CreatePanel extends JPanel implements Scrollable
 		{
 			model.setValue(activity.getMaxPartySize());
 		}
+	}
 
+	private void applyKcRows(Activity activity)
+	{
 		// A minimum-KC bar only makes sense where there's a hiscore killcount (BA has none).
 		boolean hasKillcount = activity.hasKillcount();
 		minKcField.setVisible(hasKillcount);
@@ -835,9 +825,12 @@ class CreatePanel extends JPanel implements Scrollable
 		{
 			hardKcSpinner.setValue(0);
 		}
+	}
 
+	private void applyDifficultyRows(Activity activity)
+	{
 		// The "include raid layout" option only makes sense for Chambers of Xeric.
-		boolean isCox = "cox".equals(activity.getId());
+		boolean isCox = isCox(activity);
 		// Default it on when switching to CoX (a saved preset may still override it afterwards).
 		if (isCox && !includeLayoutRow.isVisible())
 		{
@@ -882,25 +875,23 @@ class CreatePanel extends JPanel implements Scrollable
 			learnerCheck.setSelected(false);
 			teacherCheck.setSelected(false);
 		}
+	}
 
-		// Roles: a "my role" dropdown + per-role count spinners for ToB/CoX.
+	/** Roles: a "my role" dropdown + per-role count spinners for ToB/CoX. */
+	private void applyRoleRows(Activity activity)
+	{
 		boolean hasRoles = activity.hasRoles();
+		rolesHeader.setVisible(hasRoles);
 		rolesSection.setVisible(hasRoles && rolesExpanded);
 		if (hasRoles)
 		{
 			rebuildRoles(activity);
 		}
+	}
 
-		// Hide a section header when none of its rows apply to this activity.
-		boolean anyDifficulty = anyDifficultyRows();
-		difficultyHeader.setVisible(anyDifficulty);
-		difficultyContent.setVisible(anyDifficulty && difficultyExpanded);
-		rolesHeader.setVisible(hasRoles);
-
-		updateKcWarning();
-		refreshValidation();
-		revalidate();
-		repaint();
+	private static boolean isCox(Activity activity)
+	{
+		return activity == Activity.CHAMBERS_OF_XERIC;
 	}
 
 	private JPanel buildRolesSection()
@@ -1099,7 +1090,7 @@ class CreatePanel extends JPanel implements Scrollable
 		return String.join(", ", parts);
 	}
 
-	/** The required-role multiset for the activity (ToB fixed / CoX spinners); null when it has no roles. */
+	/** The required-role multiset for the activity (ToB fixed / CoX spinners); null only when it has no roles. */
 	private List<String> captureRequiredRoles(Activity activity, int capacity)
 	{
 		if (activity == null || !activity.hasRoles())
@@ -1171,6 +1162,59 @@ class CreatePanel extends JPanel implements Scrollable
 		return true;
 	}
 
+	/** The form's activity-guarded values, shared by {@link #create()} and {@link #saveEdit()}. */
+	private final class FormValues
+	{
+		final int capacity = (Integer) capacitySpinner.getValue();
+		final String description = descriptionArea.getText().trim();
+		final int minKc = (Integer) minKcSpinner.getValue();
+		final boolean privateParty = privateCheck.isSelected();
+		final boolean ironmanOnly = ironmanCheck.isSelected();
+		final String world;
+		final String lootRule;
+		final String hostAccountType;
+		final int minHardKc;
+		final boolean advertiseLayout;
+		final boolean hardMode;
+		final int invocation;
+		final String coxScale;
+		final boolean learner;
+		final boolean teacher;
+
+		FormValues(Activity activity)
+		{
+			// World is always the host's live world.
+			int hostWorld = worldSupplier != null ? worldSupplier.getAsInt() : 0;
+			world = hostWorld > 0 ? Integer.toString(hostWorld) : "";
+			LootRule loot = (LootRule) lootDropdown.getSelectedItem();
+			lootRule = (loot == null ? LootRule.UNSPECIFIED : loot).name();
+			AccountType accountType = accountTypeSupplier.get();
+			hostAccountType = accountType != null ? accountType.name() : null;
+			minHardKc = activity.hasHardMode() ? (Integer) hardKcSpinner.getValue() : 0;
+			// CoX: advertise the live raid layout (sent via heartbeat once inside), not baked into the description.
+			advertiseLayout = includeLayoutCheck.isSelected() && isCox(activity);
+			// Raid difficulty: CM/HMT toggle (CoX/ToB) or invocation level (ToA).
+			hardMode = activity.hasHardMode() && !activity.usesInvocation() && hardModeCheck.isSelected();
+			invocation = activity.usesInvocation() ? (Integer) invocationSpinner.getValue() : 0;
+			// Chambers of Xeric team-size scaling (e.g. "3+4"); empty for other activities.
+			coxScale = isCox(activity) ? coxScaleField.getText().trim() : "";
+			// Learner-raid tagging (raids only): either flag marks the ad as a learner raid.
+			learner = activity.isRaid() && learnerCheck.isSelected();
+			teacher = activity.isRaid() && teacherCheck.isSelected();
+		}
+	}
+
+	/** Snapshot the form for this activity; null (with an error shown) when it can't be advertised. */
+	private FormValues captureFormValues(Activity activity)
+	{
+		if (ironmanCheck.isSelected() && !AccountTypes.isIronman(accountTypeSupplier.get()))
+		{
+			setError("Only ironman accounts can host an ironman-only party.");
+			return null;
+		}
+		return new FormValues(activity);
+	}
+
 	private void create()
 	{
 		if (partyState.isInParty())
@@ -1192,48 +1236,19 @@ class CreatePanel extends JPanel implements Scrollable
 			return;
 		}
 
-		int minHardKc = activity.hasHardMode() ? (Integer) hardKcSpinner.getValue() : 0;
-		int capacity = (Integer) capacitySpinner.getValue();
-		String activityId = activity.getId();
-		String description = descriptionArea.getText().trim();
-		// World is always the host's live world (no manual field — point 22).
-		int hostWorld = worldSupplier != null ? worldSupplier.getAsInt() : 0;
-		String world = hostWorld > 0 ? Integer.toString(hostWorld) : "";
-		int minKc = (Integer) minKcSpinner.getValue();
-
-		LootRule loot = (LootRule) lootDropdown.getSelectedItem();
-		String lootRule = (loot == null ? LootRule.UNSPECIFIED : loot).name();
-		boolean privateParty = privateCheck.isSelected();
-		boolean ironmanOnly = ironmanCheck.isSelected();
-		AccountType accountType = accountTypeSupplier.get();
-		String hostAccountType = accountType != null ? accountType.name() : null;
-
-		if (ironmanOnly && !AccountTypes.isIronman(accountType))
-		{
-			setError("Only ironman accounts can host an ironman-only party.");
-			return;
-		}
-
-		if (!hostMeetsOwnKc(activity, player, minKc, minHardKc, this::create))
+		final FormValues form = captureFormValues(activity);
+		if (form == null)
 		{
 			return;
 		}
 
-		// CoX: advertise the live raid layout (sent via heartbeat once inside), not baked into the description.
-		boolean advertiseLayout = includeLayoutCheck.isSelected() && "cox".equals(activityId);
-
-		// Raid difficulty: CM/HMT toggle (CoX/ToB) or invocation level (ToA).
-		boolean hardMode = activity.hasHardMode() && !activity.usesInvocation() && hardModeCheck.isSelected();
-		int invocation = activity.usesInvocation() ? (Integer) invocationSpinner.getValue() : 0;
-		// Chambers of Xeric team-size scaling (e.g. "3+4"); empty for other activities.
-		String coxScale = "cox".equals(activityId) ? coxScaleField.getText().trim() : "";
-
-		// Learner-raid tagging (raids only): either flag marks the ad as a learner raid.
-		boolean learner = activity.isRaid() && learnerCheck.isSelected();
-		boolean teacher = activity.isRaid() && teacherCheck.isSelected();
+		if (!hostMeetsOwnKc(activity, player, form.minKc, form.minHardKc, this::create))
+		{
+			return;
+		}
 
 		// Roles (ToB/CoX): the composition must fill the party size and include the host's chosen role.
-		RoleSelection selection = captureRoleSelection(activity, capacity);
+		RoleSelection selection = captureRoleSelection(activity, form.capacity);
 		if (selection == null)
 		{
 			return;
@@ -1248,21 +1263,21 @@ class CreatePanel extends JPanel implements Scrollable
 		createButton.setEnabled(false);
 		setStatus("Creating party…");
 
-		final String advertisedDescription = description;
+		final String activityId = activity.getId();
 		// A secret authorising host-only changes to this ad; bound to the session server-side.
 		final String hostKey = java.util.UUID.randomUUID().toString();
 		// The passphrase must be built on the client thread (reads item names), so this is async.
 		final long hostAccountHash = accountHashSupplier != null ? accountHashSupplier.getAsLong() : 0L;
 		liveParty.generatePassphrase(passphrase -> {
 			AdvertisementRequest request = new AdvertisementRequest(
-				activityId, player, hostAccountHash, advertisedDescription, capacity, world, minKc, minHardKc,
-				passphrase, privateParty, lootRule, ironmanOnly, hostAccountType, hardMode, invocation, coxScale,
-				requiredRoles, hostRole, learner, teacher);
+				activityId, player, hostAccountHash, form.description, form.capacity, form.world, form.minKc,
+				form.minHardKc, passphrase, form.privateParty, form.lootRule, form.ironmanOnly, form.hostAccountType,
+				form.hardMode, form.invocation, form.coxScale, requiredRoles, hostRole, form.learner, form.teacher);
 
 			boardService.createAd(request, hostKey,
 				ad -> SwingUtilities.invokeLater(
-					() -> onCreated(ad, passphrase, player, capacity, advertiseLayout, hostRole, learner, teacher,
-						hostKey)),
+					() -> onCreated(ad, passphrase, player, form.capacity, form.advertiseLayout, hostRole,
+						form.learner, form.teacher, hostKey)),
 				error -> SwingUtilities.invokeLater(() -> {
 					creating = false;
 					createButton.setEnabled(true);
@@ -1299,21 +1314,13 @@ class CreatePanel extends JPanel implements Scrollable
 		section.setLayout(new BoxLayout(section, BoxLayout.Y_AXIS));
 		section.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		section.setAlignmentX(Component.LEFT_ALIGNMENT);
-		section.add(sectionHeader("Join existing"));
+		section.add(SectionHeader.formDivider("Join existing"));
 
 		joinCodeButton.setFocusPainted(false);
 		joinCodeButton.addActionListener(e -> submitJoinByCode());
 		joinCodeField.addActionListener(e -> submitJoinByCode());
 
-		JPanel row = new JPanel(new BorderLayout(6, 0))
-		{
-			@Override
-			public Dimension getMaximumSize()
-			{
-				return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-			}
-		};
-		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		JPanel row = PanelWidgets.cappedRow(new BorderLayout(6, 0));
 		row.add(joinCodeField, BorderLayout.CENTER);
 		row.add(joinCodeButton, BorderLayout.EAST);
 		section.add(field("Join a private party by code", row));
@@ -1335,60 +1342,12 @@ class CreatePanel extends JPanel implements Scrollable
 		this.joinByCodeHandler = handler;
 	}
 
-	/** A bold section divider in the Create form (Basics / Requirements / Difficulty / Roles). */
-	/** A vertical group of rows whose height tracks its content (so BoxLayout doesn't stretch it). */
-	private static JPanel column()
-	{
-		JPanel panel = new JPanel()
-		{
-			@Override
-			public Dimension getMaximumSize()
-			{
-				return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-			}
-		};
-		panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-		panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		panel.setAlignmentX(Component.LEFT_ALIGNMENT);
-		return panel;
-	}
-
-	/** A {@link #sectionHeader}-styled header with a chevron that collapses/expands its section. */
-	private JPanel collapsibleHeader(JButton toggle, String text, Runnable onToggle)
-	{
-		toggle.setText(text);
-		toggle.setIcon(SearchPanel.CARET_COLLAPSED);
-		toggle.setHorizontalAlignment(SwingConstants.LEFT);
-		toggle.setFocusPainted(false);
-		toggle.setContentAreaFilled(false);
-		toggle.setForeground(ColorScheme.BRAND_ORANGE);
-		toggle.setFont(FontManager.getRunescapeSmallFont().deriveFont(Font.BOLD));
-		toggle.setIconTextGap(6);
-		toggle.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-		toggle.setBorder(BorderFactory.createEmptyBorder(8, 0, 3, 0));
-		toggle.addActionListener(e -> onToggle.run());
-
-		JPanel row = new JPanel(new BorderLayout())
-		{
-			@Override
-			public Dimension getMaximumSize()
-			{
-				return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-			}
-		};
-		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		row.setAlignmentX(Component.LEFT_ALIGNMENT);
-		row.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, ColorScheme.MEDIUM_GRAY_COLOR));
-		row.add(toggle, BorderLayout.CENTER);
-		return row;
-	}
-
 	private void toggleRequirements()
 	{
 		requirementsExpanded = !requirementsExpanded;
 		requirementsContent.setVisible(requirementsExpanded);
 		requirementsToggle.setIcon(requirementsExpanded
-			? SearchPanel.CARET_EXPANDED : SearchPanel.CARET_COLLAPSED);
+			? Carets.EXPANDED : Carets.COLLAPSED);
 		revalidate();
 		repaint();
 	}
@@ -1405,7 +1364,7 @@ class CreatePanel extends JPanel implements Scrollable
 		difficultyExpanded = !difficultyExpanded;
 		difficultyContent.setVisible(difficultyExpanded && anyDifficultyRows());
 		difficultyToggle.setIcon(difficultyExpanded
-			? SearchPanel.CARET_EXPANDED : SearchPanel.CARET_COLLAPSED);
+			? Carets.EXPANDED : Carets.COLLAPSED);
 		revalidate();
 		repaint();
 	}
@@ -1415,34 +1374,11 @@ class CreatePanel extends JPanel implements Scrollable
 		rolesExpanded = !rolesExpanded;
 		Activity activity = (Activity) activityDropdown.getSelectedItem();
 		rolesSection.setVisible(rolesExpanded && activity != null && activity.hasRoles());
-		rolesToggle.setIcon(rolesExpanded ? SearchPanel.CARET_EXPANDED : SearchPanel.CARET_COLLAPSED);
+		rolesToggle.setIcon(rolesExpanded ? Carets.EXPANDED : Carets.COLLAPSED);
 		revalidate();
 		repaint();
 	}
 
-	private JPanel sectionHeader(String text)
-	{
-		JPanel row = new JPanel(new BorderLayout())
-		{
-			@Override
-			public Dimension getMaximumSize()
-			{
-				return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-			}
-		};
-		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		row.setAlignmentX(Component.LEFT_ALIGNMENT);
-		row.setBorder(BorderFactory.createCompoundBorder(
-			BorderFactory.createMatteBorder(0, 0, 1, 0, ColorScheme.MEDIUM_GRAY_COLOR),
-			BorderFactory.createEmptyBorder(8, 0, 3, 0)));
-		JLabel label = new JLabel(text);
-		label.setForeground(ColorScheme.BRAND_ORANGE);
-		label.setFont(FontManager.getRunescapeSmallFont().deriveFont(Font.BOLD));
-		row.add(label, BorderLayout.WEST);
-		return row;
-	}
-
-	/** The host's validated role composition + own role for the current form. */
 	private static final class RoleSelection
 	{
 		final List<String> requiredRoles;
@@ -1464,14 +1400,10 @@ class CreatePanel extends JPanel implements Scrollable
 		}
 		List<String> requiredRoles = captureRequiredRoles(activity, capacity);
 		// Flexible activities (BA) advertise base roles, so don't demand assigned == capacity.
-		if (!activity.hasFlexibleRoles())
+		if (!activity.hasFlexibleRoles() && requiredRoles.size() != capacity)
 		{
-			int assigned = requiredRoles == null ? 0 : requiredRoles.size();
-			if (assigned != capacity)
-			{
-				setError("Assign exactly " + capacity + " role slots (currently " + assigned + ").");
-				return null;
-			}
+			setError("Assign exactly " + capacity + " role slots (currently " + requiredRoles.size() + ").");
+			return null;
 		}
 		Role mine = (Role) myRoleDropdown.getSelectedItem();
 		String hostRole = mine != null ? mine.getId() : null;
@@ -1485,7 +1417,7 @@ class CreatePanel extends JPanel implements Scrollable
 			// The host's pick consumes a Fill/Any slot: swap one Fill for their actual role so the
 			// advertised composition stays consistent with the role the host occupies.
 			Role fill = activity.fillRole(hardModeCheck.isSelected());
-			int fillIdx = fill == null || requiredRoles == null ? -1 : requiredRoles.indexOf(fill.getId());
+			int fillIdx = fill == null ? -1 : requiredRoles.indexOf(fill.getId());
 			if (fillIdx < 0)
 			{
 				setError("Add at least one " + mine.getDisplayName()
@@ -1584,48 +1516,28 @@ class CreatePanel extends JPanel implements Scrollable
 			return;
 		}
 
-		int capacity = (Integer) capacitySpinner.getValue();
+		FormValues form = captureFormValues(activity);
+		if (form == null)
+		{
+			return;
+		}
+
 		// Can't shrink the party below the people already in it (host + admitted members).
 		int present = liveParty.isInParty()
-			? (int) liveParty.roster().stream()
-				.filter(m -> m.getStatus() != net.osparty.party.PartyStatus.PENDING).count()
+			? (int) liveParty.roster().stream().filter(m -> m.getStatus() != PartyStatus.PENDING).count()
 			: 1;
-		if (capacity < present)
+		if (form.capacity < present)
 		{
 			setError("Capacity can't be below the " + present + " already in the party.");
 			return;
 		}
 
-		int minHardKc = activity.hasHardMode() ? (Integer) hardKcSpinner.getValue() : 0;
-		String description = descriptionArea.getText().trim();
-		// World is always the host's live world (the manual field was removed).
-		int hostWorld = worldSupplier != null ? worldSupplier.getAsInt() : 0;
-		String world = hostWorld > 0 ? Integer.toString(hostWorld) : "";
-		int minKc = (Integer) minKcSpinner.getValue();
-		LootRule loot = (LootRule) lootDropdown.getSelectedItem();
-		String lootRule = (loot == null ? LootRule.UNSPECIFIED : loot).name();
-		boolean privateParty = privateCheck.isSelected();
-		boolean ironmanOnly = ironmanCheck.isSelected();
-		AccountType accountType = accountTypeSupplier.get();
-		if (ironmanOnly && !AccountTypes.isIronman(accountType))
-		{
-			setError("Only ironman accounts can host an ironman-only party.");
-			return;
-		}
-
-		if (!hostMeetsOwnKc(activity, playerNameSupplier.get(), minKc, minHardKc, this::saveEdit))
+		if (!hostMeetsOwnKc(activity, playerNameSupplier.get(), form.minKc, form.minHardKc, this::saveEdit))
 		{
 			return;
 		}
 
-		boolean advertiseLayout = includeLayoutCheck.isSelected() && "cox".equals(activity.getId());
-		boolean hardMode = activity.hasHardMode() && !activity.usesInvocation() && hardModeCheck.isSelected();
-		int invocation = activity.usesInvocation() ? (Integer) invocationSpinner.getValue() : 0;
-		String coxScale = "cox".equals(activity.getId()) ? coxScaleField.getText().trim() : "";
-		boolean learner = activity.isRaid() && learnerCheck.isSelected();
-		boolean teacher = activity.isRaid() && teacherCheck.isSelected();
-
-		RoleSelection selection = captureRoleSelection(activity, capacity);
+		RoleSelection selection = captureRoleSelection(activity, form.capacity);
 		if (selection == null)
 		{
 			return;
@@ -1634,14 +1546,14 @@ class CreatePanel extends JPanel implements Scrollable
 		// Remember the new settings so a future create is pre-filled with them too.
 		saveLastPreset(captureForm(null));
 
-		AdvertisementEditRequest edit = new AdvertisementEditRequest(description, capacity, world, minKc, minHardKc, lootRule,
-			privateParty, ironmanOnly, invocation, hardMode, coxScale, selection.requiredRoles, selection.hostRole,
-			learner, teacher);
+		AdvertisementEditRequest edit = new AdvertisementEditRequest(form.description, form.capacity, form.world,
+			form.minKc, form.minHardKc, form.lootRule, form.privateParty, form.ironmanOnly, form.invocation,
+			form.hardMode, form.coxScale, selection.requiredRoles, selection.hostRole, form.learner, form.teacher);
 
 		createButton.setEnabled(false);
 		setStatus("Saving changes…");
 		boardService.editAd(ad.getId(), partyState.getHostKey(), edit,
-			ignored -> SwingUtilities.invokeLater(() -> onEdited(ad, edit, advertiseLayout)),
+			ignored -> SwingUtilities.invokeLater(() -> onEdited(ad, edit, form.advertiseLayout)),
 			error -> SwingUtilities.invokeLater(() -> {
 				createButton.setEnabled(true);
 				setError("Edit failed — " + net.osparty.api.PartyErrors.friendly(error));
@@ -1708,55 +1620,14 @@ class CreatePanel extends JPanel implements Scrollable
 		statusLabel.setText(text);
 	}
 
-	// ---- Scrollable: track the viewport width so fields fill it, and scroll vertically (point 17) ----
-
-	@Override
-	public Dimension getPreferredScrollableViewportSize()
-	{
-		return getPreferredSize();
-	}
-
-	@Override
-	public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction)
-	{
-		return 16;
-	}
-
-	@Override
-	public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction)
-	{
-		return visibleRect.height;
-	}
-
-	@Override
-	public boolean getScrollableTracksViewportWidth()
-	{
-		return true;
-	}
-
-	@Override
-	public boolean getScrollableTracksViewportHeight()
-	{
-		return false;
-	}
-
 	// ---- presets -------------------------------------------------------------
 
 	private static final String PRESET_PLACEHOLDER = "Presets…";
 
 	private JPanel buildPresets()
 	{
-		JPanel panel = new JPanel(new BorderLayout(4, 0))
-		{
-			@Override
-			public Dimension getMaximumSize()
-			{
-				return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-			}
-		};
-		panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		JPanel panel = PanelWidgets.cappedRow(new BorderLayout(4, 0));
 		panel.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
-		panel.setAlignmentX(Component.LEFT_ALIGNMENT);
 
 		presetDropdown.addActionListener(e -> {
 			if (rebuildingPresets)
@@ -1835,7 +1706,10 @@ class CreatePanel extends JPanel implements Scrollable
 		presets.add(captureForm(chosen));
 		savePresets(presets);
 		rebuildPresets();
+		// Suppressed: selecting it would re-apply the preset we just captured and overwrite this status.
+		rebuildingPresets = true;
 		presetDropdown.setSelectedItem(chosen);
+		rebuildingPresets = false;
 		setSuccess("Saved preset \"" + chosen + "\".");
 	}
 
@@ -1901,13 +1775,6 @@ class CreatePanel extends JPanel implements Scrollable
 				activityDropdown.setSelectedItem(activity);
 			}
 		}
-		applyActivityBounds();
-
-		SpinnerNumberModel model = (SpinnerNumberModel) capacitySpinner.getModel();
-		int min = ((Number) model.getMinimum()).intValue();
-		int max = ((Number) model.getMaximum()).intValue();
-		int wanted = preset.getCapacity() <= 0 ? min : preset.getCapacity();
-		model.setValue(Math.min(max, Math.max(min, wanted)));
 
 		lootDropdown.setSelectedItem(LootRule.fromName(preset.getLootRule()));
 		minKcSpinner.setValue(Math.max(0, preset.getMinKc()));
@@ -1916,13 +1783,22 @@ class CreatePanel extends JPanel implements Scrollable
 		privateCheck.setSelected(preset.isPrivateParty());
 		// Honour the ironman-only rule even if the saved preset had it ticked.
 		ironmanCheck.setSelected(preset.isIronmanOnly() && AccountTypes.isIronman(accountTypeSupplier.get()));
-		includeLayoutCheck.setSelected(preset.isIncludeLayout());
 		hardModeCheck.setSelected(preset.isHardMode());
 		invocationSpinner.setValue(Math.max(0, Math.min(600, preset.getInvocation())));
 		coxScaleField.setText(preset.getCoxScale() != null ? preset.getCoxScale() : "");
 		learnerCheck.setSelected(preset.isLearner());
 		teacherCheck.setSelected(preset.isTeacher());
-		applyActivityBounds(); // refresh row visibility (and rebuild role controls)
+
+		applyActivityBounds(); // capacity bounds, row visibility and the role controls
+
+		SpinnerNumberModel model = (SpinnerNumberModel) capacitySpinner.getModel();
+		int min = ((Number) model.getMinimum()).intValue();
+		int max = ((Number) model.getMaximum()).intValue();
+		int wanted = preset.getCapacity() <= 0 ? min : preset.getCapacity();
+		model.setValue(Math.min(max, Math.max(min, wanted)));
+
+		// After applyActivityBounds, whose CoX default would otherwise overwrite the saved choice.
+		includeLayoutCheck.setSelected(preset.isIncludeLayout());
 		applyRolePreset(preset);
 	}
 

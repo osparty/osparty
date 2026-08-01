@@ -10,7 +10,7 @@ import lombok.NoArgsConstructor;
  * self-dismissing in-game popup. It cannot move anyone.
  *
  * <p>Rebuilt from an inbound frame by the live-party backend and posted on RuneLite's {@code EventBus},
- * which is how the plugin's popup handler still receives it unchanged.
+ * where the plugin's popup handler picks it up.
  */
 @Data
 @NoArgsConstructor

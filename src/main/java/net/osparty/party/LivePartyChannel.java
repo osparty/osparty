@@ -15,24 +15,20 @@ import net.osparty.api.OSPartySocket;
 
 /**
  * The plugin's live-party channel. Frame semantics live in {@link LiveParty}; what this class owns is the
- * live half of the protocol that is not about a party — announcing on (re)connect, following the server to
- * the node that holds the room, and waiting out a handover.
+ * live half of the protocol that is not about a party: announcing on (re)connect, following the server to the
+ * node that holds the room, and waiting out a handover.
  *
- * <p>It no longer owns a connection. The live party used to open a second WebSocket for the duration of a
- * party, which meant every user actually in one cost the gateway twice what a browsing user did; it now rides
- * on {@link OSPartySocket}'s session-long connection as a tagged channel. Starting and stopping are therefore
- * about attaching to that connection, not about opening anything — the socket is up either way.
+ * <p>It rides on {@link OSPartySocket}'s session-long connection as a tagged channel, so attaching and
+ * detaching are about that connection rather than about opening anything.
  *
- * <p>What did not change is that the server holds no durable live state: on every (re)connect this fires
- * {@link #setOnOpen}, so the caller re-announces itself and re-sends its state, and the room is rebuilt
- * (PARTY_V2_MIGRATION.md recovery).
+ * <p>The server holds no durable live state. On every (re)connect this fires {@link #setOnOpen}, so the
+ * caller re-announces itself and re-sends its state, and the room is rebuilt from that.
  *
- * <p>P2 node-hint routing still applies, and now moves the whole connection: a {@code redirect} frame pins
- * {@link OSPartySocket} to the owning pod, and leaving the party releases the pin without moving again — the
- * board is served identically everywhere, so there is nothing to go back for. P4 {@code ownerPending}: a room
- * whose owner drained answers with a retry delay rather than an error, and this re-announces after it rather
- * than treating the party as gone — a member reconnects faster than its host re-hosts, and without this it
- * would arrive to "no room" and silently fall out of the party.
+ * <p>Node-hint routing moves the whole connection: a {@code redirect} frame pins {@link OSPartySocket} to the
+ * owning pod, and leaving the party releases the pin without moving again, the board being served identically
+ * everywhere. An {@code ownerPending} answer carries a retry delay rather than an error, and this
+ * re-announces after it rather than treating the party as gone: a member reconnects faster than its host
+ * re-hosts, and without this it would arrive to "no room" and silently fall out of the party.
  */
 @Slf4j
 public class LivePartyChannel implements OSPartySocket.LiveChannel {
@@ -54,6 +50,8 @@ public class LivePartyChannel implements OSPartySocket.LiveChannel {
 
 	/** Whether a party is in progress, and so whether we are attached to the connection at all. */
 	private volatile boolean started;
+	/** Bumped on every announce, so {@link #attach} can tell whether registering fired one straight away. */
+	private volatile long announces;
 	/** Consecutive {@code ownerPending} deferrals; reset whenever the server actually seats us. */
 	private volatile int pendingRetries;
 
@@ -73,15 +71,15 @@ public class LivePartyChannel implements OSPartySocket.LiveChannel {
 	}
 
 	/**
-	 * Attach the live channel: from here the shared connection carries this party's frames.
+	 * Attach the live channel: from here the shared connection carries this party's frames. Nothing is
+	 * opened; if the connection is already up, {@link OSPartySocket#setLiveChannel} fires the announce
+	 * callback straight away.
 	 *
-	 * <p>Nothing is opened. If the connection is already up — which it is, unless the network is down —
-	 * {@link OSPartySocket#setLiveChannel} fires the announce callback straight away, so the caller sees the
-	 * same "we are connected, say who we are" moment a fresh socket used to give it.
+	 * @return whether that announce fired, and so whether the caller's host/join frame has already gone out
 	 */
-	public synchronized void attach() {
+	public synchronized boolean attach() {
 		if (started) {
-			return;
+			return false;
 		}
 		started = true;
 		pendingRetries = 0;
@@ -92,7 +90,9 @@ public class LivePartyChannel implements OSPartySocket.LiveChannel {
 				return t;
 			});
 		}
+		long before = announces;
 		connection.setLiveChannel(this);
+		return announces != before;
 	}
 
 	/**
@@ -209,7 +209,7 @@ public class LivePartyChannel implements OSPartySocket.LiveChannel {
 			executor.schedule(this::reannounce, delay + jitter, TimeUnit.MILLISECONDS);
 		}
 		catch (RejectedExecutionException ignored) {
-			// executor shut down by stop()
+			// executor shut down by detach()
 		}
 	}
 
@@ -221,6 +221,7 @@ public class LivePartyChannel implements OSPartySocket.LiveChannel {
 
 	/** Re-send {@code hello} and {@code host}/{@code join}, exactly as a fresh connection would. */
 	private void announce() {
+		announces++;
 		try {
 			onOpen.run();
 		}
@@ -242,12 +243,9 @@ public class LivePartyChannel implements OSPartySocket.LiveChannel {
 		public Boolean closed;
 		public String discordUrl;
 		public List<RosterEntry> members;
-		/** Every peer's live update from one aggregation window, on a {@code memberUpdates} frame. */
+		/** Every peer's live update from one aggregation window, on an {@code mu} frame. */
 		@SerializedName("u")
 		public List<MemberUpdate> updates;
-		/** Opaque live snapshot (a serialised PlayerUpdate); the caller converts it with its own Gson. */
-		@SerializedName("s")
-		public JsonObject state;
 		/** Opaque host ad settings (a serialised PartyMeta), on a {@code meta} frame. */
 		public JsonObject meta;
 		public Integer x;
@@ -276,7 +274,7 @@ public class LivePartyChannel implements OSPartySocket.LiveChannel {
 		public Boolean hostStays;
 	}
 
-	/** One member's live update inside a {@code memberUpdates} frame. */
+	/** One member's live update inside an {@code mu} frame. */
 	public static final class MemberUpdate {
 		@SerializedName("m")
 		public long memberId;

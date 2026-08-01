@@ -100,8 +100,10 @@ public interface OSPartyConfig extends Config
 		return 7;
 	}
 
+	String SHOW_DISCORD_BADGES = "showDiscordBadges";
+
 	@ConfigItem(
-		keyName = "showDiscordBadges",
+		keyName = SHOW_DISCORD_BADGES,
 		name = "Discord role badges",
 		description = "Show Discord role badges (developer, content creator, beta tester, backer) next to party hosts in Search and next to members in your party.",
 		position = 2,
@@ -331,8 +333,10 @@ public interface OSPartyConfig extends Config
 
 	// ---- Privacy & safety ----
 
+	String HIDE_INVENTORY = "hideInventory";
+
 	@ConfigItem(
-		keyName = "hideInventory",
+		keyName = HIDE_INVENTORY,
 		name = "Hide my inventory",
 		description = "Don't share your inventory (including rune pouch contents) with other party members.",
 		position = 1,
@@ -343,8 +347,10 @@ public interface OSPartyConfig extends Config
 		return false;
 	}
 
+	String HIDE_GEAR = "hideGear";
+
 	@ConfigItem(
-		keyName = "hideGear",
+		keyName = HIDE_GEAR,
 		name = "Hide my gear",
 		description = "Don't share your equipped gear with other party members.",
 		position = 2,
@@ -355,8 +361,10 @@ public interface OSPartyConfig extends Config
 		return false;
 	}
 
+	String RUNE_WATCH = "runeWatch";
+
 	@ConfigItem(
-		keyName = "runeWatch",
+		keyName = RUNE_WATCH,
 		name = "RuneWatch warnings",
 		description = "Warn when a party member or applicant is on the RuneWatch / We Do Raids scammer watchlist.",
 		position = 3,

@@ -17,7 +17,6 @@ import javax.swing.JComponent;
 import java.awt.event.HierarchyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.awt.image.BufferedImage;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -43,7 +42,6 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
-import net.runelite.client.util.ImageUtil;
 
 /** The "History" tab: a capped, newest-first list of past parties (via {@link PartyHistoryService}), each row expandable to its roster. */
 class HistoryPanel extends JPanel
@@ -67,7 +65,6 @@ class HistoryPanel extends JPanel
 	private final JButton clearButton;
 	/** Free-text filter over activity, host, and member names. */
 	private final JTextField searchField;
-	/** Hosted / Joined / All filter. */
 	private final JComboBox<String> roleFilter;
 	/** Ticks a re-render while this panel is on screen; paused (stopped) while it's hidden. */
 	private final Timer refreshTimer;
@@ -85,14 +82,9 @@ class HistoryPanel extends JPanel
 		setBackground(ColorScheme.DARK_GRAY_COLOR);
 		setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
 
-		// ---- header: title + Clear ----
 		JPanel header = new JPanel(new BorderLayout(6, 0));
 		header.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		header.setBorder(BorderFactory.createEmptyBorder(5, 8, 5, 8));
-
-		JLabel title = new JLabel("Party history");
-		title.setFont(FontManager.getRunescapeSmallFont().deriveFont(Font.BOLD));
-		title.setForeground(ColorScheme.BRAND_ORANGE);
 
 		clearButton = new JButton("Clear");
 		clearButton.setFocusPainted(false);
@@ -110,10 +102,9 @@ class HistoryPanel extends JPanel
 			}
 		});
 
-		header.add(title, BorderLayout.CENTER);
+		header.add(SectionHeader.title("Party history"), BorderLayout.CENTER);
 		header.add(clearButton, BorderLayout.EAST);
 
-		// ---- filter bar: search + role ----
 		searchField = new JTextField();
 		searchField.setFont(FontManager.getRunescapeSmallFont());
 		searchField.setToolTipText("Filter by activity, host or member name");
@@ -157,7 +148,6 @@ class HistoryPanel extends JPanel
 		top.add(header, BorderLayout.NORTH);
 		top.add(filterBar, BorderLayout.CENTER);
 
-		// ---- scrollable list ----
 		listContent = new JPanel();
 		listContent.setLayout(new BoxLayout(listContent, BoxLayout.Y_AXIS));
 		listContent.setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -202,6 +192,12 @@ class HistoryPanel extends JPanel
 				refreshTimer.stop();
 			}
 		});
+	}
+
+	/** Stop the refresh tick; called when the plugin shuts down (a running Timer holds the panel alive). */
+	void dispose()
+	{
+		refreshTimer.stop();
 	}
 
 	/** Register a callback fired when a favourite/block is toggled here, so sibling tabs refresh. */
@@ -259,32 +255,11 @@ class HistoryPanel extends JPanel
 	/** Soft green marking a member still in the party, mirrored from the live roster's "online" dot. */
 	private static final Color PRESENT_COLOR = new Color(0x4C, 0xAF, 0x50);
 
-	/** RuneLite's config-section caret (grey): points right when collapsed, down when expanded. */
-	private static final ImageIcon CARET_COLLAPSED = caret(0);
-	private static final ImageIcon CARET_EXPANDED = caret(Math.PI / 2);
-
-	private static ImageIcon caret(double rotation)
-	{
-		BufferedImage arrow = ImageUtil.loadImageResource(HistoryPanel.class, "/util/arrow_right.png");
-		if (arrow == null)
-		{
-			return null;
-		}
-		BufferedImage grey = ImageUtil.luminanceOffset(arrow, -121);
-		if (rotation != 0)
-		{
-			grey = ImageUtil.rotateImage(grey, rotation);
-		}
-		return new ImageIcon(grey);
-	}
-
 	/** One history row: a clickable header toggling a roster detail panel. No roster = not expandable. */
 	private JPanel buildRow(PartyHistoryEntry entry)
 	{
-		JPanel container = new JPanel();
-		container.setLayout(new BoxLayout(container, BoxLayout.Y_AXIS));
+		JPanel container = PanelWidgets.cappedColumn();
 		container.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		container.setAlignmentX(Component.LEFT_ALIGNMENT);
 
 		JPanel header = new JPanel(new BorderLayout(6, 0));
 		header.setBackground(ColorScheme.DARKER_GRAY_COLOR);
@@ -348,7 +323,6 @@ class HistoryPanel extends JPanel
 		if (!expandable)
 		{
 			container.add(header);
-			container.setMaximumSize(new Dimension(Integer.MAX_VALUE, container.getPreferredSize().height));
 			return container;
 		}
 
@@ -356,7 +330,7 @@ class HistoryPanel extends JPanel
 		boolean open = expanded.contains(key);
 
 		// Left caret toggles the collapsible roster detail, matching the Friends/Search tabs.
-		JLabel chevron = new JLabel(open ? CARET_EXPANDED : CARET_COLLAPSED);
+		JLabel chevron = new JLabel(open ? Carets.EXPANDED : Carets.COLLAPSED);
 		chevron.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 4));
 		header.add(chevron, BorderLayout.WEST);
 
@@ -373,7 +347,7 @@ class HistoryPanel extends JPanel
 			{
 				boolean show = !detail.isVisible();
 				detail.setVisible(show);
-				chevron.setIcon(show ? CARET_EXPANDED : CARET_COLLAPSED);
+				chevron.setIcon(show ? Carets.EXPANDED : Carets.COLLAPSED);
 				if (show)
 				{
 					expanded.add(key);
@@ -382,14 +356,11 @@ class HistoryPanel extends JPanel
 				{
 					expanded.remove(key);
 				}
-				container.setMaximumSize(new Dimension(Integer.MAX_VALUE,
-					container.getLayout().preferredLayoutSize(container).height));
 				listContent.revalidate();
 				listContent.repaint();
 			}
 		});
 
-		container.setMaximumSize(new Dimension(Integer.MAX_VALUE, container.getPreferredSize().height));
 		return container;
 	}
 
@@ -425,9 +396,8 @@ class HistoryPanel extends JPanel
 	/** One member line: name (host tagged) on the left; favourite, block, then join/leave times on the right. */
 	private JPanel memberLine(PartyHistoryEntry entry, HistoryMember m)
 	{
-		JPanel line = new JPanel(new BorderLayout(6, 0));
+		JPanel line = PanelWidgets.cappedRow(new BorderLayout(6, 0));
 		line.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		line.setAlignmentX(Component.LEFT_ALIGNMENT);
 
 		String name = m.getName() == null || m.getName().isEmpty() ? "?" : m.getName();
 		boolean isHost = sameName(name, entry.getHost());
@@ -464,7 +434,6 @@ class HistoryPanel extends JPanel
 		right.add(timeLabel);
 
 		line.add(right, BorderLayout.EAST);
-		line.setMaximumSize(new Dimension(Integer.MAX_VALUE, line.getPreferredSize().height));
 		return line;
 	}
 
@@ -657,7 +626,7 @@ class HistoryPanel extends JPanel
 	private static String truncate(String s, int max)
 	{
 		// ASCII dots, not the ellipsis glyph — same missing-glyph issue as the en dash on Linux.
-		return s.length() <= max ? s : s.substring(0, Math.max(0, max - 1)) + "...";
+		return s.length() <= max ? s : s.substring(0, Math.max(0, max - 3)) + "...";
 	}
 
 	/** A coarse "x ago" label for the given epoch-millis timestamp. */

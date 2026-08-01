@@ -8,13 +8,9 @@ import net.osparty.OSPartyConfig;
  */
 public enum InviteDisplay
 {
-	/** Blink the OSParty sidebar button and post an in-game chat line. */
 	BOTH("Sidebar + in-game"),
-	/** Only blink the OSParty sidebar button. */
 	SIDEBAR_ONLY("Sidebar only"),
-	/** Only post an in-game chat line. */
 	INGAME_ONLY("In-game only"),
-	/** Ignore invites entirely. */
 	DISABLED("Disabled");
 
 	private final String label;

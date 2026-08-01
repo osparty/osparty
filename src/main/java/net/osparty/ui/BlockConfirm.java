@@ -1,7 +1,8 @@
 package net.osparty.ui;
 
 import java.awt.Component;
-import javax.swing.JOptionPane;
+import net.osparty.service.BlockListService;
+import net.osparty.service.FavoritesService;
 
 /**
  * Shared confirmation for blocking a player. Blocking is a rare, easily-misclicked action with
@@ -21,9 +22,8 @@ final class BlockConfirm
 	 */
 	static boolean confirm(Component parent, String name)
 	{
-		String who = escape(name == null ? "this player" : name);
-		String message = "<html><body style='width:230px'>"
-			+ "Block <b>" + who + "</b>?<br><br>"
+		String who = ConfirmDialog.escape(name == null ? "this player" : name);
+		String body = "Block <b>" + who + "</b>?<br><br>"
 			+ "While they are blocked:"
 			+ "<ul style='margin-top:2px;margin-left:14px'>"
 			+ "<li>Their parties are hidden from Search (unless <i>Show blocked parties</i> is turned on).</li>"
@@ -31,17 +31,30 @@ final class BlockConfirm
 			+ "per your <i>Blocked applicant</i> setting.</li>"
 			+ "<li>They're removed from your favourites (a player can't be both).</li>"
 			+ "</ul>"
-			+ "You can undo this any time from the <b>Blocked</b> tab."
-			+ "</body></html>";
+			+ "You can undo this any time from the <b>Blocked</b> tab.";
 
-		int choice = JOptionPane.showConfirmDialog(parent, message, "Block " + (name == null ? "player" : name),
-			JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
-		return choice == JOptionPane.OK_OPTION;
+		return ConfirmDialog.ask(parent, "Block " + (name == null ? "player" : name), body);
 	}
 
-	/** Neutralise the few HTML-significant characters, since the label renders as HTML. */
-	private static String escape(String s)
+	/**
+	 * Toggle {@code rsn}'s block state: confirm first when blocking, and drop a conflicting favourite.
+	 *
+	 * @return true when the state changed, false when the user cancelled the confirmation.
+	 */
+	static boolean toggle(Component parent, BlockListService blockList, FavoritesService favorites,
+		long hash, String rsn)
 	{
-		return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+		boolean wasBlocked = blockList.isBlocked(hash, rsn);
+		// Confirm the consequences before blocking, but let unblocking happen instantly.
+		if (!wasBlocked && !confirm(parent, rsn))
+		{
+			return false;
+		}
+		blockList.toggle(hash, rsn);
+		if (!wasBlocked && favorites != null && favorites.isFavorite(hash, rsn))
+		{
+			favorites.toggle(hash, rsn); // blocking and favouriting are mutually exclusive
+		}
+		return true;
 	}
 }

@@ -52,8 +52,6 @@ public class FavoritesService extends PlayerFlagService
 		configManager.setConfiguration(OSPartyConfig.GROUP, LEGACY_KEY, "");
 	}
 
-	// --- Favourite-named aliases over the generic flag API (keeps call sites readable) ---
-
 	public boolean isFavorite(long accountHash, String name)
 	{
 		return isFlagged(accountHash, name);
@@ -67,11 +65,5 @@ public class FavoritesService extends PlayerFlagService
 	public boolean hasAnyFavorite(Advertisement ad)
 	{
 		return hasAnyFlagged(ad);
-	}
-
-	/** Static normalisation shim retained for callers that used {@code FavoritesService.normalize}. */
-	public static String normalize(String name)
-	{
-		return PlayerFlagService.normalize(name);
 	}
 }

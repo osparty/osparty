@@ -11,9 +11,8 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * Async TCP-connect pinger for OSRS world servers. Connects on port 43594 and
  * measures round-trip time as a proxy for latency. Results are cached for the
- * lifetime of the plugin instance; call {@link #invalidate()} to force a fresh
- * measurement. Callbacks are invoked on a background thread — callers that touch
- * Swing must marshal back onto the EDT themselves.
+ * lifetime of the plugin instance. Callbacks are invoked on a background thread;
+ * callers that touch Swing must marshal back onto the EDT themselves.
  */
 @Slf4j
 public class WorldPinger
@@ -68,12 +67,6 @@ public class WorldPinger
 	public Integer getCachedPing(int worldNum)
 	{
 		return cache.get(worldNum);
-	}
-
-	/** Clear all cached results so worlds will be re-pinged on the next request. */
-	public void invalidate()
-	{
-		cache.clear();
 	}
 
 	/** Shut down the background executor. Call from the plugin's shutDown(). */

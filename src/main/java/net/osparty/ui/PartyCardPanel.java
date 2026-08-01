@@ -6,19 +6,13 @@ import net.osparty.api.BoardService;
 import net.osparty.model.AccountTypes;
 import net.osparty.model.Activity;
 import net.osparty.model.LootRule;
-import net.osparty.model.Member;
 import net.osparty.model.Advertisement;
 import net.osparty.model.Role;
 import net.osparty.party.LivePartyBackend;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
-import java.awt.Cursor;
-import java.awt.Dimension;
 import java.awt.FlowLayout;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
-import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -39,7 +33,6 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JTextArea;
-import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.text.DefaultCaret;
 
@@ -55,7 +48,7 @@ import net.runelite.http.api.worlds.WorldRegion;
 abstract class PartyCardPanel extends JPanel
 {
 	protected static final long COOLDOWN_MS = 30_000;
-	/** Ads still searching past this many minutes are dimmed/flagged as stale (point 40). */
+	/** Ads still searching past this many minutes are dimmed and flagged as stale. */
 	protected static final long STALE_MINUTES = 60;
 
 	// ---- shared dependencies -----------------------------------------------
@@ -79,7 +72,7 @@ abstract class PartyCardPanel extends JPanel
 	// ---- mutable apply state ------------------------------------------------
 	protected final Map<String, JButton> applyButtons = new HashMap<>();
 	protected final Map<String, Advertisement> adsById = new HashMap<>();
-	/** Per-card inline reason line (point 37) and inline role picker (point 15). */
+	/** Per-card inline reason line and inline role picker. */
 	protected final Map<String, JLabel> reasonLabels = new HashMap<>();
 	protected final Map<String, JPanel> rolePickers = new HashMap<>();
 	private final Map<String, Long> cooldownExpiry = new HashMap<>();
@@ -187,9 +180,7 @@ abstract class PartyCardPanel extends JPanel
 
 	protected boolean isOwnParty(Advertisement ad)
 	{
-		String me = playerNameSupplier.get();
-		return me != null && ad.getHost() != null
-			&& normalize(me).equalsIgnoreCase(normalize(ad.getHost()));
+		return AdText.sameName(playerNameSupplier.get(), ad.getHost());
 	}
 
 	protected boolean isActive(Advertisement ad)
@@ -257,6 +248,15 @@ abstract class PartyCardPanel extends JPanel
 		if (!uiTimer.isRunning())
 		{
 			uiTimer.start();
+		}
+	}
+
+	/** Stop the cooldown ticker so it can't outlive the panel. Call when the plugin unloads. */
+	void dispose()
+	{
+		if (uiTimer != null)
+		{
+			uiTimer.stop();
 		}
 	}
 
@@ -386,6 +386,8 @@ abstract class PartyCardPanel extends JPanel
 		JPanel picker = rolePickers.get(ad.getId());
 		if (picker == null)
 		{
+			// No card on screen to host the picker; say so rather than swallowing the click.
+			setStatus("Couldn't show this party's role options. Refresh the list and try again.");
 			return;
 		}
 		picker.removeAll();
@@ -489,12 +491,6 @@ abstract class PartyCardPanel extends JPanel
 		next.run();
 	}
 
-	/** Join-by-code and other entry points that don't collect a learner mark. */
-	protected void doApply(Advertisement ad, String role)
-	{
-		doApply(ad, role, false);
-	}
-
 	protected void doApply(Advertisement ad, String role, boolean learner)
 	{
 		doApply(ad, role, learner, false);
@@ -526,86 +522,84 @@ abstract class PartyCardPanel extends JPanel
 
 	protected void updateApplyButton(JButton button, Advertisement ad)
 	{
+		ApplyState state = applyState(ad);
+		button.setText(state.text);
+		button.setEnabled(state.enabled);
+		button.setToolTipText(state.tooltip);
+		setReason(ad, state.reason, state.reasonColor);
+	}
+
+	/** How the Apply button should read for {@code ad}: the first guard that matches wins. */
+	private ApplyState applyState(Advertisement ad)
+	{
 		if (playerNameSupplier.get() == null)
 		{
-			button.setText("Log in");
-			button.setEnabled(false);
-			button.setToolTipText("Log in to apply to a party");
-			setReason(ad, "", ColorScheme.MEDIUM_GRAY_COLOR);
-			return;
+			return new ApplyState("Log in", false, "Log in to apply to a party");
 		}
 		if (isOwnParty(ad))
 		{
-			button.setText("Your party");
-			button.setEnabled(false);
-			button.setToolTipText("You host this party — manage it on the Party tab");
-			setReason(ad, "", ColorScheme.MEDIUM_GRAY_COLOR);
-			return;
+			return new ApplyState("Your party", false, "You host this party — manage it on the Party tab");
 		}
 		if (isActive(ad))
 		{
 			// Only an applicant still waiting on the host has something to withdraw. Once admitted you're
 			// a member, so say so and leave from the Party tab rather than offering to cancel.
-			if (liveParty.isLocalAdmitted())
-			{
-				button.setText("In this party");
-				button.setEnabled(false);
-				button.setToolTipText("You're in this party — manage it on the Party tab");
-				setReason(ad, "", ColorScheme.MEDIUM_GRAY_COLOR);
-				return;
-			}
-			button.setText("Cancel");
-			button.setEnabled(true);
-			button.setToolTipText("Withdraw your application");
-			setReason(ad, "", ColorScheme.MEDIUM_GRAY_COLOR);
-			return;
+			return liveParty.isLocalAdmitted()
+				? new ApplyState("In this party", false, "You're in this party — manage it on the Party tab")
+				: new ApplyState("Cancel", true, "Withdraw your application");
 		}
 		if (!meetsIronmanRule(ad))
 		{
-			button.setText("Iron only");
-			button.setEnabled(false);
-			button.setToolTipText("This party is for ironman accounts");
-			setReason(ad, "Ironman accounts only", ColorScheme.PROGRESS_ERROR_COLOR);
-			return;
+			return new ApplyState("Iron only", false, "This party is for ironman accounts",
+				"Ironman accounts only", ColorScheme.PROGRESS_ERROR_COLOR);
 		}
 		if (ad.isFull())
 		{
-			button.setText("Full");
-			button.setEnabled(false);
-			button.setToolTipText(null);
-			setReason(ad, "Party is full", ColorScheme.MEDIUM_GRAY_COLOR);
-			return;
+			return new ApplyState("Full", false, null, "Party is full", ColorScheme.MEDIUM_GRAY_COLOR);
 		}
 		long remaining = cooldownRemainingSeconds(ad.getId());
 		if (remaining > 0)
 		{
-			button.setText("Wait " + remaining + "s");
-			button.setEnabled(false);
-			button.setToolTipText("Recently applied to this party");
-			setReason(ad, "Recently applied — wait " + remaining + "s", ColorScheme.MEDIUM_GRAY_COLOR);
-			return;
+			return new ApplyState("Wait " + remaining + "s", false, "Recently applied to this party",
+				"Recently applied — wait " + remaining + "s", ColorScheme.MEDIUM_GRAY_COLOR);
 		}
 		KcStatus kc = kcStatus(ad);
 		if (kc == KcStatus.BELOW)
 		{
-			button.setText("Need KC");
-			button.setEnabled(false);
-			button.setToolTipText("You don't meet this party's minimum killcount");
-			setReason(ad, "Below the required killcount", ColorScheme.PROGRESS_ERROR_COLOR);
-			return;
+			return new ApplyState("Need KC", false, "You don't meet this party's minimum killcount",
+				"Below the required killcount", ColorScheme.PROGRESS_ERROR_COLOR);
 		}
 		if (kc == KcStatus.PENDING)
 		{
-			button.setText("Checking KC…");
-			button.setEnabled(false);
-			button.setToolTipText("Looking up your killcount on the hiscores");
-			setReason(ad, "Checking your killcount…", ColorScheme.MEDIUM_GRAY_COLOR);
-			return;
+			return new ApplyState("Checking KC…", false, "Looking up your killcount on the hiscores",
+				"Checking your killcount…", ColorScheme.MEDIUM_GRAY_COLOR);
 		}
-		button.setText("Apply");
-		button.setEnabled(true);
-		button.setToolTipText(partyState.isInParty() ? "Applying will leave your current party" : null);
-		setReason(ad, "", ColorScheme.MEDIUM_GRAY_COLOR);
+		return new ApplyState("Apply", true,
+			partyState.isInParty() ? "Applying will leave your current party" : null);
+	}
+
+	/** One Apply-button appearance: the button itself plus the inline reason line beneath it. */
+	private static final class ApplyState
+	{
+		final String text;
+		final boolean enabled;
+		final String tooltip;
+		final String reason;
+		final Color reasonColor;
+
+		ApplyState(String text, boolean enabled, String tooltip)
+		{
+			this(text, enabled, tooltip, "", ColorScheme.MEDIUM_GRAY_COLOR);
+		}
+
+		ApplyState(String text, boolean enabled, String tooltip, String reason, Color reasonColor)
+		{
+			this.text = text;
+			this.enabled = enabled;
+			this.tooltip = tooltip;
+			this.reason = reason;
+			this.reasonColor = reasonColor;
+		}
 	}
 
 	/** Set (or clear) the inline reason line beneath a card's Apply button. */
@@ -640,14 +634,7 @@ abstract class PartyCardPanel extends JPanel
 
 	protected JPanel buildPartyCard(Activity activity, Advertisement ad)
 	{
-		JPanel card = new JPanel(new BorderLayout(0, 4))
-		{
-			@Override
-			public Dimension getMaximumSize()
-			{
-				return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-			}
-		};
+		JPanel card = new PanelWidgets.Capped(new BorderLayout(0, 4));
 		card.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		card.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 		card.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -674,10 +661,10 @@ abstract class PartyCardPanel extends JPanel
 			hostLabel.setIconTextGap(4);
 		}
 
-		// Friend badge: show a small indicator when the host is an OSRS friend.
+		// An OSRS friend hosting is marked by the tooltip only (a blocked host overwrites it below).
 		Set<String> friends = friendNamesSupplier != null ? friendNamesSupplier.get() : null;
 		boolean isFriend = friends != null && ad.getHost() != null
-			&& friends.contains(normalize(ad.getHost()).toLowerCase());
+			&& friends.contains(AdText.normalizeName(ad.getHost()).toLowerCase());
 		if (isFriend)
 		{
 			hostLabel.setToolTipText("OSRS Friend");
@@ -692,7 +679,7 @@ abstract class PartyCardPanel extends JPanel
 			hostLabel.setToolTipText("Blocked host");
 		}
 
-		// Host row: just the name now — favourite/block live on the card's right-click / 3-dot menu.
+		// Host row: the name only; favourite/block live on the card's right-click / 3-dot menu.
 		JPanel hostRow = new JPanel(new BorderLayout(2, 0));
 		hostRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		hostRow.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -737,7 +724,7 @@ abstract class PartyCardPanel extends JPanel
 			info.add(tags);
 		}
 
-		String requirement = requirementText(activity, ad);
+		String requirement = AdText.requirementText(activity, ad);
 		if (requirement != null)
 		{
 			JLabel req = new JLabel(requirement);
@@ -747,7 +734,7 @@ abstract class PartyCardPanel extends JPanel
 			info.add(req);
 		}
 
-		String needs = neededRolesText(activity, ad);
+		String needs = AdText.neededRolesText(activity, neededRolesOf(ad));
 		if (needs != null)
 		{
 			info.add(wrappedLabel(needs, ColorScheme.BRAND_ORANGE));
@@ -824,21 +811,7 @@ abstract class PartyCardPanel extends JPanel
 		}
 		if (menu != null)
 		{
-			JLabel kebab = new JLabel(StatusIcons.KEBAB);
-			kebab.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-			kebab.setToolTipText("Host actions");
-			kebab.addMouseListener(new MouseAdapter()
-			{
-				@Override
-				public void mousePressed(MouseEvent e)
-				{
-					if (SwingUtilities.isLeftMouseButton(e))
-					{
-						menu.show(kebab, 0, kebab.getHeight());
-					}
-				}
-			});
-			headerEast.add(kebab);
+			headerEast.add(PanelWidgets.kebab("Host actions", menu));
 		}
 		header.add(headerEast, BorderLayout.EAST);
 
@@ -850,7 +823,7 @@ abstract class PartyCardPanel extends JPanel
 		if (menu != null)
 		{
 			card.setComponentPopupMenu(menu);
-			inheritPopupMenu(card);
+			PanelWidgets.inheritPopupMenu(card);
 		}
 
 		return card;
@@ -865,9 +838,9 @@ abstract class PartyCardPanel extends JPanel
 			return null;
 		}
 		final long hostHash = ad.getHostAccountHash();
-		// Reliable (accountHash-based) self-check — the name-based isOwnParty missed our own ad when the
-		// stored host name differed slightly, which let us favourite ourselves.
-		boolean self = blockListService != null && blockListService.isSelf(hostHash, host);
+		// Hash-based self-check: the name-based isOwnParty missed our own ad when the stored host name
+		// differed slightly, which let us favourite ourselves. Fall back to it when there's no service.
+		boolean self = blockListService != null ? blockListService.isSelf(hostHash, host) : isOwnParty(ad);
 		JPopupMenu menu = new JPopupMenu();
 		boolean any = false;
 
@@ -894,19 +867,11 @@ abstract class PartyCardPanel extends JPanel
 			boolean blocked = blockListService.isBlocked(hostHash, host);
 			JMenuItem blockItem = new JMenuItem(blocked ? "Unblock host" : "Block host");
 			blockItem.addActionListener(e -> {
-				boolean wasBlocked = blockListService.isBlocked(hostHash, host);
-				// Confirm the consequences before blocking, but let unblocking happen instantly.
-				if (!wasBlocked && !BlockConfirm.confirm(this, host))
+				if (!BlockConfirm.toggle(this, blockListService, favoritesService, hostHash, host))
 				{
 					return;
 				}
-				blockListService.toggle(hostHash, host);
-				// Favouriting and blocking the same host are mutually exclusive.
-				if (!wasBlocked && favoritesService != null && favoritesService.isFavorite(hostHash, host))
-				{
-					favoritesService.toggle(hostHash, host);
-					onFavoriteChanged.run();
-				}
+				onFavoriteChanged.run(); // blocking may have dropped a conflicting favourite
 				onBlockToggled(ad);
 				onBlockChanged.run();
 			});
@@ -939,20 +904,6 @@ abstract class PartyCardPanel extends JPanel
 		return any ? menu : null;
 	}
 
-	/** Let every descendant defer its right-click to {@code root}'s component popup menu. */
-	private static void inheritPopupMenu(JComponent root)
-	{
-		for (Component child : root.getComponents())
-		{
-			if (child instanceof JComponent)
-			{
-				JComponent jc = (JComponent) child;
-				jc.setInheritsPopupMenu(true);
-				inheritPopupMenu(jc);
-			}
-		}
-	}
-
 	/** The host's Discord-role badges as a right-aligned icon row, or {@code null} when none. */
 	private JPanel buildHostBadgeRow(Advertisement ad)
 	{
@@ -960,9 +911,8 @@ abstract class PartyCardPanel extends JPanel
 		{
 			return null;
 		}
-		List<Member> members = ad.getMembers();
-		Member host = members == null || members.isEmpty() ? null : members.get(0);
-		List<DiscordBadge> badges = host == null ? List.of() : DiscordBadge.fromWire(host.getBadges());
+		List<DiscordBadge> badges = DiscordBadge.fromWire(
+			AdText.badgesFor(ad.getMembers(), ad.getHostAccountHash(), ad.getHost()));
 		JPanel row = null;
 		for (DiscordBadge badge : badges)
 		{
@@ -983,7 +933,7 @@ abstract class PartyCardPanel extends JPanel
 		return row;
 	}
 
-	/** A read-only, layout-wrapping text component (replaces manual char-count wrapping). */
+	/** A read-only, layout-wrapping text component. */
 	private static JComponent wrappedLabel(String text, Color fg)
 	{
 		JTextArea area = new JTextArea();
@@ -1005,24 +955,22 @@ abstract class PartyCardPanel extends JPanel
 		return area;
 	}
 
-	/** Notifies the sibling panel (Search↔Favorites) that a favorite was toggled. */
 	void setOnFavoriteChanged(Runnable r)
 	{
 		this.onFavoriteChanged = r;
 	}
 
-	/** Notifies the panel that a host was blocked/unblocked (Search re-filters, Favorites refreshes). */
 	void setOnBlockChanged(Runnable r)
 	{
 		this.onBlockChanged = r;
 	}
 
-	/** Called when the star is clicked; subclasses override to refresh their results. */
+	/** Subclasses override to refresh their own results after this panel's favourite toggle. */
 	protected void onFavoriteToggled(Advertisement ad)
 	{
 	}
 
-	/** Called when the block button is clicked; subclasses override to refresh their results. */
+	/** Subclasses override to refresh their own results after this panel's block toggle. */
 	protected void onBlockToggled(Advertisement ad)
 	{
 	}
@@ -1034,10 +982,10 @@ abstract class PartyCardPanel extends JPanel
 		{
 			return null;
 		}
-		String digits = raw.replaceAll("\\D", "");
-		int worldNum = (!digits.isEmpty() && digits.length() <= 5) ? Integer.parseInt(digits) : -1;
+		Integer parsed = parseWorldNum(ad);
+		int worldNum = parsed == null ? -1 : parsed;
 
-		StringBuilder labelText = new StringBuilder("World ").append(digits.isEmpty() ? raw.trim() : digits);
+		StringBuilder labelText = new StringBuilder("World ").append(parsed == null ? raw.trim() : parsed);
 		if (worldNum > 0 && worldPinger != null)
 		{
 			Integer ping = worldPinger.getCachedPing(worldNum);
@@ -1047,9 +995,7 @@ abstract class PartyCardPanel extends JPanel
 			}
 		}
 
-		JLabel label = new JLabel(labelText.toString());
-		label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		label.setFont(FontManager.getRunescapeSmallFont());
+		JLabel label = PanelWidgets.smallLabel(labelText.toString(), ColorScheme.LIGHT_GRAY_COLOR);
 
 		if (worldNum > 0 && worldRegionResolver != null)
 		{
@@ -1109,56 +1055,6 @@ abstract class PartyCardPanel extends JPanel
 		return scale.isEmpty() ? "" : " (" + scale + ")";
 	}
 
-	protected String requirementText(Activity activity, Advertisement ad)
-	{
-		if (ad.getMinKillCount() <= 0 && ad.getMinHardModeKillCount() <= 0)
-		{
-			return null;
-		}
-		StringBuilder req = new StringBuilder("Req: ");
-		boolean any = false;
-		if (ad.getMinKillCount() > 0)
-		{
-			req.append(ad.getMinKillCount()).append(" KC");
-			any = true;
-		}
-		if (activity != null && activity.hasHardMode() && ad.getMinHardModeKillCount() > 0)
-		{
-			if (any)
-			{
-				req.append(", ");
-			}
-			req.append(ad.getMinHardModeKillCount()).append(' ').append(activity.getHardModeLabel())
-				.append(" KC");
-		}
-		return req.toString();
-	}
-
-	protected static String neededRolesText(Activity activity, Advertisement ad)
-	{
-		if (activity == null || !activity.hasRoles())
-		{
-			return null;
-		}
-		List<String> needed = neededRolesOf(ad);
-		if (needed == null || needed.isEmpty())
-		{
-			return null;
-		}
-		java.util.LinkedHashMap<String, Integer> counts = new java.util.LinkedHashMap<>();
-		for (String id : needed)
-		{
-			counts.merge(id, 1, Integer::sum);
-		}
-		List<String> parts = new ArrayList<>();
-		for (Map.Entry<String, Integer> entry : counts.entrySet())
-		{
-			String name = Role.displayNameOf(entry.getKey());
-			parts.add(entry.getValue() > 1 ? name + " x" + entry.getValue() : name);
-		}
-		return "Needs: " + String.join(", ", parts);
-	}
-
 	protected static List<String> neededRolesOf(Advertisement ad)
 	{
 		if (ad.getNeededRoles() != null && !ad.getNeededRoles().isEmpty())
@@ -1189,12 +1085,6 @@ abstract class PartyCardPanel extends JPanel
 			return mins + "m";
 		}
 		return (mins / 60) + "h " + (mins % 60) + "m";
-	}
-
-	/** Normalise a player name for comparison (RuneLite uses nbsp in names). */
-	protected static String normalize(String name)
-	{
-		return name == null ? "" : name.replace('\u00A0', ' ').trim();
 	}
 
 	/** Parse the world number from a party's world string, or null if not parseable. */

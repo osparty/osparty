@@ -15,15 +15,21 @@ import net.runelite.client.ui.overlay.infobox.InfoBox;
  */
 public class DefenceInfoBox extends InfoBox
 {
+	private static final String PLAIN_TOOLTIP = "Monster defence";
+
 	private final DefenceTracker tracker;
 	private final OSPartyConfig config;
+	/** What the pushed tooltip was built from, so a per-frame render only rebuilds it on a change. */
+	private boolean tipMagic;
+	private long tipMagicDef = Long.MIN_VALUE;
+	private long tipPercent = Long.MIN_VALUE;
 
 	public DefenceInfoBox(BufferedImage image, Plugin plugin, DefenceTracker tracker, OSPartyConfig config)
 	{
 		super(image, plugin);
 		this.tracker = tracker;
 		this.config = config;
-		setTooltip("Monster defence");
+		setTooltip(PLAIN_TOOLTIP);
 	}
 
 	@Override
@@ -34,18 +40,27 @@ public class DefenceInfoBox extends InfoBox
 		{
 			return "";
 		}
-		if (config.magicDefence() && state.getMagicBaseRoll() > 0)
-		{
-			long percent = Math.round(state.getMagicRoll() * 100.0 / state.getMagicBaseRoll());
-			setTooltip("Monster defence (magic defence: " + state.getMagicDef()
-				+ " bonus, " + Math.max(0, percent) + "% of starting roll)");
-		}
-		else
-		{
-			setTooltip("Monster defence");
-		}
+		updateTooltip(state);
 		long shown = config.defenceShowFullLevel() ? state.getCurrent() : state.getCurrent() - state.getMin();
 		return Long.toString(Math.max(0, shown));
+	}
+
+	private void updateTooltip(DefenceState state)
+	{
+		boolean magic = config.magicDefence() && state.getMagicBaseRoll() > 0;
+		long def = magic ? state.getMagicDef() : 0;
+		long percent = magic
+			? Math.max(0, Math.round(state.getMagicRoll() * 100.0 / state.getMagicBaseRoll())) : 0;
+		if (magic == tipMagic && def == tipMagicDef && percent == tipPercent)
+		{
+			return;
+		}
+		tipMagic = magic;
+		tipMagicDef = def;
+		tipPercent = percent;
+		setTooltip(magic
+			? PLAIN_TOOLTIP + " (magic defence: " + def + " bonus, " + percent + "% of starting roll)"
+			: PLAIN_TOOLTIP);
 	}
 
 	@Override

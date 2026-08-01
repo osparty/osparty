@@ -15,7 +15,7 @@ public class RosterMember
 	long memberId;
 	String name;
 	PartyStatus status;
-	PlayerUpdate data; // nullable until they sync
+	PlayerUpdate data;
 	boolean local;
-	boolean online; // recently heard from (or ourselves)
+	boolean online;
 }

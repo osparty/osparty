@@ -35,11 +35,10 @@ import okhttp3.WebSocketListener;
  * run over it, and the open connection is the host ad's keep-alive. Reconnects with jittered backoff,
  * re-subscribing and resuming the hosted ad on each (re)connect.
  *
- * <p>It is also the only connection the plugin opens. The live party ({@link net.osparty.party.LiveParty})
- * used to bring up a second socket for the duration of a party, which doubled what the gateway had to carry
- * for exactly the users doing the most; it now rides here as a second channel, tagged per frame with
- * {@link Mux}. This class owns the connection, the backoff and the node hint, and knows nothing about what
- * the live channel says — it hands those frames to whoever registered as {@link LiveChannel}.
+ * <p>It is also the only connection the plugin opens: the live party ({@link net.osparty.party.LiveParty})
+ * rides here as a second channel, tagged per frame with {@link Mux}. This class owns the connection, the
+ * backoff and the node hint, and knows nothing about what the live channel says; it hands those frames to
+ * whoever registered as {@link LiveChannel}.
  */
 @Slf4j
 @Singleton
@@ -127,7 +126,7 @@ public class OSPartySocket extends WebSocketListener
 	private volatile boolean connected;
 	private volatile WebSocket webSocket;
 	private volatile int onlineUsers = -1;
-	private int attempt;
+	private volatile int attempt;
 
 	// Hosting state (kept across reconnects so we can resume the same ad).
 	private volatile String hostingId;
@@ -299,12 +298,6 @@ public class OSPartySocket extends WebSocketListener
 		}
 	}
 
-	/** The pod this connection is pinned to, or null if it is free to land anywhere. */
-	public String nodeHint()
-	{
-		return nodeHint;
-	}
-
 	private void reconnectForMove(String reason)
 	{
 		attempt = 0;
@@ -333,15 +326,17 @@ public class OSPartySocket extends WebSocketListener
 		{
 			return;
 		}
-		publishedNode = node;
 		String id = hostingId;
 		if (id != null && connected)
 		{
+			// Latched only once the patch is actually on the wire, or a party hosted without one would keep
+			// the stamp suppressed for every party after it.
+			publishedNode = node;
 			send(gson.toJson(new UpdateFrame(id, hostingKey, java.util.Map.of("node", node))));
 		}
 	}
 
-	/** Send one live-party frame. Silently dropped while disconnected, as the live socket always was. */
+	/** Send one live-party frame. Silently dropped while disconnected. */
 	public void sendLive(String json)
 	{
 		if (connected)
@@ -473,6 +468,7 @@ public class OSPartySocket extends WebSocketListener
 			hostingId = null;
 			hostingKey = null;
 			lastSentPatch = null;
+			publishedNode = null;
 		}
 	}
 
@@ -504,6 +500,7 @@ public class OSPartySocket extends WebSocketListener
 			hostingId = null;
 			hostingKey = null;
 			lastSentPatch = null;
+			publishedNode = null;
 		}
 	}
 
@@ -894,6 +891,7 @@ public class OSPartySocket extends WebSocketListener
 	public void onClosed(WebSocket socket, int code, String reason)
 	{
 		connected = false;
+		failAllPending(null);
 		fireLiveClosed();
 		scheduleReconnect();
 	}
@@ -902,18 +900,82 @@ public class OSPartySocket extends WebSocketListener
 	public void onFailure(WebSocket socket, Throwable t, Response response)
 	{
 		connected = false;
-		HostPending pending = pendingHost;
-		if (pending != null && !closed)
-		{
-			pendingHost = null;
-			pending.onError.accept(t);
-		}
+		failAllPending(t);
 		if (!closed)
 		{
 			log.debug("Party socket failed ({}); will retry", t.toString());
 		}
 		fireLiveClosed();
 		scheduleReconnect();
+	}
+
+	/**
+	 * Every in-flight request is a callback something is waiting on, and the reply it wants can no longer
+	 * arrive. Each holder is failed the same way {@link #handleError} fails it, so a drop and a refusal look
+	 * alike to the caller.
+	 */
+	private void failAllPending(Throwable cause)
+	{
+		if (closed)
+		{
+			return;
+		}
+		Throwable t = cause != null ? cause : new IOException("socket closed");
+		HostPending host = pendingHost;
+		if (host != null)
+		{
+			pendingHost = null;
+			host.onError.accept(t);
+		}
+		LinkUrlPending link = pendingLinkUrl;
+		if (link != null)
+		{
+			pendingLinkUrl = null;
+			link.onError.accept(t);
+		}
+		for (VoicePending pending : drain(pendingVoiceChannel))
+		{
+			pending.onError.accept(t);
+		}
+		for (VoicePending pending : drain(pendingVoiceAccess))
+		{
+			pending.onError.accept(t);
+		}
+		for (VoicePending pending : drain(pendingTransfer))
+		{
+			pending.onError.accept(t);
+		}
+		// The plain consumers have no error channel: they say so the same way an offline call does.
+		for (Consumer<Advertisement> pending : drain(pendingByCode))
+		{
+			pending.accept(null);
+		}
+		for (Consumer<Advertisement> pending : drain(pendingByHost))
+		{
+			pending.accept(null);
+		}
+		for (Consumer<DiscordLinkStatus> pending : drain(pendingLinkStatus))
+		{
+			pending.accept(null);
+		}
+		for (Consumer<Boolean> pending : drain(pendingInvite))
+		{
+			pending.accept(false);
+		}
+	}
+
+	private static <K, V> List<V> drain(Map<K, V> pending)
+	{
+		List<V> out = new ArrayList<>();
+		for (K key : new ArrayList<>(pending.keySet()))
+		{
+			V value = pending.remove(key);
+			if (value != null)
+			{
+				out.add(value);
+			}
+		}
+		return out;
 	}
 
 	private void fireLiveClosed()
@@ -1025,6 +1087,7 @@ public class OSPartySocket extends WebSocketListener
 			hostingId = null;
 			hostingKey = null;
 			lastSentPatch = null;
+			publishedNode = null;
 			notifyHostedGone(id);
 		}
 	}
@@ -1039,6 +1102,7 @@ public class OSPartySocket extends WebSocketListener
 			hostingId = null;
 			hostingKey = null;
 			lastSentPatch = null;
+			publishedNode = null;
 			notifyHostedGone(id);
 			return;
 		}
@@ -1279,8 +1343,7 @@ public class OSPartySocket extends WebSocketListener
 	 * <p>The board and the batches that follow it are the largest things this plugin receives — a snapshot
 	 * is every advertisement there is — and they are repetitive JSON, so they gzip several-fold. The server
 	 * compresses each shared frame once and sends it to everyone who asked, so this costs it nothing per
-	 * client; on this side it is one inflate on a background thread. Saying nothing keeps the text frames,
-	 * which is what every earlier version of this plugin does.
+	 * client; on this side it is one inflate on a background thread.
 	 */
 	private String subscribeFrame()
 	{
@@ -1328,7 +1391,6 @@ public class OSPartySocket extends WebSocketListener
 	private static final class Frame
 	{
 		String type;
-		long version;
 		Advertisement[] ads;
 		// Board revision this frame is current to; absent from a server that predates resume.
 		Long seq;

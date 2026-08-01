@@ -20,9 +20,8 @@ import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.VarbitID;
 
 /**
- * Builds a {@link PlayerUpdate} from the local client's live state. Reads item
- * containers and skills, so it must be called on the client thread.
- *
+ * Builds a {@link PlayerUpdate} from the local client's live state. Reads item containers and skills, so it
+ * must be called on the client thread.
  */
 public final class LocalPlayerSnapshot
 {

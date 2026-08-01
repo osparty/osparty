@@ -22,11 +22,12 @@ public class LivePartyStateMergeTest
 	@Test
 	public void patchLeavesFieldsItDoesNotMention()
 	{
-		JsonObject full = LiveParty.toWire(gson.toJsonTree(snapshot()).getAsJsonObject());
+		JsonObject full = LiveStateCodec.toWire(gson.toJsonTree(snapshot()).getAsJsonObject());
 		JsonObject vitals = new JsonObject();
 		vitals.addProperty("hp", 31);
 
-		PlayerUpdate merged = gson.fromJson(LiveParty.fromWire(LiveParty.merge(full, vitals)), PlayerUpdate.class);
+		PlayerUpdate merged =
+			gson.fromJson(LiveStateCodec.fromWire(LiveStateCodec.merge(full, vitals)), PlayerUpdate.class);
 
 		assertEquals(31, merged.getCurrentHp());
 		// Everything the patch was silent about survives it.
@@ -42,7 +43,8 @@ public class LivePartyStateMergeTest
 		JsonObject vitals = new JsonObject();
 		vitals.addProperty("hp", 12);
 
-		PlayerUpdate merged = gson.fromJson(LiveParty.fromWire(LiveParty.merge(null, vitals)), PlayerUpdate.class);
+		PlayerUpdate merged =
+			gson.fromJson(LiveStateCodec.fromWire(LiveStateCodec.merge(null, vitals)), PlayerUpdate.class);
 
 		assertEquals(12, merged.getCurrentHp());
 		assertNull(merged.getName());
@@ -51,11 +53,11 @@ public class LivePartyStateMergeTest
 	@Test
 	public void mergingDoesNotMutateEitherSide()
 	{
-		JsonObject base = LiveParty.toWire(gson.toJsonTree(snapshot()).getAsJsonObject());
+		JsonObject base = LiveStateCodec.toWire(gson.toJsonTree(snapshot()).getAsJsonObject());
 		JsonObject patch = new JsonObject();
 		patch.addProperty("wd", 420);
 
-		LiveParty.merge(base, patch);
+		LiveStateCodec.merge(base, patch);
 
 		assertEquals(301, base.get("wd").getAsInt());
 		assertFalse(patch.has("n"));
@@ -102,13 +104,14 @@ public class LivePartyStateMergeTest
 		PlayerUpdate hiding = snapshot();
 		hiding.setHideGear(true);
 		hiding.setEquipment(null);
-		JsonObject held = LiveParty.toWire(gson.toJsonTree(hiding).getAsJsonObject());
+		JsonObject held = LiveStateCodec.toWire(gson.toJsonTree(hiding).getAsJsonObject());
 
 		PlayerUpdate showing = snapshot();
 		showing.setHideGear(false);
-		JsonObject patch = LiveParty.toWire(gson.toJsonTree(showing).getAsJsonObject());
+		JsonObject patch = LiveStateCodec.toWire(gson.toJsonTree(showing).getAsJsonObject());
 
-		PlayerUpdate merged = gson.fromJson(LiveParty.fromWire(LiveParty.merge(held, patch)), PlayerUpdate.class);
+		PlayerUpdate merged =
+			gson.fromJson(LiveStateCodec.fromWire(LiveStateCodec.merge(held, patch)), PlayerUpdate.class);
 		LiveParty.applyPrivacy(merged);
 
 		assertArrayEquals(new int[]{4151, 11802}, merged.getEquipment());
@@ -134,7 +137,8 @@ public class LivePartyStateMergeTest
 		moved.addProperty("5", 12695);
 		patch.add("iv", moved);
 
-		PlayerUpdate merged = gson.fromJson(LiveParty.fromWire(LiveParty.merge(held, patch)), PlayerUpdate.class);
+		PlayerUpdate merged =
+			gson.fromJson(LiveStateCodec.fromWire(LiveStateCodec.merge(held, patch)), PlayerUpdate.class);
 
 		assertEquals(385, merged.getInventory()[0]);
 		assertEquals(-1, merged.getInventory()[1]);
@@ -155,7 +159,7 @@ public class LivePartyStateMergeTest
 		quantities.addProperty("2", 40);
 		state.add("iq", quantities);
 
-		PlayerUpdate read = gson.fromJson(LiveParty.fromWire(state), PlayerUpdate.class);
+		PlayerUpdate read = gson.fromJson(LiveStateCodec.fromWire(state), PlayerUpdate.class);
 
 		assertEquals(385, read.getInventory()[2]);
 		assertEquals(-1, read.getInventory()[0]);
@@ -170,9 +174,9 @@ public class LivePartyStateMergeTest
 	@Test
 	public void frameKindsDoNotShareFields()
 	{
-		for (String item : LiveParty.ITEM_FIELDS)
+		for (String item : LiveStateCodec.ITEM_FIELDS)
 		{
-			for (String profile : LiveParty.PROFILE_FIELDS)
+			for (String profile : LiveStateCodec.PROFILE_FIELDS)
 			{
 				assertFalse("field in both items and profile: " + item, item.equals(profile));
 			}
@@ -180,11 +184,11 @@ public class LivePartyStateMergeTest
 		// The vitals frame is built by hand rather than projected, so check it against both lists.
 		for (String vital : new String[]{"hp", "pr", "sp", "re"})
 		{
-			for (String other : LiveParty.ITEM_FIELDS)
+			for (String other : LiveStateCodec.ITEM_FIELDS)
 			{
 				assertFalse("field in both vitals and items: " + vital, vital.equals(other));
 			}
-			for (String other : LiveParty.PROFILE_FIELDS)
+			for (String other : LiveStateCodec.PROFILE_FIELDS)
 			{
 				assertFalse("field in both vitals and profile: " + vital, vital.equals(other));
 			}
@@ -194,15 +198,15 @@ public class LivePartyStateMergeTest
 	@Test
 	public void projectionTakesOnlyItsOwnFields()
 	{
-		JsonObject full = LiveParty.toWire(gson.toJsonTree(snapshot()).getAsJsonObject());
+		JsonObject full = LiveStateCodec.toWire(gson.toJsonTree(snapshot()).getAsJsonObject());
 
-		JsonObject items = LiveParty.project(full, LiveParty.ITEM_FIELDS);
+		JsonObject items = LiveStateCodec.project(full, LiveStateCodec.ITEM_FIELDS);
 		assertTrue(items.has("iv"));
 		assertTrue(items.has("eq"));
 		assertFalse(items.has("sk"));
 		assertFalse(items.has("hp"));
 
-		JsonObject profile = LiveParty.project(full, LiveParty.PROFILE_FIELDS);
+		JsonObject profile = LiveStateCodec.project(full, LiveStateCodec.PROFILE_FIELDS);
 		assertTrue(profile.has("n"));
 		assertTrue(profile.has("wd"));
 		assertFalse(profile.has("iv"));
@@ -212,14 +216,14 @@ public class LivePartyStateMergeTest
 	@Test
 	public void projectionOfNothingIsEmpty()
 	{
-		assertEquals(0, LiveParty.project(null, LiveParty.ITEM_FIELDS).size());
+		assertEquals(0, LiveStateCodec.project(null, LiveStateCodec.ITEM_FIELDS).size());
 	}
 
 	/** Killcount is dead weight on the wire and must not be serialised at all. */
 	@Test
 	public void killcountNeverReachesTheWire()
 	{
-		JsonObject full = LiveParty.toWire(gson.toJsonTree(snapshot()).getAsJsonObject());
+		JsonObject full = LiveStateCodec.toWire(gson.toJsonTree(snapshot()).getAsJsonObject());
 
 		assertFalse(full.has("killCount"));
 		assertFalse(full.has("hardModeKillCount"));

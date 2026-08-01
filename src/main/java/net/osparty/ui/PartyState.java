@@ -13,7 +13,6 @@ import net.runelite.client.config.ConfigManager;
  */
 class PartyState
 {
-	/** ConfigManager keys for the persisted host credential and the ad it belongs to. */
 	private static final String KEY_HOST_KEY = "hostKey";
 	private static final String KEY_HOST_KEY_AD = "hostKeyPartyId";
 	/** Persisted with the credential so a resumed host keeps advertising the CoX layout. */
@@ -109,20 +108,15 @@ class PartyState
 		currentAd = ad;
 		host = false;
 		advertiseLayout = false;
+		hostKey = null;
+		forgetHostKey();
 		fire();
 	}
 
 	/** Step down from host to member after transferring the party; drops and unpersists the host key. */
 	void demoteToMember(Advertisement ad)
 	{
-		currentAd = ad;
-		host = false;
-		advertiseLayout = false;
-		hostKey = null;
-		configManager.unsetConfiguration(OSPartyConfig.GROUP, KEY_HOST_KEY);
-		configManager.unsetConfiguration(OSPartyConfig.GROUP, KEY_HOST_KEY_AD);
-		configManager.unsetConfiguration(OSPartyConfig.GROUP, KEY_ADVERTISE_LAYOUT);
-		fire();
+		setMember(ad);
 	}
 
 	/** Replace the current ad (e.g. after a roster change), keeping the role. */
@@ -138,11 +132,16 @@ class PartyState
 		host = false;
 		advertiseLayout = false;
 		hostKey = null;
-		// The party is over; drop the persisted credential so it isn't resumed later.
+		forgetHostKey();
+		fire();
+	}
+
+	/** Drop the persisted host credential so a party we no longer host can't be resumed later. */
+	private void forgetHostKey()
+	{
 		configManager.unsetConfiguration(OSPartyConfig.GROUP, KEY_HOST_KEY);
 		configManager.unsetConfiguration(OSPartyConfig.GROUP, KEY_HOST_KEY_AD);
 		configManager.unsetConfiguration(OSPartyConfig.GROUP, KEY_ADVERTISE_LAYOUT);
-		fire();
 	}
 
 	private void fire()

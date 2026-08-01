@@ -27,7 +27,7 @@ final class TabIcons
 	 * Shared canvas size (px) every tab icon is centred into, so all tabs render the same size.
 	 * Kept at 16: larger tips the five-tab in-party bar over the sidebar width, wrapping a tab off-screen.
 	 */
-	static final int BOX = 16;
+	private static final int BOX = 16;
 
 	/** Tab icon size in px. A touch larger than {@link StatusIcons} so tabs stay easy to hit. */
 	private static final int SIZE = 16;

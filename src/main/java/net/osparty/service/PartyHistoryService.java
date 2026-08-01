@@ -2,11 +2,6 @@ package net.osparty.service;
 
 import com.google.gson.Gson;
 import java.io.File;
-import java.io.IOException;
-import java.io.Reader;
-import java.io.Writer;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Iterator;
@@ -15,19 +10,18 @@ import java.util.Objects;
 import java.util.function.IntSupplier;
 import javax.inject.Inject;
 import javax.inject.Singleton;
-import lombok.extern.slf4j.Slf4j;
 import net.osparty.OSPartyConfig;
 import net.osparty.model.HistoryMember;
 import net.osparty.model.Member;
 import net.osparty.model.Advertisement;
 import net.osparty.model.PartyHistoryEntry;
+import net.osparty.store.JsonFile;
 import net.runelite.client.RuneLite;
 
 /**
  * Local, capped log of past parties, persisted as {@code <runelite>/osparty/history.json} (newest
  * first, trimmed to {@link OSPartyConfig#partyHistoryLimit()} on write). Guarded by the instance monitor.
  */
-@Slf4j
 @Singleton
 public class PartyHistoryService
 {
@@ -36,9 +30,7 @@ public class PartyHistoryService
 	/** Absolute ceiling regardless of config, so a bad value can't grow the file unboundedly. */
 	private static final int MAX_LIMIT = 500;
 
-	/** Derived from the client's shared Gson (never a fresh instance — the Plugin Hub forbids that). */
-	private final Gson gson;
-	private final File file;
+	private final JsonFile<Data> store;
 	private final IntSupplier limitSupplier;
 	/** Newest first. Guarded by the instance monitor. */
 	private final List<PartyHistoryEntry> entries = new ArrayList<>();
@@ -52,21 +44,22 @@ public class PartyHistoryService
 	/** Test/embeddable entry point: store in {@code dir}, taking the cap from {@code limitSupplier}. */
 	public PartyHistoryService(File dir, IntSupplier limitSupplier, Gson gson)
 	{
-		if (!dir.exists() && !dir.mkdirs())
-		{
-			throw new IllegalStateException("Could not create OSParty data dir: " + dir);
-		}
-		this.gson = gson.newBuilder().setPrettyPrinting().create();
-		this.file = new File(dir, FILE_NAME);
+		this.store = new JsonFile<>(dir, FILE_NAME, Data.class, SCHEMA_VERSION, gson);
 		this.limitSupplier = limitSupplier;
 		load();
 	}
 
 	/** On-disk shape: a version tag plus the ordered entries (newest first). */
-	private static final class Data
+	private static final class Data implements JsonFile.Versioned
 	{
 		int version = SCHEMA_VERSION;
 		List<PartyHistoryEntry> entries = new ArrayList<>();
+
+		@Override
+		public int version()
+		{
+			return version;
+		}
 	}
 
 	/** Record that the player just entered the party behind {@code ad}. No-op for null or an already-recorded party. */
@@ -345,29 +338,17 @@ public class PartyHistoryService
 	private void load()
 	{
 		entries.clear();
-		if (!file.exists())
+		Data data = store.read();
+		if (data != null && data.entries != null)
 		{
-			return;
-		}
-		try (Reader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8))
-		{
-			Data data = gson.fromJson(reader, Data.class);
-			if (data != null && data.entries != null)
+			for (PartyHistoryEntry e : data.entries)
 			{
-				for (PartyHistoryEntry e : data.entries)
+				if (e != null)
 				{
-					if (e != null)
-					{
-						migrate(e);
-						entries.add(e);
-					}
+					migrate(e);
+					entries.add(e);
 				}
 			}
-		}
-		catch (Exception e)
-		{
-			log.warn("OSParty: could not read {}, starting with empty history", file, e);
-			entries.clear();
 		}
 		// Honour a limit that may have been lowered since the file was written.
 		trim();
@@ -394,13 +375,6 @@ public class PartyHistoryService
 	{
 		Data data = new Data();
 		data.entries.addAll(entries);
-		try (Writer writer = Files.newBufferedWriter(file.toPath(), StandardCharsets.UTF_8))
-		{
-			gson.toJson(data, writer);
-		}
-		catch (IOException e)
-		{
-			log.warn("OSParty: failed to write {}", file, e);
-		}
+		store.write(data);
 	}
 }

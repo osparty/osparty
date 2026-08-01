@@ -9,14 +9,22 @@ import javax.swing.Scrollable;
 /**
  * A column that fills the scroll viewport's width so rows never clip horizontally: a plain JPanel
  * view gets its preferred width inside a JScrollPane, so with HORIZONTAL_SCROLLBAR_NEVER any row
- * wider than the sidebar silently disappears under the vertical scrollbar. PartyPanel and
- * SearchPanel carry private copies of this predating it; new panels should use this one.
+ * wider than the sidebar silently disappears under the vertical scrollbar.
  */
 class ScrollableColumn extends JPanel implements Scrollable
 {
+	/** Block scroll step in px, or 0 to page by the visible height. */
+	private final int blockIncrement;
+
 	ScrollableColumn(LayoutManager layout)
 	{
+		this(layout, 0);
+	}
+
+	ScrollableColumn(LayoutManager layout, int blockIncrement)
+	{
 		super(layout);
+		this.blockIncrement = blockIncrement;
 	}
 
 	@Override
@@ -34,7 +42,7 @@ class ScrollableColumn extends JPanel implements Scrollable
 	@Override
 	public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction)
 	{
-		return visibleRect.height;
+		return blockIncrement > 0 ? blockIncrement : visibleRect.height;
 	}
 
 	@Override

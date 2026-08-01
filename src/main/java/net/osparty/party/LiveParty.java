@@ -1,9 +1,7 @@
 package net.osparty.party;
 
 import com.google.gson.Gson;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.annotations.SerializedName;
 import java.awt.Color;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -19,6 +17,23 @@ import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
 import net.osparty.OSPartyConfig;
 import net.osparty.model.Member;
+import net.osparty.party.LiveFrames.CapacityFrame;
+import net.osparty.party.LiveFrames.CommandFrame;
+import net.osparty.party.LiveFrames.DiscordFrame;
+import net.osparty.party.LiveFrames.HeartbeatFrame;
+import net.osparty.party.LiveFrames.HelloFrame;
+import net.osparty.party.LiveFrames.HostFrame;
+import net.osparty.party.LiveFrames.JoinFrame;
+import net.osparty.party.LiveFrames.JoinPromptFrame;
+import net.osparty.party.LiveFrames.LeaveFrame;
+import net.osparty.party.LiveFrames.LockedFrame;
+import net.osparty.party.LiveFrames.MetaFrame;
+import net.osparty.party.LiveFrames.PingFrame;
+import net.osparty.party.LiveFrames.ReadyFrame;
+import net.osparty.party.LiveFrames.ReadyStartFrame;
+import net.osparty.party.LiveFrames.SpecDrainFrame;
+import net.osparty.party.LiveFrames.TransferHostFrame;
+import net.osparty.party.LiveFrames.UpdateFrame;
 import net.osparty.tools.PersonalBests;
 import net.runelite.api.Client;
 import net.runelite.api.Skill;
@@ -29,7 +44,7 @@ import net.runelite.client.eventbus.EventBus;
 /**
  * The live party, over OSParty's own endpoint ({@link LivePartyChannel}). The roster is server-authoritative
  * (received in {@code roster} frames); live member state is a relayed {@link PlayerUpdate}, sent as the
- * parts that changed and merged on receipt. See PARTY_V2_MIGRATION.md.
+ * parts that changed and merged on receipt.
  *
  * <p>Everything the party does goes through here: host and join, live state, admission and kick, map pings,
  * ready checks, spec drains, friends-chat prompts and the host-transfer handshake.
@@ -49,60 +64,6 @@ public class LiveParty implements LivePartyBackend {
 	private static final int RUN_ENERGY_STEP = 5;
 
 	/**
-	 * The item fields sent slot by slot rather than whole. An items frame used to carry all 28 inventory
-	 * slots, all 28 quantities and all 14 worn slots whenever any one of them moved — some 570 bytes to say
-	 * a shark was eaten. These three go out as an object of the slots that changed, which peers accumulate
-	 * (see {@link #merge}); the rune pouch keeps its array, being three entries at most and rarely touched.
-	 */
-	/**
-	 * Long field name to short wire name, for everything a live frame can carry.
-	 *
-	 * <p>The translation lives here rather than on {@link PlayerUpdate} because that class is also
-	 * registered with RuneLite's own party relay, whose wire this plugin does not own and must not move: a
-	 * renamed field would make an updated client invisible to every peer that had not updated. Shortening
-	 * buys nothing there in any case — that relay is RuneLite's server. It buys a great deal here.
-	 */
-	private static final Map<String, String> TO_WIRE = Map.ofEntries(
-		Map.entry("name", "n"), Map.entry("accountHash", "ah"), Map.entry("combatLevel", "cl"),
-		Map.entry("equipment", "eq"), Map.entry("inventory", "iv"), Map.entry("inventoryQuantities", "iq"),
-		Map.entry("runePouch", "rp"), Map.entry("runePouchAmounts", "ra"), Map.entry("runePouchNames", "rn"),
-		Map.entry("stats", "sk"), Map.entry("currentHp", "hp"), Map.entry("maxHp", "mh"),
-		Map.entry("currentPrayer", "pr"), Map.entry("maxPrayer", "mp"), Map.entry("specialPercent", "sp"),
-		Map.entry("runEnergy", "re"), Map.entry("spellbook", "sb"), Map.entry("accountType", "at"),
-		Map.entry("role", "ro"), Map.entry("learner", "ln"), Map.entry("teacher", "te"),
-		Map.entry("invited", "in"), Map.entry("pbSeconds", "pb"), Map.entry("world", "wd"),
-		Map.entry("friendsChatOwner", "fc"), Map.entry("hideInventory", "hi"), Map.entry("hideGear", "hg"));
-
-	/** The same the other way, for reading a peer's frame back into a {@link PlayerUpdate}. */
-	private static final Map<String, String> FROM_WIRE = TO_WIRE.entrySet().stream()
-		.collect(java.util.stream.Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
-
-	/** How many slots each sparse item field expands back to. */
-	private static final Map<String, Integer> SLOT_LENGTHS = Map.of("iv", 28, "iq", 28, "eq", 14);
-
-	private static final java.util.Set<String> SLOT_FIELDS = java.util.Set.of("iv", "iq", "eq");
-	/**
-	 * What a slot holds when the frame does not mention it, matching {@link SlotMap}: an
-	 * empty inventory or equipment slot, and a stack of one — which is what an ordinary non-stackable item
-	 * has, and so the single most common value on the wire.
-	 */
-	private static final Map<String, Integer> SLOT_ABSENT = Map.of("iv", -1, "iq", 1, "eq", -1);
-
-	/** Fields carried by an {@code items} frame — everything gated by the two privacy toggles. */
-	static final String[] ITEM_FIELDS = {
-		"eq", "iv", "iq", "rp", "ra", "rn", "hi", "hg",
-	};
-
-	/**
-	 * Fields carried by a {@code profile} frame: identity, caps and self-reported flags. All of it changes
-	 * on login, a world hop, a level-up or a deliberate act — never on a tick.
-	 */
-	static final String[] PROFILE_FIELDS = {
-		"n", "ah", "cl", "mh", "mp", "sb", "sk", "at", "wd", "fc", "pb", "ro", "ln", "te", "in",
-		// Unshortened, deliberately: peers running an older build read it by this name.
-		"memberId",
-	};
-	/**
 	 * How often to prove we are still here when we have nothing else to say. Well inside
 	 * {@link #ONLINE_TIMEOUT_MS}, and suppressed whenever any other frame went out in the same window — in
 	 * an active party the state traffic already proves it, so this costs nothing but idle parties.
@@ -112,8 +73,9 @@ public class LiveParty implements LivePartyBackend {
 	private final Client client;
 	private final ConfigManager configManager;
 	private final OSPartyConfig config;
-	private final LivePartyChannel socket;
+	private final LivePartyChannel channel;
 	private final Gson gson;
+	private final LiveStateCodec codec = new LiveStateCodec();
 	/**
 	 * Inbound spec drains, join prompts and host-transfer steps are re-posted here as plain message objects,
 	 * so the plugin's existing subscribers (defence tracker, panel, FC popup) receive them the way they
@@ -161,14 +123,16 @@ public class LiveParty implements LivePartyBackend {
 
 	// The last values we actually put on the wire, which is what "changed" has to be measured against —
 	// not what the client currently reads, and not what we hold for a peer.
-	private int sentHp = -1;
-	private int sentPrayer = -1;
-	private int sentSpec = -1;
-	private int sentRunEnergy = -1;
+	// Written on the client thread but cleared by reset(), which the socket thread reaches through a kick or
+	// a closed roster.
+	private volatile int sentHp = -1;
+	private volatile int sentPrayer = -1;
+	private volatile int sentSpec = -1;
+	private volatile int sentRunEnergy = -1;
 	/** Whether the vitals built for the frame being assembled include one that moved down. Set by {@link #vitals}. */
 	private boolean vitalsUrgent;
-	private int lastSentWorld = -1;
-	private final Map<Skill, Integer> sentRealLevels = new HashMap<>();
+	private volatile int lastSentWorld = -1;
+	private final Map<Skill, Integer> sentRealLevels = new ConcurrentHashMap<>();
 	/** When we last sent anything at all, so the heartbeat only fires in the silence. */
 	private volatile long lastSentAt;
 
@@ -185,7 +149,7 @@ public class LiveParty implements LivePartyBackend {
 	private volatile Runnable onKicked;
 	private final List<TilePing> pings = new CopyOnWriteArrayList<>();
 
-	// ---- ready check (one active per party; same semantics as LiveParty) -----
+	// ---- ready check (one active per party) ---------------------------------
 	private static final long READY_CHECK_TIMEOUT_MS = 30_000;
 	private volatile long readyCheckId;
 	private volatile long readyCheckStartedAt;
@@ -200,11 +164,11 @@ public class LiveParty implements LivePartyBackend {
 
 	@Inject
 	private LiveParty(Client client, ConfigManager configManager, OSPartyConfig config,
-		LivePartyChannel socket, Gson gson, EventBus eventBus) {
+		LivePartyChannel channel, Gson gson, EventBus eventBus) {
 		this.client = client;
 		this.configManager = configManager;
 		this.config = config;
-		this.socket = socket;
+		this.channel = channel;
 		this.gson = gson;
 		this.eventBus = eventBus;
 	}
@@ -212,20 +176,20 @@ public class LiveParty implements LivePartyBackend {
 	// ---- lifecycle ----------------------------------------------------------
 
 	/**
-	 * Wires the socket but does not connect it: there is nothing to relay until we are in a party, and a
-	 * socket held open from plugin start would cost a server session for every logged-in user rather than
-	 * for every user actually partying. {@link #hostParty}/{@link #joinParty} connect; {@link #leave} and
-	 * {@link #end} disconnect.
+	 * Wires the channel but does not attach it: there is nothing to relay until we are in a party, and a
+	 * session held open from plugin start would cost the server one for every logged-in user rather than for
+	 * every user actually partying. {@link #hostParty}/{@link #joinParty} attach; {@link #leave} and
+	 * {@link #end} detach.
 	 */
 	@Override
 	public void register() {
-		socket.setListener(this::onFrame);
-		socket.setOnOpen(this::onOpen);
+		channel.setListener(this::onFrame);
+		channel.setOnOpen(this::onOpen);
 	}
 
 	@Override
 	public void unregister() {
-		socket.detach();
+		channel.detach();
 		reset();
 	}
 
@@ -252,7 +216,7 @@ public class LiveParty implements LivePartyBackend {
 	@Override
 	public void hintLiveNode(String node) {
 		if (node != null && !node.isEmpty()) {
-			socket.hintNode(node);
+			channel.hintNode(node);
 		}
 	}
 
@@ -288,11 +252,12 @@ public class LiveParty implements LivePartyBackend {
 		this.localLearner = learner;
 		this.localTeacher = teacher;
 		markAllDirty();
-		// Connect after the mode is set: whether we arrive connected or not, onOpen is what re-sends this
-		// frame, and it reads mode to decide between host and join. sendHost() below covers the case where
-		// the socket is already up (hosting straight after another party).
-		socket.attach();
-		sendHost();
+		// Attach after the mode is set: attaching announces us, and the announce reads mode to decide between
+		// host and join. It only fires when this attach was the one that connected us, so send the frame
+		// ourselves when it did not (leaveForSwitch leaves us attached already).
+		if (!channel.attach()) {
+			sendHost();
+		}
 		fire();
 	}
 
@@ -313,8 +278,9 @@ public class LiveParty implements LivePartyBackend {
 		this.localLearner = learner;
 		this.localInvited = invited;
 		markAllDirty();
-		socket.attach();
-		sendJoin();
+		if (!channel.attach()) {
+			sendJoin();
+		}
 		fire();
 	}
 
@@ -324,15 +290,14 @@ public class LiveParty implements LivePartyBackend {
 			send(new LeaveFrame());
 		}
 		reset();
-		// After the leave frame: OkHttp transmits what is already queued before it sends the close.
-		socket.detach();
+		channel.detach();
 		fire();
 	}
 
 	@Override
 	public void leaveForSwitch() {
-		// The subsequent join re-keys our session server-side; no explicit leave needed. The socket stays up
-		// for the same reason — stopping it here would only cost the join a reconnect.
+		// The subsequent join re-keys our session server-side; no explicit leave needed. We stay attached for
+		// the same reason: detaching here would only cost the join a reconnect.
 		reset();
 		fire();
 	}
@@ -396,18 +361,12 @@ public class LiveParty implements LivePartyBackend {
 				// Where our room ended up. A host puts it on its advertisement so joiners reach this pod
 				// directly instead of landing anywhere and being redirected off it.
 				if (mode == Mode.HOST && frame.nodeId != null) {
-					socket.publishNode(frame.nodeId);
+					channel.publishNode(frame.nodeId);
 				}
 				fire();
 				break;
 			case "roster":
 				applyRoster(frame);
-				break;
-			case "memberState":
-			case "memberUpdate":
-				if (frame.memberId != null && frame.state != null) {
-					applyState(frame.memberId, frame.state);
-				}
 				break;
 			case "mu":
 				// One window's worth of everyone else's changes, in the order they happened. The owner
@@ -422,7 +381,7 @@ public class LiveParty implements LivePartyBackend {
 				break;
 			case "resync":
 				// Someone was just seated with no picture of the room. The owner keeps no live state, so we
-				// are the only copy of ours (PARTY_V2_OPTIMIZATION.md §5.2).
+				// are the only copy of ours.
 				markAllDirty();
 				break;
 			case "alive":
@@ -489,11 +448,18 @@ public class LiveParty implements LivePartyBackend {
 		}
 		discordUrl = frame.discordUrl;
 		// Refresh our own status from the authoritative roster.
+		java.util.Set<Long> present = new java.util.HashSet<>();
 		for (LivePartyChannel.RosterEntry entry : rosterEntries) {
+			present.add(entry.memberId);
 			if (entry.memberId == localMemberId) {
 				localStatus = parseStatus(entry.status);
 			}
 		}
+		// Member ids are per-connection, so without this every reconnect strands a whole generation of peer
+		// state for the life of the party.
+		playerData.keySet().retainAll(present);
+		rawState.keySet().retainAll(present);
+		lastSeen.keySet().retainAll(present);
 		if (Boolean.TRUE.equals(frame.closed)) {
 			end();
 			return;
@@ -509,14 +475,14 @@ public class LiveParty implements LivePartyBackend {
 	 * simply one the incoming object does not overwrite. Deserialising first and copying fields across would
 	 * lose that distinction entirely, since an omitted int and a zero look identical by then.
 	 *
-	 * <p>The consequence is that a field can never be cleared by leaving it out, which is exactly what
-	 * privacy used to do — hence {@code hideInventory}/{@code hideGear}, applied after the merge.
+	 * <p>The consequence is that a field can never be cleared by leaving it out, which is what
+	 * {@code hideInventory}/{@code hideGear} are for, applied after the merge.
 	 */
 	private void applyState(long memberId, JsonObject state) {
 		PlayerUpdate update;
 		try {
-			JsonObject merged = merge(rawState.get(memberId), state);
-			update = gson.fromJson(fromWire(merged), PlayerUpdate.class);
+			JsonObject merged = LiveStateCodec.merge(rawState.get(memberId), state);
+			update = gson.fromJson(LiveStateCodec.fromWire(merged), PlayerUpdate.class);
 			if (update == null) {
 				return;
 			}
@@ -532,31 +498,6 @@ public class LiveParty implements LivePartyBackend {
 		fire();
 	}
 
-	/** {@code patch} over {@code base}, without mutating either; null base means the patch is the whole. */
-	static JsonObject merge(JsonObject base, JsonObject patch) {
-		if (base == null) {
-			return patch.deepCopy();
-		}
-		JsonObject merged = base.deepCopy();
-		for (Map.Entry<String, JsonElement> field : patch.entrySet()) {
-			JsonElement held = merged.get(field.getKey());
-			// The slot maps are the one place a patch describes part of a field rather than all of it: an
-			// items frame carries the inventory slots that moved, not the inventory. Everything else is
-			// whole, so replacing is right for it and merging would leave stale keys behind forever.
-			if (SLOT_FIELDS.contains(field.getKey())
-				&& held != null && held.isJsonObject() && field.getValue().isJsonObject()) {
-				JsonObject slots = held.getAsJsonObject().deepCopy();
-				for (Map.Entry<String, JsonElement> slot : field.getValue().getAsJsonObject().entrySet()) {
-					slots.add(slot.getKey(), slot.getValue());
-				}
-				merged.add(field.getKey(), slots);
-				continue;
-			}
-			merged.add(field.getKey(), field.getValue());
-		}
-		return merged;
-	}
-
 	/**
 	 * Drop what our own privacy settings withhold, and say so.
 	 *
@@ -569,14 +510,10 @@ public class LiveParty implements LivePartyBackend {
 		update.setHideInventory(hideInventory);
 		update.setHideGear(hideGear);
 		if (hideInventory) {
-			update.setInventory(null);
-			update.setInventoryQuantities(null);
-			update.setRunePouch(null);
-			update.setRunePouchAmounts(null);
-			update.setRunePouchNames(null);
+			clearInventory(update);
 		}
 		if (hideGear) {
-			update.setEquipment(null);
+			clearGear(update);
 		}
 	}
 
@@ -587,15 +524,24 @@ public class LiveParty implements LivePartyBackend {
 	 */
 	static void applyPrivacy(PlayerUpdate update) {
 		if (Boolean.TRUE.equals(update.getHideInventory())) {
-			update.setInventory(null);
-			update.setInventoryQuantities(null);
-			update.setRunePouch(null);
-			update.setRunePouchAmounts(null);
-			update.setRunePouchNames(null);
+			clearInventory(update);
 		}
 		if (Boolean.TRUE.equals(update.getHideGear())) {
-			update.setEquipment(null);
+			clearGear(update);
 		}
+	}
+
+	/** The inventory and everything that travels with it: the rune pouch is carried, so it is inventory too. */
+	private static void clearInventory(PlayerUpdate update) {
+		update.setInventory(null);
+		update.setInventoryQuantities(null);
+		update.setRunePouch(null);
+		update.setRunePouchAmounts(null);
+		update.setRunePouchNames(null);
+	}
+
+	private static void clearGear(PlayerUpdate update) {
+		update.setEquipment(null);
 	}
 
 	private void applyMeta(LivePartyChannel.Frame frame) {
@@ -629,7 +575,7 @@ public class LiveParty implements LivePartyBackend {
 	/** The room is over (host disbanded, or we were kicked): drop the connection with it. */
 	private void end() {
 		reset();
-		socket.detach();
+		channel.detach();
 		Runnable cb = onEnded;
 		if (cb != null) {
 			cb.run();
@@ -686,15 +632,26 @@ public class LiveParty implements LivePartyBackend {
 			// Items and profile are rare by construction; holding them back saves nothing worth having.
 			return true;
 		}
-		int members = rosterEntries.size();
-		int every = Math.max(1, members - 6);
+		// Pending applicants receive no fan-out, so they cost nothing and must not throttle anyone.
+		int every = Math.max(1, admittedCount() - 6);
 		return every == 1 || client.getTickCount() % every == 0;
+	}
+
+	/** Everyone the roster has seated, host included; applicants waiting on admission are not counted. */
+	private int admittedCount() {
+		int admitted = 0;
+		for (LivePartyChannel.RosterEntry entry : rosterEntries) {
+			if (!"PENDING".equals(entry.status)) {
+				admitted++;
+			}
+		}
+		return admitted;
 	}
 
 	/** Every outbound frame goes through here, so the heartbeat knows when it has nothing to add. */
 	private void send(Object frame) {
 		lastSentAt = System.currentTimeMillis();
-		socket.send(frame);
+		channel.send(frame);
 	}
 
 	/**
@@ -751,10 +708,9 @@ public class LiveParty implements LivePartyBackend {
 		return energy / RUN_ENERGY_STEP * RUN_ENERGY_STEP;
 	}
 
-	/** Everything must go: a (re)connect, a fresh party, or a peer asking us to say it all again. */
 	/**
 	 * Everything has to go out again, and whole. Every caller is a moment where somebody holds nothing of
-	 * ours — a fresh party, a reconnect, or a resync for a member who has just been seated — so the slot
+	 * ours (a fresh party, a reconnect, or a resync for a member who has just been seated) so the slot
 	 * baseline goes with the flags: sending them a difference against a picture they never received would
 	 * leave them looking at an inventory made of gaps.
 	 */
@@ -762,7 +718,7 @@ public class LiveParty implements LivePartyBackend {
 		vitalsDirty = true;
 		itemsDirty = true;
 		profileDirty = true;
-		sentSlots.clear();
+		codec.resetSlots();
 	}
 
 	@Override
@@ -806,29 +762,24 @@ public class LiveParty implements LivePartyBackend {
 			update.setTeacher(localTeacher);
 			update.setInvited(localInvited);
 			update.setMemberId(localMemberId);
-			// Onto the wire names here, once: everything downstream — the projections, the merge, our own
-			// stored copy — speaks the short form, and only PlayerUpdate itself needs the long one back.
-			full = toWire(gson.toJsonTree(update).getAsJsonObject());
-			if (localMemberId != 0) {
-				// Our own row is merged exactly as a peer's is, so a partial send updates it the same way.
-				JsonObject merged = merge(rawState.get(localMemberId), full);
-				rawState.put(localMemberId, merged);
-				playerData.put(localMemberId, gson.fromJson(fromWire(merged), PlayerUpdate.class));
-			}
+			// Onto the wire names here, once: everything downstream (the projections, the merge, our own
+			// stored copy) speaks the short form, and only PlayerUpdate itself needs the long one back.
+			full = LiveStateCodec.toWire(gson.toJsonTree(update).getAsJsonObject());
+			echoLocally(full);
 		}
 		JsonObject update = new JsonObject();
 		boolean urgent = false;
 		if (vitalsDirty) {
-			addAll(update, vitals());
+			LiveStateCodec.addAll(update, vitals());
 			urgent = vitalsUrgent;
 		}
 		if (itemsDirty) {
-			JsonObject items = project(full, ITEM_FIELDS);
-			sparsify(items);
-			addAll(update, items);
+			JsonObject items = LiveStateCodec.project(full, LiveStateCodec.ITEM_FIELDS);
+			codec.sparsify(items);
+			LiveStateCodec.addAll(update, items);
 		}
 		if (profileDirty) {
-			addAll(update, project(full, PROFILE_FIELDS));
+			LiveStateCodec.addAll(update, LiveStateCodec.project(full, LiveStateCodec.PROFILE_FIELDS));
 			lastSentWorld = localWorld;
 			rememberRealLevels();
 		}
@@ -842,113 +793,14 @@ public class LiveParty implements LivePartyBackend {
 		fire();
 	}
 
-	/**
-	 * Rewrite the whole-array item fields as the slots that actually moved.
-	 *
-	 * <p>An items frame is sent because one thing changed — a shark eaten, a brew sipped — and used to carry
-	 * every slot of all three arrays to say so. Peers merge these fields slot by slot ({@link #merge}), so
-	 * only the difference has to travel.
-	 *
-	 * <p>A slot that changed <em>to</em> its absent value is still named: absent means the default only until
-	 * a value has been seen, after which the peer holds the old one and has to be told it is gone. Without a
-	 * baseline — the first send of a party, and the first after a resync — everything is named except the
-	 * slots already at their default, which is the same picture written the short way.
-	 */
-	private void sparsify(JsonObject items) {
-		for (String field : SLOT_FIELDS) {
-			JsonElement value = items.get(field);
-			if (value == null || !value.isJsonArray()) {
-				// Withheld by a privacy toggle, or already sparse. Either way there is nothing to compare.
-				sentSlots.remove(field);
-				continue;
-			}
-			com.google.gson.JsonArray array = value.getAsJsonArray();
-			int[] current = new int[array.size()];
-			for (int i = 0; i < current.length; i++) {
-				current[i] = array.get(i).getAsInt();
-			}
-			int[] previous = sentSlots.put(field, current);
-			int absent = SLOT_ABSENT.get(field);
-			JsonObject changed = new JsonObject();
-			for (int i = 0; i < current.length; i++) {
-				boolean send = previous == null || previous.length != current.length
-					? current[i] != absent
-					: current[i] != previous[i];
-				if (send) {
-					changed.addProperty(Integer.toString(i), current[i]);
-				}
-			}
-			items.add(field, changed);
+	/** Fold what we are about to send into our own row, merged exactly as a peer's frame would be. */
+	private void echoLocally(JsonObject wire) {
+		if (localMemberId == 0) {
+			return;
 		}
-	}
-
-	/**
-	 * Everything we have to compare against to send only what moved. Cleared whenever the next frame has to
-	 * carry the whole picture: a reconnect, or a resync for somebody who has just been seated and holds
-	 * nothing of ours.
-	 */
-	private final Map<String, int[]> sentSlots = new java.util.concurrent.ConcurrentHashMap<>();
-
-	/** Rename a whole snapshot's fields to their wire names. Fields with no short name are left alone. */
-	static JsonObject toWire(JsonObject src) {
-		JsonObject out = new JsonObject();
-		for (Map.Entry<String, JsonElement> field : src.entrySet()) {
-			out.add(TO_WIRE.getOrDefault(field.getKey(), field.getKey()), field.getValue());
-		}
-		return out;
-	}
-
-	/**
-	 * Turn an accumulated wire snapshot back into something {@link PlayerUpdate} can be read from: long
-	 * names again, and the sparse item fields expanded to the fixed-length arrays a caller indexes by slot.
-	 */
-	static JsonObject fromWire(JsonObject src) {
-		JsonObject out = new JsonObject();
-		for (Map.Entry<String, JsonElement> field : src.entrySet()) {
-			String key = field.getKey();
-			JsonElement value = field.getValue();
-			if (SLOT_FIELDS.contains(key) && value.isJsonObject()) {
-				value = expandSlots(key, value.getAsJsonObject());
-			}
-			out.add(FROM_WIRE.getOrDefault(key, key), value);
-		}
-		return out;
-	}
-
-	/**
-	 * A slot map back to its array. Slots nobody mentioned take the absent value — an empty inventory or
-	 * equipment slot, or a stack of one, which is what an ordinary non-stackable item has and so the single
-	 * most common value on the wire.
-	 */
-	private static com.google.gson.JsonArray expandSlots(String field, JsonObject slots) {
-		int length = SLOT_LENGTHS.get(field);
-		int absent = SLOT_ABSENT.get(field);
-		int[] values = new int[length];
-		java.util.Arrays.fill(values, absent);
-		for (Map.Entry<String, JsonElement> slot : slots.entrySet()) {
-			try {
-				int index = Integer.parseInt(slot.getKey());
-				if (index >= 0 && index < length) {
-					values[index] = slot.getValue().getAsInt();
-				}
-			}
-			catch (RuntimeException ignored) {
-				// A key that is not a slot number, or a value that is not one: skip it rather than lose
-				// the rest of the inventory to one bad entry.
-			}
-		}
-		com.google.gson.JsonArray out = new com.google.gson.JsonArray(length);
-		for (int value : values) {
-			out.add(value);
-		}
-		return out;
-	}
-
-	/** Copy every field of {@code src} onto {@code target}, overwriting. */
-	private static void addAll(JsonObject target, JsonObject src) {
-		for (Map.Entry<String, JsonElement> field : src.entrySet()) {
-			target.add(field.getKey(), field.getValue());
-		}
+		JsonObject merged = LiveStateCodec.merge(rawState.get(localMemberId), wire);
+		rawState.put(localMemberId, merged);
+		playerData.put(localMemberId, gson.fromJson(LiveStateCodec.fromWire(merged), PlayerUpdate.class));
 	}
 
 	/** The four numbers that actually move, and nothing else. Built without a full snapshot. */
@@ -965,18 +817,14 @@ public class LiveParty implements LivePartyBackend {
 		sentPrayer = prayer;
 		sentSpec = spec;
 		sentRunEnergy = runEnergy();
-		// Short keys, matching PlayerUpdate's @SerializedName: this frame is four small integers and was
-		// mostly the words describing them.
+		// Short keys, as named by LiveStateCodec.TO_WIRE: this frame is four small integers and would
+		// otherwise be mostly the words describing them.
 		JsonObject out = new JsonObject();
 		out.addProperty("hp", sentHp);
 		out.addProperty("pr", sentPrayer);
 		out.addProperty("sp", sentSpec);
 		out.addProperty("re", sentRunEnergy);
-		if (localMemberId != 0) {
-			JsonObject merged = merge(rawState.get(localMemberId), out);
-			rawState.put(localMemberId, merged);
-			playerData.put(localMemberId, gson.fromJson(fromWire(merged), PlayerUpdate.class));
-		}
+		echoLocally(out);
 		return out;
 	}
 
@@ -992,24 +840,9 @@ public class LiveParty implements LivePartyBackend {
 		}
 	}
 
-	/** The named fields of {@code src}, skipping any it does not carry. */
-	static JsonObject project(JsonObject src, String[] fields) {
-		JsonObject out = new JsonObject();
-		if (src == null) {
-			return out;
-		}
-		for (String field : fields) {
-			JsonElement value = src.get(field);
-			if (value != null) {
-				out.add(field, value);
-			}
-		}
-		return out;
-	}
-
 	@Override
 	public void markLocalDirty() {
-		// The catch-all, and the only caller is a privacy toggle — which changes what the item frame is
+		// The catch-all, and the only caller is a privacy toggle, which changes what the item frame is
 		// allowed to carry. Marking everything would be safe but would re-send the profile for nothing.
 		itemsDirty = true;
 	}
@@ -1023,9 +856,7 @@ public class LiveParty implements LivePartyBackend {
 		offline.addProperty("n", name);
 		offline.addProperty("wd", 0);
 		offline.addProperty("memberId", localMemberId);
-		JsonObject merged = merge(rawState.get(localMemberId), offline);
-		rawState.put(localMemberId, merged);
-		playerData.put(localMemberId, gson.fromJson(fromWire(merged), PlayerUpdate.class));
+		echoLocally(offline);
 		// Urgent: rare, and a peer showing someone as still present after they logged out is the kind of
 		// staleness the idle window is not allowed to cause.
 		send(new UpdateFrame(offline, true));
@@ -1138,16 +969,7 @@ public class LiveParty implements LivePartyBackend {
 
 	@Override
 	public boolean canAdmitMore() {
-		if (capacity <= 0) {
-			return true;
-		}
-		int admitted = 0;
-		for (LivePartyChannel.RosterEntry entry : rosterEntries) {
-			if (!"PENDING".equals(entry.status)) {
-				admitted++;
-			}
-		}
-		return admitted < capacity;
+		return capacity <= 0 || admittedCount() < capacity;
 	}
 
 	@Override
@@ -1437,7 +1259,7 @@ public class LiveParty implements LivePartyBackend {
 		// queue to be re-admitted one by one. Admission is client-asserted either way (the server takes
 		// `invited` on trust), so this claims nothing an ordinary reconnect could not already claim.
 		boolean admitted = localInvited || localStatus == PartyStatus.MEMBER;
-		send(new JoinFrame(roomKey, currentActivityId, localRole, localLearner, admitted,
+		send(new JoinFrame(roomKey, currentActivityId, localRole, localLearner, localTeacher, admitted,
 			localName, localAccountHash));
 	}
 
@@ -1617,8 +1439,7 @@ public class LiveParty implements LivePartyBackend {
 		catch (IllegalArgumentException e) {
 			return;
 		}
-		eventBus.post(new SpecDrainEvent(
-			frame.memberId == null ? 0 : frame.memberId,
+		eventBus.post(new SpecDrainEvent(frame.memberId,
 			frame.npcIndex == null ? -1 : frame.npcIndex, weapon,
 			frame.hit == null ? 0 : frame.hit, frame.world == null ? 0 : frame.world));
 	}
@@ -1626,16 +1447,11 @@ public class LiveParty implements LivePartyBackend {
 	// ---- friends-chat / join prompts ----------------------------------------
 
 	@Override
-	public void requestFriendsChat(long targetMemberId, String friendsChat) {
-		sendJoinPrompt(targetMemberId, "FC", friendsChat);
-	}
-
-	@Override
 	public void sendJoinPrompt(long targetMemberId, String kind, String friendsChat) {
 		if (mode != Mode.HOST) {
 			return;
 		}
-		send(new FcRequestFrame(targetMemberId, kind, friendsChat));
+		send(new JoinPromptFrame(targetMemberId, kind, friendsChat));
 	}
 
 	private void applyJoinPrompt(LivePartyChannel.Frame frame) {
@@ -1715,265 +1531,9 @@ public class LiveParty implements LivePartyBackend {
 		eventBus.post(message);
 	}
 
-	// ---- P3 remainder -------------------------------------------------------
-
 	@Override
 	public void generatePassphrase(Consumer<String> onGenerated) {
 		String token = java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12);
 		SwingUtilities.invokeLater(() -> onGenerated.accept(token));
-	}
-
-	// ---- outbound frame shapes (Gson omits nulls) ---------------------------
-
-	private static final class HelloFrame {
-		@SerializedName("t")
-		final String type = "hello";
-		final long accountHash;
-		final String name;
-
-		HelloFrame(long accountHash, String name) {
-			this.accountHash = accountHash;
-			this.name = name;
-		}
-	}
-
-	private static final class HostFrame {
-		@SerializedName("t")
-		final String type = "host";
-		final String room;
-		final String hostName;
-		final String activityId;
-		final Integer capacity;
-		final Boolean locked;
-		final String role;
-		final Boolean learner;
-		final Boolean teacher;
-		final long accountHash;
-
-		HostFrame(String room, String hostName, String activityId, int capacity, boolean locked, String role,
-			boolean learner, boolean teacher, long accountHash) {
-			this.room = room;
-			this.hostName = hostName;
-			this.activityId = activityId;
-			this.capacity = capacity;
-			this.locked = locked;
-			this.role = role;
-			this.learner = learner;
-			this.teacher = teacher;
-			this.accountHash = accountHash;
-		}
-	}
-
-	private static final class JoinFrame {
-		@SerializedName("t")
-		final String type = "join";
-		final String room;
-		final String activityId;
-		final String role;
-		final Boolean learner;
-		final Boolean invited;
-		final String name;
-		final long accountHash;
-
-		JoinFrame(String room, String activityId, String role, boolean learner, boolean invited, String name,
-			long accountHash) {
-			this.room = room;
-			this.activityId = activityId;
-			this.role = role;
-			this.learner = learner;
-			this.invited = invited;
-			this.name = name;
-			this.accountHash = accountHash;
-		}
-	}
-
-	/** Proof of life for an idle party; carries nothing else. The server relays it to peers as {@code alive}. */
-	private static final class HeartbeatFrame {
-		@SerializedName("t")
-		final String type = "heartbeat";
-	}
-
-	/**
-	 * One live update, carrying whichever parts changed this tick.
-	 *
-	 * <p>The parts are chosen by how often they move — vitals every tick or two, items on a swap, profile
-	 * almost never — but they travel together, because the cost of a frame is dominated by serialising it and
-	 * writing it once per peer, not by its size. Splitting a tick that changed two things into two frames
-	 * measurably raised CPU for no benefit; the saving was always in what the payload leaves out.
-	 *
-	 * <p>Its own {@code type}, not {@code state}: a client from before the split dispatches on type and
-	 * ignores what it does not know, so it sees a peer go stale rather than parsing a partial update as a
-	 * whole one and blanking their gear (PARTY_V2_OPTIMIZATION.md §8).
-	 */
-	private static final class UpdateFrame {
-		@SerializedName("t")
-		final String type = "update";
-		@SerializedName("s")
-		final Object state;
-		/**
-		 * Ask the owner node to relay this one without waiting out its idle window. Null when it can wait, so
-		 * the field is simply absent from the ordinary frame.
-		 *
-		 * <p>A field of the frame rather than of {@link #state}: the server must stay blind to what a member
-		 * is reporting, and this tells it only how soon the report is wanted.
-		 */
-		@SerializedName("g")
-		final Boolean urgent;
-
-		UpdateFrame(Object state) {
-			this(state, false);
-		}
-
-		UpdateFrame(Object state, boolean urgent) {
-			this.state = state;
-			this.urgent = urgent ? Boolean.TRUE : null;
-		}
-	}
-
-	private static final class PingFrame {
-		@SerializedName("t")
-		final String type = "ping";
-		final int x;
-		final int y;
-		final int plane;
-		final int color;
-		final String name;
-
-		PingFrame(int x, int y, int plane, int color, String name) {
-			this.x = x;
-			this.y = y;
-			this.plane = plane;
-			this.color = color;
-			this.name = name;
-		}
-	}
-
-	private static final class CommandFrame {
-		@SerializedName("t")
-		final String type = "command";
-		final String action;
-		final long target;
-		final String name;
-
-		CommandFrame(String action, long target, String name) {
-			this.action = action;
-			this.target = target;
-			this.name = name;
-		}
-	}
-
-	private static final class CapacityFrame {
-		@SerializedName("t")
-		final String type = "setCapacity";
-		final int capacity;
-
-		CapacityFrame(int capacity) {
-			this.capacity = capacity;
-		}
-	}
-
-	private static final class LockedFrame {
-		@SerializedName("t")
-		final String type = "setLocked";
-		final boolean locked;
-
-		LockedFrame(boolean locked) {
-			this.locked = locked;
-		}
-	}
-
-	private static final class MetaFrame {
-		@SerializedName("t")
-		final String type = "setMeta";
-		final Object meta;
-
-		MetaFrame(Object meta) {
-			this.meta = meta;
-		}
-	}
-
-	private static final class DiscordFrame {
-		@SerializedName("t")
-		final String type = "setDiscord";
-		final String url;
-
-		DiscordFrame(String url) {
-			this.url = url;
-		}
-	}
-
-	private static final class LeaveFrame {
-		@SerializedName("t")
-		final String type = "leave";
-	}
-
-	private static final class ReadyStartFrame {
-		@SerializedName("t")
-		final String type = "readyStart";
-		final long checkId;
-		final String starter;
-
-		ReadyStartFrame(long checkId, String starter) {
-			this.checkId = checkId;
-			this.starter = starter;
-		}
-	}
-
-	private static final class ReadyFrame {
-		@SerializedName("t")
-		final String type = "ready";
-		final long checkId;
-
-		ReadyFrame(long checkId) {
-			this.checkId = checkId;
-		}
-	}
-
-	private static final class SpecDrainFrame {
-		@SerializedName("t")
-		final String type = "specDrain";
-		final int npcIndex;
-		final String weapon;
-		final int hit;
-		final int world;
-
-		SpecDrainFrame(int npcIndex, String weapon, int hit, int world) {
-			this.npcIndex = npcIndex;
-			this.weapon = weapon;
-			this.hit = hit;
-			this.world = world;
-		}
-	}
-
-	private static final class FcRequestFrame {
-		@SerializedName("t")
-		final String type = "fcRequest";
-		final long target;
-		final String kind;
-		final String friendsChat;
-
-		FcRequestFrame(long target, String kind, String friendsChat) {
-			this.target = target;
-			this.kind = kind;
-			this.friendsChat = friendsChat;
-		}
-	}
-
-	private static final class TransferHostFrame {
-		@SerializedName("t")
-		final String type = "transferHost";
-		final String kind;
-		final long target;
-		final String newHostKey;
-		final String newHostName;
-		final boolean hostStays;
-
-		TransferHostFrame(String kind, long target, String newHostKey, String newHostName, boolean hostStays) {
-			this.kind = kind;
-			this.target = target;
-			this.newHostKey = newHostKey;
-			this.newHostName = newHostName;
-			this.hostStays = hostStays;
-		}
 	}
 }

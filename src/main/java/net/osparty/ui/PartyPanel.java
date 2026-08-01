@@ -37,8 +37,6 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Insets;
-import java.awt.LayoutManager;
-import java.awt.Rectangle;
 import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.MouseAdapter;
@@ -68,7 +66,6 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
-import javax.swing.Scrollable;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
@@ -106,7 +103,6 @@ class PartyPanel extends JPanel
 	}
 
 	private final BoardService boardService;
-	private final Supplier<String> playerNameSupplier;
 	private final HostApplicationHandler hostApplicationHandler;
 	private final PartyState partyState;
 	private final ItemManager itemManager;
@@ -179,10 +175,8 @@ class PartyPanel extends JPanel
 	private static final long JOIN_PROMPT_COOLDOWN_MS = 10_000;
 
 	/**
-	 * The freshest ad member list (with server-asserted Discord badges), fetched from
-	 * {@code fetchAdByHost} whenever the roster changes. The stored {@code currentAd} is a
-	 * snapshot from join/create time that never gains later joiners' badges, so without this a
-	 * viewer only ever sees the host's.
+	 * The freshest ad member list (with server-asserted Discord badges), refetched whenever the roster
+	 * changes: {@code currentAd} is a join-time snapshot that never gains later joiners' badges.
 	 */
 	private volatile List<Member> liveAdMembers;
 	private String liveAdBadgeSig = "";
@@ -195,7 +189,11 @@ class PartyPanel extends JPanel
 	/** Memoised orb sprites so a reused/rebuilt vitals row sets its icon synchronously (no flicker). */
 	private final Map<Integer, ImageIcon> orbIconCache = new HashMap<>();
 
-	PartyPanel(BoardService boardService, Supplier<String> playerNameSupplier,
+	/** Keep-alive for our hosted ad, and the faster poll that pushes a changed CoX layout. */
+	private final Timer adHeartbeatTimer;
+	private final Timer coxLayoutTimer;
+
+	PartyPanel(BoardService boardService,
                HostApplicationHandler hostApplicationHandler, PartyState partyState, ItemManager itemManager,
                LivePartyBackend liveParty, RuneWatchService runeWatch, KillcountService killcounts,
                SkillIconManager skillIcons, IntSupplier currentWorld,
@@ -210,7 +208,6 @@ class PartyPanel extends JPanel
 		this.discordLinkedSupplier = discordLinkedSupplier;
 		this.onAuthorizeDiscord = onAuthorizeDiscord;
 		this.accountHashSupplier = accountHashSupplier;
-		this.playerNameSupplier = playerNameSupplier;
 		this.hostApplicationHandler = hostApplicationHandler;
 		this.partyState = partyState;
 		this.itemManager = itemManager;
@@ -267,7 +264,7 @@ class PartyPanel extends JPanel
 		// close the room, which in turn clears every member's tab via the roster logic above.
 		boardService.setOnHostedAdGone(id -> SwingUtilities.invokeLater(() -> onHostedAdGone(id)));
 
-		new Timer(30_000, e -> {
+		adHeartbeatTimer = new Timer(30_000, e -> {
 			if (partyState.isHost() && partyState.getCurrentAd() != null)
 			{
 				boardService.heartbeat(partyState.getCurrentAd().getId(), currentPartySize(),
@@ -275,10 +272,11 @@ class PartyPanel extends JPanel
 					partyState.getHostKey(), ok -> { }, err -> { });
 				verifyAdStillExists();
 			}
-		}).start();
+		});
+		adHeartbeatTimer.start();
 
 		// Push the CoX layout promptly when it changes, not on the 30s keep-alive.
-		new Timer(3_000, e -> {
+		coxLayoutTimer = new Timer(3_000, e -> {
 			if (!partyState.isHost() || partyState.getCurrentAd() == null)
 			{
 				return;
@@ -291,9 +289,18 @@ class PartyPanel extends JPanel
 					currentWorld.getAsInt(), layout, currentNeededRolesParam(), liveParty.rosterMembers(),
 					partyState.getHostKey(), ok -> { }, err -> { });
 			}
-		}).start();
+		});
+		coxLayoutTimer.start();
 
 		refresh();
+	}
+
+	/** Stop the panel's timers so they can't outlive the plugin. Call when the plugin unloads. */
+	void dispose()
+	{
+		adHeartbeatTimer.stop();
+		coxLayoutTimer.stop();
+		readyCheckTicker.stop();
 	}
 
 	private int currentPartySize()
@@ -338,32 +345,6 @@ class PartyPanel extends JPanel
 		return String.join(",", needed);
 	}
 
-	private String neededRolesText(Activity activity, Advertisement ad)
-	{
-		if (activity == null || !activity.hasRoles())
-		{
-			return null;
-		}
-		// From the live roster, so a member who picked a role after joining isn't stuck in "Needs".
-		List<String> needed = liveParty.neededRoles(ad.getRequiredRoles());
-		if (needed == null || needed.isEmpty())
-		{
-			return null;
-		}
-		Map<String, Integer> counts = new java.util.LinkedHashMap<>();
-		for (String id : needed)
-		{
-			counts.merge(id, 1, Integer::sum);
-		}
-		List<String> parts = new ArrayList<>();
-		for (Map.Entry<String, Integer> entry : counts.entrySet())
-		{
-			String name = Role.displayNameOf(entry.getKey());
-			parts.add(entry.getValue() > 1 ? name + " x" + entry.getValue() : name);
-		}
-		return "Needs: " + String.join(", ", parts);
-	}
-
 	void refresh()
 	{
 		content.removeAll();
@@ -377,6 +358,8 @@ class PartyPanel extends JPanel
 			autoDeclinedBlocked.clear();
 			memberEntryCache.clear();
 			memberEntrySig.clear();
+			joinPromptCooldown.clear();
+			readyCheckCountdown = null;
 			liveAdMembers = null;
 			liveAdBadgeSig = "";
 			lastRosterKey = null;
@@ -412,7 +395,8 @@ class PartyPanel extends JPanel
 		// Un-admitted applicants see only a waiting notice, not the party internals.
 		if (!host && !liveParty.isLocalAdmitted())
 		{
-			content.add(subLabel("Waiting for the host to accept you…"));
+			content.add(PanelWidgets.smallLabelLeft("Waiting for the host to accept you…",
+				ColorScheme.LIGHT_GRAY_COLOR));
 			content.add(Box.createVerticalStrut(8));
 			content.add(buildActions(ad, false));
 			content.revalidate();
@@ -431,10 +415,20 @@ class PartyPanel extends JPanel
 			refreshAdBadges();
 		}
 
+		// Applicant intake runs before any row is drawn: it rejects blocklisted applicants and admits
+		// invited ones, so neither is ever painted with a live Accept button.
+		if (host && roster != null)
+		{
+			updatePendingApplicants(roster, activity);
+		}
+		else
+		{
+			hostApplicationHandler.setPendingApplicants(java.util.Collections.emptyList(), null);
+		}
+
 		int admitted = roster == null ? 0
 			: (int) roster.stream().filter(m -> m.getStatus() != PartyStatus.PENDING).count();
 
-		// Push live occupancy to the ad on change.
 		if (host && admitted > 0 && admitted != lastReportedSize)
 		{
 			lastReportedSize = admitted;
@@ -448,22 +442,20 @@ class PartyPanel extends JPanel
 		{
 			spots.append(", W").append(ad.getWorld());
 		}
-		content.add(subLabel(spots.toString()));
+		content.add(PanelWidgets.smallLabelLeft(spots.toString(), ColorScheme.LIGHT_GRAY_COLOR));
 
-		String req = requirementText(activity, ad);
+		String req = AdText.requirementText(activity, ad);
 		if (req != null)
 		{
-			JLabel reqLabel = subLabel(req);
-			reqLabel.setForeground(ColorScheme.PROGRESS_INPROGRESS_COLOR);
-			content.add(reqLabel);
+			content.add(PanelWidgets.smallLabelLeft(req, ColorScheme.PROGRESS_INPROGRESS_COLOR));
 		}
 
-		String needs = neededRolesText(activity, ad);
+		// Needed roles come from the live roster, so a member who picked a role after joining
+		// isn't stuck in "Needs".
+		String needs = AdText.neededRolesText(activity, liveParty.neededRoles(ad.getRequiredRoles()));
 		if (needs != null)
 		{
-			JLabel needsLabel = subLabel(needs);
-			needsLabel.setForeground(ColorScheme.BRAND_ORANGE);
-			content.add(needsLabel);
+			content.add(PanelWidgets.smallLabelLeft(needs, ColorScheme.BRAND_ORANGE));
 		}
 
 		List<String> tags = new ArrayList<>();
@@ -486,7 +478,7 @@ class PartyPanel extends JPanel
 		}
 		if (!tags.isEmpty())
 		{
-			content.add(subLabel(String.join(", ", tags)));
+			content.add(PanelWidgets.smallLabelLeft(String.join(", ", tags), ColorScheme.LIGHT_GRAY_COLOR));
 		}
 
 		if (host && ad.getInviteCode() != null)
@@ -518,7 +510,7 @@ class PartyPanel extends JPanel
 
 		if (roster == null || roster.isEmpty())
 		{
-			content.add(subLabel("Connecting to live room…"));
+			content.add(PanelWidgets.smallLabelLeft("Connecting to live room…", ColorScheme.LIGHT_GRAY_COLOR));
 		}
 		else
 		{
@@ -528,10 +520,11 @@ class PartyPanel extends JPanel
 			Set<Long> seenIds = new HashSet<>();
 			for (RosterMember member : roster)
 			{
-				// Real synced applicants go in their own section below; ignore data-less ghosts.
+				// Real synced applicants go in their own section below; ignore data-less ghosts and
+				// anyone the intake above already rejected (the roster frame confirming it lags).
 				if (member.getStatus() == PartyStatus.PENDING && !member.isLocal())
 				{
-					if (member.getData() != null)
+					if (member.getData() != null && !autoDeclinedBlocked.contains(member.getMemberId()))
 					{
 						anyPending = true;
 					}
@@ -545,10 +538,11 @@ class PartyPanel extends JPanel
 			if (anyPending && host)
 			{
 				content.add(Box.createVerticalStrut(4));
-				content.add(sectionLabel("Pending applicants"));
+				content.add(PanelWidgets.smallLabelLeft("Pending applicants", ColorScheme.BRAND_ORANGE));
 				for (RosterMember member : roster)
 				{
-					if (member.getStatus() == PartyStatus.PENDING && !member.isLocal() && member.getData() != null)
+					if (member.getStatus() == PartyStatus.PENDING && !member.isLocal() && member.getData() != null
+						&& !autoDeclinedBlocked.contains(member.getMemberId()))
 					{
 						seenIds.add(member.getMemberId());
 						content.add(memberEntry(ad, activity, member, true, hostName));
@@ -560,15 +554,9 @@ class PartyPanel extends JPanel
 			// Evict rows for members who have left so the caches can't grow without bound.
 			memberEntryCache.keySet().retainAll(seenIds);
 			memberEntrySig.keySet().retainAll(seenIds);
-		}
-
-		if (host && roster != null)
-		{
-			updatePendingApplicants(roster, activity);
-		}
-		else
-		{
-			hostApplicationHandler.setPendingApplicants(java.util.Collections.emptyList(), null);
+			expanded.retainAll(seenIds);
+			detailTab.keySet().retainAll(seenIds);
+			joinPromptCooldown.keySet().retainAll(seenIds);
 		}
 
 		content.add(Box.createVerticalStrut(8));
@@ -580,10 +568,8 @@ class PartyPanel extends JPanel
 
 	private void updatePendingApplicants(List<RosterMember> roster, Activity activity)
 	{
-		// Forget anyone no longer in the room, so a player who withdraws and applies again is announced
-		// again. Admit/decline already clear their entry, but a self-withdrawal doesn't pass through here,
-		// and a member id is stable for the life of that player's connection — so without this their second
-		// application is silent.
+		// Forget anyone no longer in the room: a member id is stable for the life of that player's
+		// connection, so without this a withdraw-and-reapply would be announced only once.
 		Set<Long> present = new HashSet<>();
 		for (RosterMember member : roster)
 		{
@@ -668,7 +654,7 @@ class PartyPanel extends JPanel
 		String hostName)
 	{
 		long id = member.getMemberId();
-		String sig = memberSignature(ad, activity, member, host);
+		String sig = memberSignature(ad, activity, member, host, hostName);
 		JPanel cached = memberEntryCache.get(id);
 		if (cached != null && sig.equals(memberEntrySig.get(id)))
 		{
@@ -681,7 +667,8 @@ class PartyPanel extends JPanel
 	}
 
 	/** Everything {@link #buildMemberEntry} renders, so a matching signature means an identical row. */
-	private String memberSignature(Advertisement ad, Activity activity, RosterMember member, boolean host)
+	private String memberSignature(Advertisement ad, Activity activity, RosterMember member, boolean host,
+		String hostName)
 	{
 		long id = member.getMemberId();
 		PlayerUpdate data = member.getData();
@@ -706,6 +693,8 @@ class PartyPanel extends JPanel
 			+ "|" + (badges == null ? "" : String.join(",", badges)) + "|" + fcReady
 			+ "|" + (activity == null ? "" : activity.getId())
 			+ "|" + liveParty.getLocalRole() + "|" + liveParty.isLocalLearner()
+			// The host name and our own friends chat drive the row's FC icons and "Request FC" button.
+			+ "|" + hostName + "|" + friendsChatOwnerSupplier.get()
 			+ "|" + (data == null ? 0 : data.hashCode()) + "|" + kcSig;
 	}
 
@@ -715,12 +704,11 @@ class PartyPanel extends JPanel
 		PartyStatus status = member.getStatus();
 		boolean isExpanded = expanded.contains(member.getMemberId());
 
-		JPanel entry = cappedPanel(new BorderLayout(0, 4));
+		JPanel entry = new PanelWidgets.Capped(new BorderLayout(0, 4));
 		entry.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		if (status == PartyStatus.HOST)
 		{
-			// Mark the host with an orange outline (the panel's BRAND_ORANGE accent), not a crown in
-			// front of the name — the crown pushed long (12-char) names with icons off the row.
+			// Orange outline rather than a crown before the name: the crown pushed long names off the row.
 			entry.setBorder(BorderFactory.createCompoundBorder(
 				BorderFactory.createLineBorder(ColorScheme.BRAND_ORANGE, 1),
 				BorderFactory.createEmptyBorder(5, 7, 5, 7)));
@@ -735,8 +723,8 @@ class PartyPanel extends JPanel
 		stack.setLayout(new BoxLayout(stack, BoxLayout.Y_AXIS));
 		stack.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 
-		// ---- primary row: dot · star · name ............ chevron (the one disclosure trigger) ----
-		JPanel topRow = cappedPanel(new BorderLayout(4, 0));
+		// ---- primary row: name ............ badges · chevron (the one disclosure trigger) ----
+		JPanel topRow = new PanelWidgets.Capped(new BorderLayout(4, 0));
 		topRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		topRow.setAlignmentX(Component.LEFT_ALIGNMENT);
 
@@ -744,25 +732,20 @@ class PartyPanel extends JPanel
 		JLabel dot = new JLabel(online ? StatusIcons.ONLINE : StatusIcons.OFFLINE);
 		dot.setToolTipText(online ? "Online" : "Offline");
 
-		// Host is marked by the entry's orange outline (above); name is orange too, no "(host)" text.
 		String tag = status == PartyStatus.PENDING ? " (pending)" : "";
-		JLabel name = new JLabel(member.getName() + tag);
+		JLabel name = new JLabel(displayName(member) + tag);
 		name.setForeground(status == PartyStatus.HOST ? ColorScheme.BRAND_ORANGE
 			: status == PartyStatus.PENDING ? ColorScheme.PROGRESS_INPROGRESS_COLOR : Color.WHITE);
 		applyAccountIcon(name, member.getData());
 
-		// Favourite/block/kick now live on the row's right-click menu (see memberMenu), not as icons.
-		// The online/offline dot moved down to the status line (left of the world), so the name, world
-		// and vitals all share the same left edge.
 		JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
 		((FlowLayout) left.getLayout()).setAlignOnBaseline(true);
 		left.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		// The account-type icon fills its box from the left, but the dot/heart glyphs below carry ~4px of
-		// internal padding — nudge the name in to line the ironman icon up with that left column.
+		// Nudge the name in so the account-type icon lines up with the dot on the status line below.
 		left.setBorder(BorderFactory.createEmptyBorder(0, 4, 0, 0));
 		left.add(name);
 
-		// RuneWatch warning icon, trailing the name (point 31; non-ironman badge dropped).
+		// RuneWatch warning icon, trailing the name.
 		RuneWatchCase flagged = runeWatch.get(member.getName());
 		if (flagged != null)
 		{
@@ -806,21 +789,8 @@ class PartyPanel extends JPanel
 		east.add(chevron);
 		if (host && menu != null)
 		{
-			JLabel kebab = new JLabel(StatusIcons.KEBAB);
-			kebab.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-			kebab.setToolTipText("Member actions");
+			JLabel kebab = PanelWidgets.kebab("Member actions", menu);
 			kebab.setBorder(BorderFactory.createEmptyBorder(0, 2, 0, 2));
-			kebab.addMouseListener(new MouseAdapter()
-			{
-				@Override
-				public void mousePressed(MouseEvent e)
-				{
-					if (SwingUtilities.isLeftMouseButton(e))
-					{
-						menu.show(kebab, 0, kebab.getHeight());
-					}
-				}
-			});
 			east.add(kebab);
 		}
 
@@ -854,9 +824,9 @@ class PartyPanel extends JPanel
 			bits.add("W" + world);
 		}
 
-		// PartyStatus line: the online/offline dot leads (left of the world), left-aligned under the name
-		// above and the vitals below. Leading gap 5 lines the dot glyph up with the ironman-icon/heart column.
-		JPanel metaRow = cappedPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+		// Status line: the presence dot leads, left-aligned under the name above; the leading gap of 5
+		// lines the dot up with the account-type icon.
+		JPanel metaRow = new PanelWidgets.Capped(new FlowLayout(FlowLayout.LEFT, 5, 0));
 		((FlowLayout) metaRow.getLayout()).setAlignOnBaseline(true);
 		metaRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		metaRow.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -864,10 +834,7 @@ class PartyPanel extends JPanel
 		metaRow.add(dot);
 		if (!bits.isEmpty())
 		{
-			JLabel metaLabel = new JLabel(String.join("  ·  ", bits));
-			metaLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-			metaLabel.setFont(FontManager.getRunescapeSmallFont());
-			metaRow.add(metaLabel);
+			metaRow.add(PanelWidgets.smallLabel(String.join("  ·  ", bits), ColorScheme.LIGHT_GRAY_COLOR));
 		}
 		// FC presence only matters for CoX (raid formed via host's FC); hidden elsewhere.
 		boolean showFc = hostName != null && data != null && activity == Activity.CHAMBERS_OF_XERIC;
@@ -879,14 +846,14 @@ class PartyPanel extends JPanel
 				fcLogo.setToolTipText(hostName + "'s friends chat");
 				metaRow.add(fcLogo);
 			}
-			boolean inFc = sameRsn(data.getFriendsChatOwner(), hostName);
+			boolean inFc = AdText.sameName(data.getFriendsChatOwner(), hostName);
 			JLabel fcIcon = new JLabel(inFc ? StatusIcons.CHECK : StatusIcons.CROSS);
 			fcIcon.setToolTipText(inFc
 				? "In " + hostName + "'s friends chat"
 				: "Not in " + hostName + "'s friends chat");
 			metaRow.add(fcIcon);
 		}
-		// Always shown now — it carries the presence dot even when there's no role/world/FC.
+		// Always shown: it carries the presence dot even when there's no role/world/FC.
 		stack.add(metaRow);
 
 		// ---- vitals line: HP · prayer · spec · run energy (always shown once live) ----
@@ -900,7 +867,7 @@ class PartyPanel extends JPanel
 		JComponent actions = buildActionsRow(activity, member, host, hostName);
 		if (actions != null)
 		{
-			JPanel actionRow = cappedPanel(new BorderLayout());
+			JPanel actionRow = new PanelWidgets.Capped(new BorderLayout());
 			actionRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 			actionRow.setAlignmentX(Component.LEFT_ALIGNMENT);
 			actionRow.setBorder(BorderFactory.createEmptyBorder(2, 0, 0, 2));
@@ -919,7 +886,7 @@ class PartyPanel extends JPanel
 		if (menu != null)
 		{
 			entry.setComponentPopupMenu(menu);
-			inheritPopupMenu(entry);
+			PanelWidgets.inheritPopupMenu(entry);
 		}
 
 		return entry;
@@ -956,7 +923,12 @@ class PartyPanel extends JPanel
 		{
 			boolean blocked = blockListService.isBlocked(hash, rsn);
 			JMenuItem blockItem = new JMenuItem(blocked ? "Remove from blocklist" : "Add to blocklist");
-			blockItem.addActionListener(e -> toggleBlock(hash, rsn, blocked));
+			blockItem.addActionListener(e -> {
+				if (BlockConfirm.toggle(this, blockListService, favoritesService, hash, rsn))
+				{
+					refresh();
+				}
+			});
 			menu.add(blockItem);
 			any = true;
 		}
@@ -976,52 +948,25 @@ class PartyPanel extends JPanel
 		return any ? menu : null;
 	}
 
-	/** Toggle a member's block state, confirming before a block and clearing any conflicting favourite. */
-	private void toggleBlock(long hash, String rsn, boolean wasBlocked)
-	{
-		// Confirm the consequences before blocking, but let unblocking happen instantly.
-		if (!wasBlocked && !BlockConfirm.confirm(this, rsn))
-		{
-			return;
-		}
-		blockListService.toggle(hash, rsn);
-		if (!wasBlocked && favoritesService != null && favoritesService.isFavorite(hash, rsn))
-		{
-			favoritesService.toggle(hash, rsn); // blocking and favouriting are mutually exclusive
-		}
-		refresh();
-	}
-
 	/** Kick a member and add them to the block list (host only), confirming the block first. */
 	private void kickAndBlock(Activity activity, RosterMember member, long hash, String rsn)
 	{
-		if (!BlockConfirm.confirm(this, rsn))
+		if (blockListService.isBlocked(hash, rsn))
 		{
-			return;
+			kick(activity, member); // refreshes and sets the status line
 		}
-		if (!blockListService.isBlocked(hash, rsn))
+		else if (BlockConfirm.toggle(this, blockListService, favoritesService, hash, rsn))
 		{
-			blockListService.toggle(hash, rsn);
-			if (favoritesService != null && favoritesService.isFavorite(hash, rsn))
-			{
-				favoritesService.toggle(hash, rsn);
-			}
+			kick(activity, member);
 		}
-		kick(activity, member); // refreshes and sets the status line
 	}
 
-	/** Let every descendant defer its right-click to {@code root}'s component popup menu. */
-	private static void inheritPopupMenu(JComponent root)
+	/** The member's name, or a placeholder while the live room still reports it as unresolved. */
+	private static String displayName(RosterMember member)
 	{
-		for (Component child : root.getComponents())
-		{
-			if (child instanceof JComponent)
-			{
-				JComponent jc = (JComponent) child;
-				jc.setInheritsPopupMenu(true);
-				inheritPopupMenu(jc);
-			}
-		}
+		String name = member.getName();
+		return name == null || name.trim().isEmpty() || "<unknown>".equalsIgnoreCase(name.trim())
+			? "Joining…" : name;
 	}
 
 	/** The member's self-reported accountHash, or {@code 0} until they've synced. */
@@ -1031,10 +976,9 @@ class PartyPanel extends JPanel
 	}
 
 	/**
-	 * Discord-role badges the API asserted for this member on the ad (matched by accountHash,
-	 * then name), or {@code null} when hidden or none. Prefers the freshly-polled ad
-	 * ({@link #liveAdMembers}) so later joiners' badges appear; {@code currentAd} is a snapshot
-	 * from join/create time that only ever reliably carries the host's badge.
+	 * Discord-role badges the API asserted for this member on the ad, or {@code null} when hidden or
+	 * none. Prefers the freshly-polled ad ({@link #liveAdMembers}) so later joiners' badges appear;
+	 * {@code currentAd} is a join-time snapshot that only ever reliably carries the host's badge.
 	 */
 	private List<String> adBadges(Advertisement ad, RosterMember member)
 	{
@@ -1044,43 +988,12 @@ class PartyPanel extends JPanel
 		}
 		long hash = memberHash(member);
 		String name = member.getName();
-		List<String> live = badgesFrom(liveAdMembers, hash, name);
+		List<String> live = AdText.badgesFor(liveAdMembers, hash, name);
 		if (live != null)
 		{
 			return live;
 		}
-		return ad == null ? null : badgesFrom(ad.getMembers(), hash, name);
-	}
-
-	/** Badges for the member matching {@code hash} (then {@code name}) in {@code members}, or null. */
-	private static List<String> badgesFrom(List<Member> members, long hash, String name)
-	{
-		if (members == null)
-		{
-			return null;
-		}
-		if (hash != 0)
-		{
-			for (Member adMember : members)
-			{
-				if (adMember != null && adMember.getAccountHash() == hash)
-				{
-					return adMember.getBadges();
-				}
-			}
-		}
-		if (name != null)
-		{
-			for (Member adMember : members)
-			{
-				if (adMember != null && adMember.getName() != null
-					&& normalizeName(adMember.getName()).equalsIgnoreCase(normalizeName(name)))
-				{
-					return adMember.getBadges();
-				}
-			}
-		}
-		return null;
+		return ad == null ? null : AdText.badgesFor(ad.getMembers(), hash, name);
 	}
 
 	/** Membership key over (partyId, each member's id·status·accountHash); changes on join/leave/admit/hash-resolve. */
@@ -1099,11 +1012,9 @@ class PartyPanel extends JPanel
 	}
 
 	/**
-	 * Keep the ad settings in step with the live room: the host publishes them, everyone else adopts what
-	 * the host published. Our {@link Advertisement} is otherwise the copy taken from the search card when we applied
-	 * (or created it) and is never re-fetched, so a member would keep rendering the description, world,
-	 * requirements and host name as they were at join time however often the host edited them — and after a
-	 * host transfer, every member that wasn't a party to the handshake would keep naming the old host.
+	 * Keep the ad in step with the live room: the host publishes its settings, everyone else adopts them.
+	 * Our {@link Advertisement} is a never-refetched join-time copy, so without this a member would keep
+	 * rendering the party (and after a transfer, the host name) as it was when they joined.
 	 */
 	private void syncPartyMeta(Advertisement ad, boolean host)
 	{
@@ -1176,11 +1087,6 @@ class PartyPanel extends JPanel
 		return sb.toString();
 	}
 
-	private static String normalizeName(String name)
-	{
-		return name.replace(' ', ' ').trim();
-	}
-
 	private MouseAdapter expandOnClick(RosterMember member)
 	{
 		return new MouseAdapter()
@@ -1225,8 +1131,6 @@ class PartyPanel extends JPanel
 			wrap.add(decline);
 			any = true;
 		}
-		// Kick / kick-and-block moved to the row's right-click menu (see memberMenu).
-
 		PlayerUpdate data = member.getData();
 
 		// Per-activity join prompt: CoX = host's FC, ToB = notice board, ToA = Grouping Obelisk.
@@ -1239,8 +1143,8 @@ class PartyPanel extends JPanel
 			if (activity == Activity.CHAMBERS_OF_XERIC)
 			{
 				// Only when the host has an FC open and the member isn't already in it.
-				if (hostName != null && !sameRsn(data.getFriendsChatOwner(), hostName)
-					&& sameRsn(friendsChatOwnerSupplier.get(), hostName))
+				if (hostName != null && !AdText.sameName(data.getFriendsChatOwner(), hostName)
+					&& AdText.sameName(friendsChatOwnerSupplier.get(), hostName))
 				{
 					kind = "FC";
 					label = "Request FC";
@@ -1279,13 +1183,6 @@ class PartyPanel extends JPanel
 		return any ? wrap : null;
 	}
 
-	/** True if two RuneScape names refer to the same account (case- and space-insensitive). */
-	private static boolean sameRsn(String a, String b)
-	{
-		return a != null && b != null && normalizeName(a).equalsIgnoreCase(normalizeName(b));
-	}
-
-
 	private static final Dimension ORB_ICON = new Dimension(14, 14);
 
 	/**
@@ -1309,7 +1206,7 @@ class PartyPanel extends JPanel
 		grid.add(vitalCell(SpriteID.MINIMAP_ORB_RUN_ICON, data.getRunEnergy() + "%",
 			"Run energy"));
 
-		JPanel row = cappedPanel(new BorderLayout(2, 0));
+		JPanel row = new PanelWidgets.Capped(new BorderLayout(2, 0));
 		row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		row.setAlignmentX(Component.LEFT_ALIGNMENT);
 		row.setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 0));
@@ -1415,7 +1312,8 @@ class PartyPanel extends JPanel
 			JPanel waiting = new JPanel(new BorderLayout());
 			waiting.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 			waiting.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
-			waiting.add(detailLeft("Waiting for live data…"), BorderLayout.CENTER);
+			waiting.add(PanelWidgets.smallLabel("Waiting for live data…", ColorScheme.LIGHT_GRAY_COLOR),
+				BorderLayout.CENTER);
 			return waiting;
 		}
 
@@ -1577,8 +1475,8 @@ class PartyPanel extends JPanel
 		detail.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		detail.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
 
-		detail.add(detailLeft("Combat"));
-		detail.add(detailRight(String.valueOf(stats.getCombatLevel())));
+		detail.add(PanelWidgets.smallLabel("Combat", ColorScheme.LIGHT_GRAY_COLOR));
+		detail.add(PanelWidgets.smallLabel(String.valueOf(stats.getCombatLevel()), Color.WHITE));
 
 		// Killcount: live reports carry -1, so fall back to a hiscores lookup by name.
 		int kc = stats.getKillCount();
@@ -1602,27 +1500,27 @@ class PartyPanel extends JPanel
 		String activityName = activity != null ? activity.getDisplayName() : "Activity";
 		if (kc >= 0)
 		{
-			detail.add(detailLeft(activityName + " KC"));
-			detail.add(detailRight(String.valueOf(kc)));
+			detail.add(PanelWidgets.smallLabel(activityName + " KC", ColorScheme.LIGHT_GRAY_COLOR));
+			detail.add(PanelWidgets.smallLabel(String.valueOf(kc), Color.WHITE));
 
 			if (activity != null && activity.hasHardMode() && hardKc >= 0)
 			{
-				detail.add(detailLeft(activity.getHardModeLabel() + " KC"));
-				detail.add(detailRight(String.valueOf(hardKc)));
+				detail.add(PanelWidgets.smallLabel(activity.getHardModeLabel() + " KC", ColorScheme.LIGHT_GRAY_COLOR));
+				detail.add(PanelWidgets.smallLabel(String.valueOf(hardKc), Color.WHITE));
 			}
 		}
 		else if (lookingUp)
 		{
-			detail.add(detailLeft(activityName + " KC"));
-			detail.add(detailRight("looking up…"));
+			detail.add(PanelWidgets.smallLabel(activityName + " KC", ColorScheme.LIGHT_GRAY_COLOR));
+			detail.add(PanelWidgets.smallLabel("looking up…", Color.WHITE));
 		}
 
 		// Personal best (broadcast by the applicant's own client) for timed activities.
 		if (activity != null && PersonalBests.isPbActivity(activity.getId()))
 		{
-			detail.add(detailLeft(activityName + " PB"));
-			detail.add(detailRight(stats.getPbSeconds() >= 0
-				? PersonalBests.format(stats.getPbSeconds()) : "n/a"));
+			detail.add(PanelWidgets.smallLabel(activityName + " PB", ColorScheme.LIGHT_GRAY_COLOR));
+			detail.add(PanelWidgets.smallLabel(stats.getPbSeconds() >= 0
+				? PersonalBests.format(stats.getPbSeconds()) : "n/a", Color.WHITE));
 		}
 
 		return detail;
@@ -1635,7 +1533,8 @@ class PartyPanel extends JPanel
 		{
 			JPanel empty = new JPanel(new BorderLayout());
 			empty.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-			empty.add(detailLeft("No gear data."), BorderLayout.CENTER);
+			empty.add(PanelWidgets.smallLabel("No gear data.", ColorScheme.LIGHT_GRAY_COLOR),
+				BorderLayout.CENTER);
 			return empty;
 		}
 
@@ -1673,7 +1572,8 @@ class PartyPanel extends JPanel
 		{
 			JPanel empty = new JPanel(new BorderLayout());
 			empty.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-			empty.add(detailLeft("No inventory data."), BorderLayout.CENTER);
+			empty.add(PanelWidgets.smallLabel("No inventory data.", ColorScheme.LIGHT_GRAY_COLOR),
+				BorderLayout.CENTER);
 			return empty;
 		}
 
@@ -1949,7 +1849,6 @@ class PartyPanel extends JPanel
 			String where = "OBELISK".equals(kind) ? "the Grouping Obelisk" : "the notice board";
 			setStatus("Reminded " + member.getName() + " to apply on " + where + ".");
 		}
-		// Throttle: keep the button disabled for a few seconds, then re-enable.
 		joinPromptCooldown.put(member.getMemberId(), System.currentTimeMillis() + JOIN_PROMPT_COOLDOWN_MS);
 		Timer reEnable = new Timer((int) JOIN_PROMPT_COOLDOWN_MS, e -> refresh());
 		reEnable.setRepeats(false);
@@ -1960,7 +1859,7 @@ class PartyPanel extends JPanel
 	private JComponent buildReadyCheck()
 	{
 		ReadyCheckStatus status = liveParty.readyCheck();
-		JPanel row = cappedPanel(new BorderLayout());
+		JPanel row = new PanelWidgets.Capped(new BorderLayout());
 		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		row.setAlignmentX(Component.LEFT_ALIGNMENT);
 
@@ -2049,7 +1948,7 @@ class PartyPanel extends JPanel
 
 	private JPanel buildActions(Advertisement ad, boolean host)
 	{
-		JPanel actions = cappedPanel(new BorderLayout(0, 4));
+		JPanel actions = new PanelWidgets.Capped(new BorderLayout(0, 4));
 		actions.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		actions.setAlignmentX(Component.LEFT_ALIGNMENT);
 
@@ -2390,7 +2289,7 @@ class PartyPanel extends JPanel
 	/** Full-width in a capped row (BorderLayout.CENTER stretches the button), matching "Start ready check". */
 	private JPanel wrapVoiceButton(JButton button)
 	{
-		JPanel row = cappedPanel(new BorderLayout());
+		JPanel row = new PanelWidgets.Capped(new BorderLayout());
 		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		row.setAlignmentX(Component.LEFT_ALIGNMENT);
 		row.add(button, BorderLayout.CENTER);
@@ -2400,7 +2299,7 @@ class PartyPanel extends JPanel
 	private JPanel copyRow(String labelText, String copyValue, String tooltip, String statusMsg, Color fg)
 	{
 		// BorderLayout keeps the copy button pinned right; long values truncate, not push it off.
-		JPanel row = cappedPanel(new BorderLayout(4, 0));
+		JPanel row = new PanelWidgets.Capped(new BorderLayout(4, 0));
 		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		row.setAlignmentX(Component.LEFT_ALIGNMENT);
 
@@ -2418,7 +2317,6 @@ class PartyPanel extends JPanel
 		copy.addActionListener(e -> {
 			Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(copyValue), null);
 			setStatus(statusMsg);
-			// Brief green "Copied!" confirmation on the label, then revert.
 			label.setText("Copied!");
 			label.setForeground(new Color(0x4C, 0xD1, 0x37));
 			Timer revert = new Timer(1200, ev -> {
@@ -2501,91 +2399,6 @@ class PartyPanel extends JPanel
 	private static String escape(String text)
 	{
 		return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
-	}
-
-	private JLabel sectionLabel(String text)
-	{
-		JLabel label = new JLabel(text);
-		label.setForeground(ColorScheme.BRAND_ORANGE);
-		label.setFont(FontManager.getRunescapeSmallFont());
-		label.setAlignmentX(Component.LEFT_ALIGNMENT);
-		return label;
-	}
-
-	private JLabel subLabel(String text)
-	{
-		JLabel label = new JLabel(text);
-		label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		label.setFont(FontManager.getRunescapeSmallFont());
-		label.setAlignmentX(Component.LEFT_ALIGNMENT);
-		return label;
-	}
-
-	private JLabel detailLeft(String text)
-	{
-		JLabel label = new JLabel(text);
-		label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		label.setFont(FontManager.getRunescapeSmallFont());
-		return label;
-	}
-
-	private JLabel detailRight(String text)
-	{
-		JLabel label = new JLabel(text);
-		label.setForeground(Color.WHITE);
-		label.setFont(FontManager.getRunescapeSmallFont());
-		return label;
-	}
-
-	private static JPanel cappedPanel(LayoutManager layout)
-	{
-		return new JPanel(layout)
-		{
-			@Override
-			public Dimension getMaximumSize()
-			{
-				return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-			}
-		};
-	}
-
-	/** A column that fills the scroll viewport's width so rows never clip horizontally. */
-	private static class ScrollableColumn extends JPanel implements Scrollable
-	{
-		ScrollableColumn(LayoutManager layout)
-		{
-			super(layout);
-		}
-
-		@Override
-		public Dimension getPreferredScrollableViewportSize()
-		{
-			return getPreferredSize();
-		}
-
-		@Override
-		public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction)
-		{
-			return 16;
-		}
-
-		@Override
-		public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction)
-		{
-			return visibleRect.height;
-		}
-
-		@Override
-		public boolean getScrollableTracksViewportWidth()
-		{
-			return true;
-		}
-
-		@Override
-		public boolean getScrollableTracksViewportHeight()
-		{
-			return false;
-		}
 	}
 
 	private void setStatus(String text)

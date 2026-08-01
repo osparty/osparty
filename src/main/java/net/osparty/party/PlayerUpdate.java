@@ -9,7 +9,7 @@ import lombok.NoArgsConstructor;
  * stats. Every member sends their own, and only the parts that changed.
  *
  * <p>This is the plugin's own shape, not a wire format. Frames carry the short names in
- * {@code LiveParty.TO_WIRE}, and {@code toWire}/{@code fromWire} translate at that boundary — a peer
+ * {@code LiveStateCodec.TO_WIRE}, and {@code toWire}/{@code fromWire} translate at that boundary: a peer
  * running a different version of this plugin reads the frame by those short names, so they are what
  * cannot move. The field names here can.
  */
@@ -20,8 +20,7 @@ public class PlayerUpdate
 	/**
 	 * The member this report is about. Sent in the profile frame and read back by
 	 * {@code PartyPanel.toApplicant}, which is how a pending applicant gets an id the host can admit or
-	 * reject. Was inherited from RuneLite's party-message base class; declared here now, under the same
-	 * name, so the wire is unchanged.
+	 * reject. Goes on the wire under this name, unshortened.
 	 */
 	private long memberId;
 

@@ -1,7 +1,6 @@
 package net.osparty.service;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -140,12 +139,6 @@ public abstract class PlayerFlagService
 		rebuildNames();
 	}
 
-	/** Name-only toggle (no hash available at the call site). */
-	public void toggle(String name)
-	{
-		toggle(0L, name);
-	}
-
 	/**
 	 * Record that {@code accountHash} currently goes by {@code name}: renames a stored
 	 * entry when the name changed, and backfills the hash onto a name-only entry. No-op
@@ -196,12 +189,6 @@ public abstract class PlayerFlagService
 				}
 			}
 		}
-	}
-
-	/** Read-only view of all flagged (normalised) usernames. */
-	public synchronized Set<String> getAll()
-	{
-		return Collections.unmodifiableSet(new HashSet<>(flaggedNames));
 	}
 
 	/** All flagged entries (hash + last-known name), for management UIs. */

@@ -33,10 +33,8 @@ public class HostTransferHandler
 	private final Supplier<String> localNameSupplier;
 	private final Consumer<String> notifier;
 
-	/** Old host: an offer we've sent and are awaiting an ACCEPT for. Null when idle. */
-	private OutgoingTransfer outgoing;
-	/** New host: an offer we've accepted and are awaiting the COMMIT for. Null when idle. */
-	private IncomingTransfer incoming;
+	/** The one handshake in flight: ours to give (OUTGOING) or ours to take (INCOMING). Null when idle. */
+	private PendingTransfer pending;
 
 	HostTransferHandler(LivePartyBackend liveParty, BoardService boardService, PartyState partyState,
 		Supplier<String> localNameSupplier, Consumer<String> notifier)
@@ -54,7 +52,7 @@ public class HostTransferHandler
 	 */
 	void offerTransfer(long targetMemberId, boolean hostStays)
 	{
-		if (!liveParty.isHosting() || !partyState.isHost() || outgoing != null)
+		if (!liveParty.isHosting() || !partyState.isHost() || pending != null)
 		{
 			return;
 		}
@@ -72,7 +70,7 @@ public class HostTransferHandler
 		String newKey = UUID.randomUUID().toString();
 		Timer timeout = new Timer(HANDSHAKE_TIMEOUT_MS, e -> onOfferTimedOut());
 		timeout.setRepeats(false);
-		outgoing = new OutgoingTransfer(targetMemberId, targetName, newKey, hostStays, timeout);
+		pending = new PendingTransfer(Direction.OUTGOING, targetMemberId, targetName, newKey, hostStays, timeout);
 		liveParty.offerHostTransfer(targetMemberId, newKey, localNameSupplier.get(), hostStays);
 		// ASCII only: these land in the game chatbox, whose font has no ellipsis or dash glyph.
 		notifier.accept("Transferring the party to " + targetName + "...");
@@ -92,8 +90,7 @@ public class HostTransferHandler
 	/** Drop any in-flight transfer (called when the party ends). Call on the EDT. */
 	void reset()
 	{
-		clearOutgoing();
-		clearIncoming();
+		clearPending();
 	}
 
 	private void handle(HostTransferEvent message)
@@ -130,28 +127,30 @@ public class HostTransferHandler
 		{
 			return;
 		}
-		clearIncoming();
-		Timer timeout = new Timer(HANDSHAKE_TIMEOUT_MS, e -> clearIncoming());
+		clearPending();
+		Timer timeout = new Timer(HANDSHAKE_TIMEOUT_MS, e -> clearPending());
 		timeout.setRepeats(false);
-		incoming = new IncomingTransfer(message.getMemberId(), message.getNewHostKey(), timeout);
+		pending = new PendingTransfer(Direction.INCOMING, message.getMemberId(), null,
+			message.getNewHostKey(), false, timeout);
 		liveParty.acceptHostTransfer(message.getMemberId());
 		timeout.start();
 	}
 
 	private void onCommit(HostTransferEvent message)
 	{
-		if (incoming == null || !liveParty.isForLocalMember(message.getTargetMemberId())
-			|| message.getMemberId() != incoming.oldHostId)
+		PendingTransfer transfer = pending(Direction.INCOMING);
+		if (transfer == null || !liveParty.isForLocalMember(message.getTargetMemberId())
+			|| message.getMemberId() != transfer.peerId)
 		{
 			return;
 		}
 		Advertisement ad = partyState.getCurrentAd();
 		if (ad == null)
 		{
-			clearIncoming();
+			clearPending();
 			return;
 		}
-		String key = message.getNewHostKey() != null ? message.getNewHostKey() : incoming.newKey;
+		String key = message.getNewHostKey() != null ? message.getNewHostKey() : transfer.newKey;
 		String localName = localNameSupplier.get();
 		liveParty.promoteToHost(localName);
 		// The backend re-keyed the ad to us; mirror that locally or host-name lookups (and the
@@ -160,14 +159,14 @@ public class HostTransferHandler
 		boardService.adoptHostedAd(ad.getId(), key);
 		partyState.setHosting(ad, key);
 		notifier.accept("You are now the host of this party.");
-		clearIncoming();
+		clearPending();
 	}
 
 	private void onAbort(HostTransferEvent message)
 	{
-		if (incoming != null && liveParty.isForLocalMember(message.getTargetMemberId()))
+		if (pending(Direction.INCOMING) != null && liveParty.isForLocalMember(message.getTargetMemberId()))
 		{
-			clearIncoming();
+			clearPending();
 		}
 	}
 
@@ -175,70 +174,70 @@ public class HostTransferHandler
 
 	private void onAccept(HostTransferEvent message)
 	{
-		if (outgoing == null || !liveParty.isForLocalMember(message.getTargetMemberId())
-			|| message.getMemberId() != outgoing.targetId)
+		final PendingTransfer transfer = pending(Direction.OUTGOING);
+		if (transfer == null || !liveParty.isForLocalMember(message.getTargetMemberId())
+			|| message.getMemberId() != transfer.peerId)
 		{
 			return;
 		}
 		Advertisement ad = partyState.getCurrentAd();
 		if (ad == null)
 		{
-			clearOutgoing();
+			clearPending();
 			return;
 		}
-		outgoing.stopTimeout();
-		final OutgoingTransfer transfer = outgoing;
-		boardService.transferHost(ad.getId(), partyState.getHostKey(), transfer.targetName, transfer.newKey,
+		transfer.stopTimeout();
+		boardService.transferHost(ad.getId(), partyState.getHostKey(), transfer.peerName, transfer.newKey,
 			ignored -> SwingUtilities.invokeLater(() -> onTransferAcked(ad, transfer)),
 			error -> SwingUtilities.invokeLater(() -> onTransferFailed(transfer)));
 	}
 
-	private void onTransferAcked(Advertisement ad, OutgoingTransfer transfer)
+	private void onTransferAcked(Advertisement ad, PendingTransfer transfer)
 	{
 		// Guard against a party that ended (or a second transfer) while the ack was in flight.
-		if (outgoing != transfer)
+		if (pending != transfer)
 		{
 			return;
 		}
-		liveParty.commitHostTransfer(transfer.targetId, transfer.newKey, transfer.hostStays);
+		liveParty.commitHostTransfer(transfer.peerId, transfer.newKey, transfer.hostStays);
 		liveParty.demoteToMember();
 		boardService.releaseHostedAd(ad.getId());
-		ad.setHost(transfer.targetName);
+		ad.setHost(transfer.peerName);
 		if (transfer.hostStays)
 		{
 			partyState.demoteToMember(ad);
-			notifier.accept("You handed the party to " + transfer.targetName + " and are now a member.");
+			notifier.accept("You handed the party to " + transfer.peerName + " and are now a member.");
 		}
 		else
 		{
 			liveParty.leave();
 			partyState.clear();
-			notifier.accept("You handed the party to " + transfer.targetName + " and left.");
+			notifier.accept("You handed the party to " + transfer.peerName + " and left.");
 		}
-		clearOutgoing();
+		clearPending();
 	}
 
-	private void onTransferFailed(OutgoingTransfer transfer)
+	private void onTransferFailed(PendingTransfer transfer)
 	{
-		if (outgoing != transfer)
+		if (pending != transfer)
 		{
 			return;
 		}
-		liveParty.abortHostTransfer(transfer.targetId);
+		liveParty.abortHostTransfer(transfer.peerId);
 		notifier.accept("Couldn't transfer the party. You're still the host.");
-		clearOutgoing();
+		clearPending();
 	}
 
 	private void onOfferTimedOut()
 	{
-		if (outgoing == null)
+		PendingTransfer transfer = pending(Direction.OUTGOING);
+		if (transfer == null)
 		{
 			return;
 		}
-		String name = outgoing.targetName;
-		liveParty.abortHostTransfer(outgoing.targetId);
-		clearOutgoing();
-		notifier.accept(name + " didn't respond - you're still the host.");
+		liveParty.abortHostTransfer(transfer.peerId);
+		clearPending();
+		notifier.accept(transfer.peerName + " didn't respond - you're still the host.");
 	}
 
 	// ---- helpers -------------------------------------------------------------
@@ -262,57 +261,49 @@ public class HostTransferHandler
 		return member.getStatus() == PartyStatus.MEMBER && member.isOnline() && !member.isLocal();
 	}
 
-	private void clearOutgoing()
+	/** The in-flight transfer when it runs in {@code direction}, else null. */
+	private PendingTransfer pending(Direction direction)
 	{
-		if (outgoing != null)
+		return pending != null && pending.direction == direction ? pending : null;
+	}
+
+	private void clearPending()
+	{
+		if (pending != null)
 		{
-			outgoing.stopTimeout();
-			outgoing = null;
+			pending.stopTimeout();
+			pending = null;
 		}
 	}
 
-	private void clearIncoming()
+	private enum Direction
 	{
-		if (incoming != null)
-		{
-			incoming.stopTimeout();
-			incoming = null;
-		}
+		/** We're the old host, awaiting the target's ACCEPT. */
+		OUTGOING,
+		/** We're the new host, awaiting the old host's COMMIT. */
+		INCOMING
 	}
 
-	private static final class OutgoingTransfer
+	private static final class PendingTransfer
 	{
-		final long targetId;
-		final String targetName;
+		final Direction direction;
+		/** The other side: the target we offered, or the old host that offered us. */
+		final long peerId;
+		/** Outgoing only: the target's display name. */
+		final String peerName;
 		final String newKey;
+		/** Outgoing only: whether we stay in the party after handing it over. */
 		final boolean hostStays;
 		final Timer timeout;
 
-		OutgoingTransfer(long targetId, String targetName, String newKey, boolean hostStays, Timer timeout)
+		PendingTransfer(Direction direction, long peerId, String peerName, String newKey, boolean hostStays,
+			Timer timeout)
 		{
-			this.targetId = targetId;
-			this.targetName = targetName;
+			this.direction = direction;
+			this.peerId = peerId;
+			this.peerName = peerName;
 			this.newKey = newKey;
 			this.hostStays = hostStays;
-			this.timeout = timeout;
-		}
-
-		void stopTimeout()
-		{
-			timeout.stop();
-		}
-	}
-
-	private static final class IncomingTransfer
-	{
-		final long oldHostId;
-		final String newKey;
-		final Timer timeout;
-
-		IncomingTransfer(long oldHostId, String newKey, Timer timeout)
-		{
-			this.oldHostId = oldHostId;
-			this.newKey = newKey;
 			this.timeout = timeout;
 		}
 
