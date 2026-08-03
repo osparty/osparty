@@ -8,12 +8,16 @@ import net.osparty.api.BoardService;
 import net.osparty.api.BoardSubscription;
 import net.osparty.model.Activity;
 import net.osparty.model.Advertisement;
+import net.osparty.model.Member;
 import net.osparty.party.LivePartyBackend;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.BiPredicate;
 import java.util.function.IntFunction;
 import java.util.function.Supplier;
 import javax.swing.BorderFactory;
@@ -36,13 +40,20 @@ import net.runelite.client.util.ImageUtil;
 import net.runelite.http.api.worlds.WorldRegion;
 
 /**
- * The "Favorites" tab: two collapsible sections, Favorites (parties with a starred player) and
- * Friends (parties hosted by an in-game friend), rendered as Search-tab cards via {@link PartyCardPanel}.
+ * The "Favorites" tab: two collapsible sections, Favorites (parties with a starred player) and Friends
+ * (parties with an in-game friend), rendered as Search-tab cards via {@link PartyCardPanel}. Both match
+ * the host and every listed member, and each card carries a note naming who put it there.
  */
 class FavoritesPanel extends PartyCardPanel
 {
+	/** How many players a card's note names before it summarises the rest as "+N more". */
+	private static final int MAX_NAMED = 2;
+
 	private List<Advertisement> lastAll = new ArrayList<>();
 	private BoardSubscription subscription;
+
+	/** Ad id to the line saying who put it in the list, rebuilt per render and read by {@link #cardNote}. */
+	private final Map<String, String> notes = new HashMap<>();
 
 	private final JLabel statusLabel;
 	private final JPanel favoritesContent;
@@ -210,6 +221,7 @@ class FavoritesPanel extends PartyCardPanel
 		adsById.clear();
 		reasonLabels.clear();
 		rolePickers.clear();
+		notes.clear();
 
 		Set<String> friends = friendNamesSupplier != null ? friendNamesSupplier.get() : null;
 
@@ -225,18 +237,24 @@ class FavoritesPanel extends PartyCardPanel
 			{
 				continue;
 			}
-			boolean isFave = favoritesService.hasAnyFavorite(p);
-			boolean isFriend = friends != null && p.getHost() != null
-				&& friends.contains(PlayerFlagService.normalize(p.getHost()));
-
-			if (isFave)
+			// A party with both a favourite and a friend goes under Favorites only, so no card appears twice.
+			List<String> favorited = matches(p, favoritesService::isFavorite);
+			if (!favorited.isEmpty())
 			{
 				favorites.add(p);
+				notes.put(p.getId(), note("Favorite", p, favorited));
+				continue;
 			}
-			// Friends section: only show if NOT already in favorites (avoid duplication)
-			if (isFriend && !isFave)
+			if (friends == null)
+			{
+				continue;
+			}
+			// Friends are only ever known by name: the list comes from the client, which has no hashes.
+			List<String> friended = matches(p, (hash, name) -> friends.contains(PlayerFlagService.normalize(name)));
+			if (!friended.isEmpty())
 			{
 				friendParties.add(p);
+				notes.put(p.getId(), note("Friend", p, friended));
 			}
 		}
 
@@ -247,7 +265,7 @@ class FavoritesPanel extends PartyCardPanel
 		populateSection(favoritesContent, favorites, favoritesExpanded,
 			favorites.isEmpty() ? "No open parties with favorited players." : null);
 		populateSection(friendsContent, friendParties, friendsExpanded,
-			friendParties.isEmpty() ? "No open parties from OSRS friends." : null);
+			friendParties.isEmpty() ? "No open parties with OSRS friends." : null);
 
 		favoritesHeader.setCount(favorites.size());
 		friendsHeader.setCount(friendParties.size());
@@ -259,6 +277,66 @@ class FavoritesPanel extends PartyCardPanel
 		setStatus(total == 0 ? "No parties to show." : "");
 
 		updateAllButtons();
+	}
+
+	@Override
+	protected String cardNote(Advertisement ad)
+	{
+		return notes.get(ad.getId());
+	}
+
+	/**
+	 * The players in {@code ad} that {@code flagged} accepts, host first. Both sections match on the
+	 * whole party rather than the host alone: a friend or favourite sitting in someone else's party is
+	 * exactly as worth knowing about, and it is the only way to find a party they didn't advertise.
+	 */
+	static List<String> matches(Advertisement ad, BiPredicate<Long, String> flagged)
+	{
+		List<String> names = new ArrayList<>();
+		if (ad.getHost() != null && flagged.test(ad.getHostAccountHash(), ad.getHost()))
+		{
+			names.add(ad.getHost());
+		}
+		if (ad.getMembers() == null)
+		{
+			return names;
+		}
+		for (Member member : ad.getMembers())
+		{
+			// The host is listed among the members too, so skip them rather than name them twice.
+			if (member == null || member.getName() == null || isHost(ad, member.getName()))
+			{
+				continue;
+			}
+			if (flagged.test(member.getAccountHash(), member.getName()))
+			{
+				names.add(member.getName());
+			}
+		}
+		return names;
+	}
+
+	/** e.g. {@code "Favorite: Zezima (host)"}, {@code "Friends: Bob (host), Amy (in party) +2 more"}. */
+	static String note(String label, Advertisement ad, List<String> names)
+	{
+		StringBuilder sb = new StringBuilder(names.size() > 1 ? label + "s: " : label + ": ");
+		int shown = Math.min(names.size(), MAX_NAMED);
+		for (int i = 0; i < shown; i++)
+		{
+			String name = names.get(i);
+			sb.append(i > 0 ? ", " : "").append(name).append(isHost(ad, name) ? " (host)" : " (in party)");
+		}
+		if (names.size() > shown)
+		{
+			sb.append(" +").append(names.size() - shown).append(" more");
+		}
+		return sb.toString();
+	}
+
+	private static boolean isHost(Advertisement ad, String name)
+	{
+		return ad.getHost() != null
+			&& PlayerFlagService.normalize(ad.getHost()).equals(PlayerFlagService.normalize(name));
 	}
 
 	private void populateSection(JPanel content, List<Advertisement> ads, boolean expanded, String emptyMsg)
