@@ -22,6 +22,9 @@ public class AdvertisementDelta
 	 */
 	private Long hostAccountHash;
 
+	/** Travels with {@code host} too: the account-type badge belongs to whoever runs the ad. */
+	private String hostAccountType;
+
 	private Integer size;
 	private List<Member> members;
 	private String world;
@@ -63,6 +66,10 @@ public class AdvertisementDelta
 		if (hostAccountHash != null)
 		{
 			p.setHostAccountHash(hostAccountHash);
+		}
+		if (hostAccountType != null)
+		{
+			p.setHostAccountType(hostAccountType);
 		}
 		if (size != null)
 		{

@@ -166,7 +166,7 @@ public class OSPartyPanel extends PluginPanel
 		this.historyService = historyService;
 		this.partyState = new PartyState(configManager);
 		this.hostTransferHandler = new HostTransferHandler(liveParty, boardService, partyState,
-			playerNameSupplier, gameMessage);
+			playerNameSupplier, accountTypeSupplier, gameMessage);
 
 		setLayout(new BorderLayout());
 		setBackground(ColorScheme.DARK_GRAY_COLOR);

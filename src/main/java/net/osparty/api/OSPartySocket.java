@@ -477,7 +477,7 @@ public class OSPartySocket extends WebSocketListener
 	 * {@code onSuccess} fires on the {@code transferred} ack; we keep hosting state until then, so a
 	 * failed transfer leaves us keeping the ad alive as before.
 	 */
-	public void transferHost(String id, String oldKey, String newHost, String newKey,
+	public void transferHost(String id, String oldKey, String newHost, String newHostAccountType, String newKey,
 		Consumer<Advertisement> onSuccess, Consumer<Throwable> onError)
 	{
 		if (id == null || !connected)
@@ -486,7 +486,7 @@ public class OSPartySocket extends WebSocketListener
 			return;
 		}
 		pendingTransfer.put(id, new VoicePending(url -> onSuccess.accept(null), onError));
-		send(gson.toJson(new TransferFrame(id, oldKey, newHost, newKey)));
+		send(gson.toJson(new TransferFrame(id, oldKey, newHost, newHostAccountType, newKey)));
 	}
 
 	/**
@@ -1493,13 +1493,15 @@ public class OSPartySocket extends WebSocketListener
 		final String id;
 		final String key;
 		final String host;
+		final String hostAccountType;
 		final String newKey;
 
-		TransferFrame(String id, String key, String host, String newKey)
+		TransferFrame(String id, String key, String host, String hostAccountType, String newKey)
 		{
 			this.id = id;
 			this.key = key;
 			this.host = host;
+			this.hostAccountType = hostAccountType;
 			this.newKey = newKey;
 		}
 	}

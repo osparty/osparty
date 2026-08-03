@@ -72,10 +72,12 @@ public interface BoardService
 
 	/**
 	 * Host action: reassign the ad to {@code newHost} in place (same id/code/channel). {@code newHostKey}
-	 * becomes the ad's credential. {@code onSuccess} fires on the ack; {@code onError} on failure.
+	 * becomes the ad's credential. {@code newHostAccountType} re-stamps the ad's account-type badge, which
+	 * belongs to whoever runs it; null means "not an ironman" (the board treats it as a normal account).
+	 * {@code onSuccess} fires on the ack; {@code onError} on failure.
 	 */
-	void transferHost(String adId, String currentHostKey, String newHost, String newHostKey,
-		Consumer<Advertisement> onSuccess, Consumer<Throwable> onError);
+	void transferHost(String adId, String currentHostKey, String newHost, String newHostAccountType,
+		String newHostKey, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError);
 
 	/** New host: adopt an ad handed to us via {@link #transferHost} so the socket owns and resumes it. */
 	void adoptHostedAd(String adId, String hostKey);

@@ -140,11 +140,11 @@ public class BoardApiClient implements BoardService
 	}
 
 	@Override
-	public void transferHost(String adId, String currentHostKey, String newHost, String newHostKey,
-		Consumer<Advertisement> onSuccess, Consumer<Throwable> onError)
+	public void transferHost(String adId, String currentHostKey, String newHost, String newHostAccountType,
+		String newHostKey, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError)
 	{
 		// Unlike disband there IS a 'transferred' ack; the old host mustn't relinquish until the re-key succeeds.
-		socket.transferHost(adId, currentHostKey, newHost, newHostKey, onSuccess, onError);
+		socket.transferHost(adId, currentHostKey, newHost, newHostAccountType, newHostKey, onSuccess, onError);
 	}
 
 	@Override

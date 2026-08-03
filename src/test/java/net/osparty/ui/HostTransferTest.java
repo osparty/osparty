@@ -10,7 +10,9 @@ import net.osparty.model.Advertisement;
 import net.osparty.party.HostTransferEvent;
 import net.osparty.party.LivePartyBackend;
 import net.osparty.party.PartyStatus;
+import net.osparty.party.PlayerUpdate;
 import net.osparty.party.RosterMember;
+import net.runelite.api.vars.AccountType;
 import net.runelite.client.config.ConfigManager;
 import org.junit.Before;
 import org.junit.Test;
@@ -49,7 +51,8 @@ public class HostTransferTest
 		boardService = mock(BoardService.class);
 		partyState = new PartyState(mock(ConfigManager.class));
 		notes = new ArrayList<>();
-		handler = new HostTransferHandler(liveParty, boardService, partyState, () -> "LocalName", notes::add);
+		handler = new HostTransferHandler(liveParty, boardService, partyState, () -> "LocalName",
+			() -> AccountType.ULTIMATE_IRONMAN, notes::add);
 
 		ad = new Advertisement();
 		ad.setId("p1");
@@ -60,6 +63,15 @@ public class HostTransferTest
 	private static RosterMember member(long id, String name, PartyStatus status, boolean local)
 	{
 		return new RosterMember(id, name, status, null, local, true);
+	}
+
+	/** A member that has sent a live update, so the handler can read their account type off it. */
+	private static RosterMember member(long id, String name, PartyStatus status, String accountType)
+	{
+		PlayerUpdate data = new PlayerUpdate();
+		data.setName(name);
+		data.setAccountType(accountType);
+		return new RosterMember(id, name, status, data, false, true);
 	}
 
 	private static void flushEdt() throws InterruptedException, InvocationTargetException
@@ -75,14 +87,15 @@ public class HostTransferTest
 		when(liveParty.isHosting()).thenReturn(true);
 		when(liveParty.roster()).thenReturn(List.of(
 			member(OLD_HOST_ID, "LocalName", PartyStatus.HOST, true),
-			member(NEW_HOST_ID, "NewHost", PartyStatus.MEMBER, false)));
+			member(NEW_HOST_ID, "NewHost", PartyStatus.MEMBER, "IRONMAN")));
 		when(liveParty.isForLocalMember(OLD_HOST_ID)).thenReturn(true);
 		// The backend re-key succeeds immediately.
 		doAnswer(inv -> {
-			Consumer<Advertisement> onSuccess = inv.getArgument(4);
+			Consumer<Advertisement> onSuccess = inv.getArgument(5);
 			onSuccess.accept(null);
 			return null;
-		}).when(boardService).transferHost(eq("p1"), eq("old-key"), eq("NewHost"), any(), any(), any());
+		}).when(boardService).transferHost(eq("p1"), eq("old-key"), eq("NewHost"), eq("IRONMAN"), any(),
+			any(), any());
 
 		handler.offerTransfer(NEW_HOST_ID, true);
 		verify(liveParty).offerHostTransfer(eq(NEW_HOST_ID), any(), eq("LocalName"), eq(true));
@@ -99,6 +112,7 @@ public class HostTransferTest
 		assertFalse("old host is no longer the host", partyState.isHost());
 		assertEquals(ad, partyState.getCurrentAd());
 		assertEquals("the ad now belongs to the new host", "NewHost", ad.getHost());
+		assertEquals("the badge follows the name", "IRONMAN", ad.getHostAccountType());
 	}
 
 	@Test
@@ -110,10 +124,10 @@ public class HostTransferTest
 			member(NEW_HOST_ID, "NewHost", PartyStatus.MEMBER, false)));
 		when(liveParty.isForLocalMember(OLD_HOST_ID)).thenReturn(true);
 		doAnswer(inv -> {
-			Consumer<Advertisement> onSuccess = inv.getArgument(4);
+			Consumer<Advertisement> onSuccess = inv.getArgument(5);
 			onSuccess.accept(null);
 			return null;
-		}).when(boardService).transferHost(any(), any(), any(), any(), any(), any());
+		}).when(boardService).transferHost(any(), any(), any(), any(), any(), any(), any());
 
 		handler.offerTransfer(NEW_HOST_ID, false);
 		handler.onMessage(accept(NEW_HOST_ID, OLD_HOST_ID));
@@ -134,10 +148,10 @@ public class HostTransferTest
 			member(NEW_HOST_ID, "NewHost", PartyStatus.MEMBER, false)));
 		when(liveParty.isForLocalMember(OLD_HOST_ID)).thenReturn(true);
 		doAnswer(inv -> {
-			Consumer<Throwable> onError = inv.getArgument(5);
+			Consumer<Throwable> onError = inv.getArgument(6);
 			onError.accept(new RuntimeException("nope"));
 			return null;
-		}).when(boardService).transferHost(any(), any(), any(), any(), any(), any());
+		}).when(boardService).transferHost(any(), any(), any(), any(), any(), any(), any());
 
 		handler.offerTransfer(NEW_HOST_ID, true);
 		handler.onMessage(accept(NEW_HOST_ID, OLD_HOST_ID));
@@ -169,6 +183,7 @@ public class HostTransferTest
 		verify(boardService).adoptHostedAd("p1", "new-key");
 		assertTrue("new host now hosts the party", partyState.isHost());
 		assertEquals("the ad is ours now, so lookups use our name", "LocalName", ad.getHost());
+		assertEquals("and our badge, not the outgoing host's", "ULTIMATE_IRONMAN", ad.getHostAccountType());
 		assertTrue(notes.stream().anyMatch(n -> n.contains("now the host")));
 	}
 
