@@ -15,6 +15,7 @@ import net.osparty.party.JoinPromptEvent;
 import net.osparty.party.PlayerNames;
 import net.osparty.party.HostTransferEvent;
 import net.osparty.party.LiveParty;
+import net.osparty.party.LocalPlayerSnapshot;
 import net.osparty.party.LivePartyBackend;
 import net.osparty.party.SpecDrainEvent;
 import net.osparty.ui.OSPartyPanel;
@@ -550,6 +551,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		if (event.getVarbitId() == VarbitID.RAIDS_CLIENT_INDUNGEON)
 		{
 			coxRaidScanner.onInRaidChanged(event.getValue());
+		}
+		// The rune pouch has no item container of its own, so runes moving in or out of it only ever show up
+		// here. Without this the pouch keeps whatever it held when the inventory last changed.
+		if (LocalPlayerSnapshot.isRunePouchVarbit(event.getVarbitId()))
+		{
+			liveParty.markItemsDirty();
 		}
 		specTracker.onVarbitChanged(event);
 	}

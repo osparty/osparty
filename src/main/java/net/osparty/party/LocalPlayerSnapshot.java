@@ -160,13 +160,28 @@ public final class LocalPlayerSnapshot
 			// Resolve the name here (client thread); spectators can't call getItemComposition off it.
 			names.add(client.getItemDefinition(itemId).getName());
 		}
-		if (ids.isEmpty())
-		{
-			return;
-		}
+		// Empty arrays, not an early return: a peer holding runes we no longer have would otherwise keep
+		// them, since an absent field merges as "unchanged".
 		update.setRunePouch(ids.stream().mapToInt(Integer::intValue).toArray());
 		update.setRunePouchAmounts(amounts.stream().mapToInt(Integer::intValue).toArray());
 		update.setRunePouchNames(names.toArray(new String[0]));
+	}
+
+	/**
+	 * @return whether this varbit is part of the rune pouch's contents. Moving runes in or out of the pouch
+	 * changes only these varbits — the inventory container itself never fires — so this is the only signal
+	 * that the pouch needs re-sending.
+	 */
+	public static boolean isRunePouchVarbit(int varbitId)
+	{
+		for (int i = 0; i < RUNE_POUCH_TYPE_VARBITS.length; i++)
+		{
+			if (varbitId == RUNE_POUCH_TYPE_VARBITS[i] || varbitId == RUNE_POUCH_AMOUNT_VARBITS[i])
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static boolean containsRunePouch(ItemContainer inventory)
