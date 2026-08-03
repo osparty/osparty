@@ -8,7 +8,7 @@ import java.util.List;
 
 import net.osparty.model.HistoryMember;
 import net.osparty.model.Member;
-import net.osparty.model.Party;
+import net.osparty.model.Advertisement;
 import net.osparty.model.PartyHistoryEntry;
 import net.osparty.service.PartyHistoryService;
 import org.junit.Before;
@@ -38,9 +38,9 @@ public class PartyHistoryServiceTest
 		return new PartyHistoryService(dir, () -> limit, new Gson());
 	}
 
-	private static Party party(String id, String activity, String host)
+	private static Advertisement ad(String id, String activity, String host)
 	{
-		Party p = new Party();
+		Advertisement p = new Advertisement();
 		p.setId(id);
 		p.setActivity(activity);
 		p.setHost(host);
@@ -51,8 +51,8 @@ public class PartyHistoryServiceTest
 	public void recordsNewestFirstWithRole()
 	{
 		PartyHistoryService history = open();
-		history.record(party("1", "cox", "Alice"), false);
-		history.record(party("2", "toa", "Bob"), true);
+		history.record(ad("1", "cox", "Alice"), false);
+		history.record(ad("2", "toa", "Bob"), true);
 
 		List<PartyHistoryEntry> list = history.list();
 		assertEquals(2, list.size());
@@ -66,8 +66,8 @@ public class PartyHistoryServiceTest
 	public void dedupesSamePartyId()
 	{
 		PartyHistoryService history = open();
-		history.record(party("1", "cox", "Alice"), false);
-		history.record(party("1", "cox", "Alice"), false); // e.g. resume after restart
+		history.record(ad("1", "cox", "Alice"), false);
+		history.record(ad("1", "cox", "Alice"), false); // e.g. resume after restart
 
 		assertEquals(1, history.list().size());
 	}
@@ -76,8 +76,8 @@ public class PartyHistoryServiceTest
 	public void deletesSingleEntryAndPersists()
 	{
 		PartyHistoryService history = open();
-		history.record(party("1", "cox", "Alice"), false);
-		history.record(party("2", "toa", "Bob"), true);
+		history.record(ad("1", "cox", "Alice"), false);
+		history.record(ad("2", "toa", "Bob"), true);
 
 		assertTrue(history.delete(history.list().get(1))); // the "cox" entry
 		List<PartyHistoryEntry> list = history.list();
@@ -98,8 +98,8 @@ public class PartyHistoryServiceTest
 	public void deleteMatchesByHostAndTimeWhenIdAbsent()
 	{
 		PartyHistoryService history = open();
-		history.record(party(null, "cox", "Alice"), false);
-		history.record(party(null, "cox", "Bob"), false);
+		history.record(ad(null, "cox", "Alice"), false);
+		history.record(ad(null, "cox", "Bob"), false);
 
 		assertTrue(history.delete(history.list().get(1))); // Alice's id-less entry
 		List<PartyHistoryEntry> list = history.list();
@@ -114,7 +114,7 @@ public class PartyHistoryServiceTest
 		PartyHistoryService history = open();
 		for (int i = 0; i < 10; i++)
 		{
-			history.record(party("p" + i, "nex", "Host" + i), false);
+			history.record(ad("p" + i, "nex", "Host" + i), false);
 		}
 
 		List<PartyHistoryEntry> list = history.list();
@@ -130,7 +130,7 @@ public class PartyHistoryServiceTest
 		PartyHistoryService history = open();
 		for (int i = 0; i < 5; i++)
 		{
-			history.record(party("p" + i, "nex", "Host" + i), false);
+			history.record(ad("p" + i, "nex", "Host" + i), false);
 		}
 		assertEquals(5, history.list().size());
 
@@ -146,7 +146,7 @@ public class PartyHistoryServiceTest
 	public void updateRosterAddsJoinersAndFlagsLeavers()
 	{
 		PartyHistoryService history = open();
-		Party p = party("1", "cox", "Alice");
+		Advertisement p = ad("1", "cox", "Alice");
 		p.setMembers(Arrays.asList(new Member("Alice", 1L)));
 		history.record(p, true);
 
@@ -172,7 +172,7 @@ public class PartyHistoryServiceTest
 	public void updateRosterClearsLeftAtOnRejoin()
 	{
 		PartyHistoryService history = open();
-		Party p = party("1", "cox", "Alice");
+		Advertisement p = ad("1", "cox", "Alice");
 		p.setMembers(Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L)));
 		history.record(p, true);
 
@@ -189,7 +189,7 @@ public class PartyHistoryServiceTest
 	public void updateRosterUpgradesUnknownHashByName()
 	{
 		PartyHistoryService history = open();
-		Party p = party("1", "cox", "Alice");
+		Advertisement p = ad("1", "cox", "Alice");
 		p.setMembers(Arrays.asList(new Member("Alice", 1L), new Member("Bob", 0L))); // Bob's hash not yet synced
 		history.record(p, true);
 
@@ -204,7 +204,7 @@ public class PartyHistoryServiceTest
 	public void updateRosterIsNoOpWhenUnchangedOrEmptyOrUnknown()
 	{
 		PartyHistoryService history = open();
-		Party p = party("1", "cox", "Alice");
+		Advertisement p = ad("1", "cox", "Alice");
 		List<Member> roster = Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L));
 		p.setMembers(roster);
 		history.record(p, true);
@@ -224,7 +224,7 @@ public class PartyHistoryServiceTest
 	public void updateRosterPersistsAcrossReopen()
 	{
 		PartyHistoryService history = open();
-		Party p = party("1", "cox", "Alice");
+		Advertisement p = ad("1", "cox", "Alice");
 		p.setMembers(Arrays.asList(new Member("Alice", 1L)));
 		history.record(p, true);
 		history.updateRoster("1", Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L)));
@@ -240,7 +240,7 @@ public class PartyHistoryServiceTest
 	public void closePartyStampsPresentMembersAsLeft()
 	{
 		PartyHistoryService history = open();
-		Party p = party("1", "cox", "Alice");
+		Advertisement p = ad("1", "cox", "Alice");
 		p.setMembers(Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L)));
 		history.record(p, true);
 		history.updateRoster("1", Arrays.asList(new Member("Alice", 1L))); // Bob leaves early
@@ -258,7 +258,7 @@ public class PartyHistoryServiceTest
 	public void closePartyIsNoOpWhenAlreadyEndedOrUnknown()
 	{
 		PartyHistoryService history = open();
-		Party p = party("1", "cox", "Alice");
+		Advertisement p = ad("1", "cox", "Alice");
 		p.setMembers(Arrays.asList(new Member("Alice", 1L)));
 		history.record(p, true);
 
@@ -282,7 +282,7 @@ public class PartyHistoryServiceTest
 	public void clearEmptiesHistory()
 	{
 		PartyHistoryService history = open();
-		history.record(party("1", "cox", "Alice"), false);
+		history.record(ad("1", "cox", "Alice"), false);
 		history.clear();
 
 		assertTrue(history.list().isEmpty());

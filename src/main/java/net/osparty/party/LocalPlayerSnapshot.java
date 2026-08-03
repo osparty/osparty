@@ -20,14 +20,10 @@ import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.VarbitID;
 
 /**
- * Builds a {@link PlayerUpdate} from the local client's live state. Reads item
- * containers and skills, so it must be called on the client thread.
- *
- * <p>V2: widened from package-private to public so both {@link LiveParty} (RuneLite relay) and
- * {@code net.osparty.party.v2.LivePartyV2} reuse the same snapshot logic. Shared by both backends —
- * stays when the RuneLite relay is removed at P6.
+ * Builds a {@link PlayerUpdate} from the local client's live state. Reads item containers and skills, so it
+ * must be called on the client thread.
  */
-public final class LocalPlayerSync
+public final class LocalPlayerSnapshot
 {
 	/** Varp id for special-attack energy (0-1000). {@code VarPlayer.SPECIAL_ATTACK_PERCENT} is deprecated. */
 	private static final int VARP_SPECIAL_ATTACK_PERCENT = 300;
@@ -47,7 +43,7 @@ public final class LocalPlayerSync
 		ItemID.DIVINE_RUNE_POUCH, ItemID.DIVINE_RUNE_POUCH_TROUVER,
 	};
 
-	private LocalPlayerSync()
+	private LocalPlayerSnapshot()
 	{
 	}
 
@@ -164,13 +160,28 @@ public final class LocalPlayerSync
 			// Resolve the name here (client thread); spectators can't call getItemComposition off it.
 			names.add(client.getItemDefinition(itemId).getName());
 		}
-		if (ids.isEmpty())
-		{
-			return;
-		}
+		// Empty arrays, not an early return: a peer holding runes we no longer have would otherwise keep
+		// them, since an absent field merges as "unchanged".
 		update.setRunePouch(ids.stream().mapToInt(Integer::intValue).toArray());
 		update.setRunePouchAmounts(amounts.stream().mapToInt(Integer::intValue).toArray());
 		update.setRunePouchNames(names.toArray(new String[0]));
+	}
+
+	/**
+	 * @return whether this varbit is part of the rune pouch's contents. Moving runes in or out of the pouch
+	 * changes only these varbits — the inventory container itself never fires — so this is the only signal
+	 * that the pouch needs re-sending.
+	 */
+	public static boolean isRunePouchVarbit(int varbitId)
+	{
+		for (int i = 0; i < RUNE_POUCH_TYPE_VARBITS.length; i++)
+		{
+			if (varbitId == RUNE_POUCH_TYPE_VARBITS[i] || varbitId == RUNE_POUCH_AMOUNT_VARBITS[i])
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static boolean containsRunePouch(ItemContainer inventory)

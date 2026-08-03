@@ -5,16 +5,18 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
-import net.osparty.api.PartyService;
-import net.osparty.model.Party;
-import net.osparty.party.HostTransferMessage;
-import net.osparty.party.LiveParty;
+import net.osparty.api.BoardService;
+import net.osparty.model.Advertisement;
+import net.osparty.party.HostTransferEvent;
 import net.osparty.party.LivePartyBackend;
+import net.osparty.party.PartyStatus;
+import net.osparty.party.RosterMember;
+import net.runelite.api.vars.AccountType;
 
 /**
  * Coordinates handing the party to another member without destroying it, driving the
- * {@link HostTransferMessage} handshake (OFFER → ACCEPT → COMMIT / ABORT) and the matching backend
- * ad re-key. The current host keeps its P2P authority and its ownership of the backend ad until the
+ * {@link HostTransferEvent} handshake (OFFER → ACCEPT → COMMIT / ABORT) and the matching backend
+ * ad re-key. The current host keeps its authority and its ownership of the backend ad until the
  * exchange completes, so a dropped/ignored message or an unreachable target never orphans the party —
  * the old host simply stays host.
  *
@@ -27,23 +29,24 @@ public class HostTransferHandler
 	private static final int HANDSHAKE_TIMEOUT_MS = 12_000;
 
 	private final LivePartyBackend liveParty;
-	private final PartyService partyService;
+	private final BoardService boardService;
 	private final PartyState partyState;
 	private final Supplier<String> localNameSupplier;
+	private final Supplier<AccountType> localAccountTypeSupplier;
 	private final Consumer<String> notifier;
 
-	/** Old host: an offer we've sent and are awaiting an ACCEPT for. Null when idle. */
-	private OutgoingTransfer outgoing;
-	/** New host: an offer we've accepted and are awaiting the COMMIT for. Null when idle. */
-	private IncomingTransfer incoming;
+	/** The one handshake in flight: ours to give (OUTGOING) or ours to take (INCOMING). Null when idle. */
+	private PendingTransfer pending;
 
-	HostTransferHandler(LivePartyBackend liveParty, PartyService partyService, PartyState partyState,
-		Supplier<String> localNameSupplier, Consumer<String> notifier)
+	HostTransferHandler(LivePartyBackend liveParty, BoardService boardService, PartyState partyState,
+		Supplier<String> localNameSupplier, Supplier<AccountType> localAccountTypeSupplier,
+		Consumer<String> notifier)
 	{
 		this.liveParty = liveParty;
-		this.partyService = partyService;
+		this.boardService = boardService;
 		this.partyState = partyState;
 		this.localNameSupplier = localNameSupplier;
+		this.localAccountTypeSupplier = localAccountTypeSupplier;
 		this.notifier = notifier;
 	}
 
@@ -53,17 +56,17 @@ public class HostTransferHandler
 	 */
 	void offerTransfer(long targetMemberId, boolean hostStays)
 	{
-		if (!liveParty.isHosting() || !partyState.isHost() || outgoing != null)
+		if (!liveParty.isHosting() || !partyState.isHost() || pending != null)
 		{
 			return;
 		}
-		Party party = partyState.getCurrentParty();
-		if (party == null)
+		Advertisement ad = partyState.getCurrentAd();
+		if (ad == null)
 		{
 			return;
 		}
-		String targetName = memberName(targetMemberId);
-		if (targetName == null)
+		RosterMember target = candidate(targetMemberId);
+		if (target == null)
 		{
 			notifier.accept("Couldn't transfer the party: that member is no longer available.");
 			return;
@@ -71,15 +74,16 @@ public class HostTransferHandler
 		String newKey = UUID.randomUUID().toString();
 		Timer timeout = new Timer(HANDSHAKE_TIMEOUT_MS, e -> onOfferTimedOut());
 		timeout.setRepeats(false);
-		outgoing = new OutgoingTransfer(targetMemberId, targetName, newKey, hostStays, timeout);
+		pending = new PendingTransfer(Direction.OUTGOING, targetMemberId, target.getName(),
+			accountTypeOf(target), newKey, hostStays, timeout);
 		liveParty.offerHostTransfer(targetMemberId, newKey, localNameSupplier.get(), hostStays);
 		// ASCII only: these land in the game chatbox, whose font has no ellipsis or dash glyph.
-		notifier.accept("Transferring the party to " + targetName + "...");
+		notifier.accept("Transferring the party to " + target.getName() + "...");
 		timeout.start();
 	}
 
 	/** Dispatch an inbound handshake message (arrives off-EDT; marshalled on before mutating state). */
-	public void onMessage(HostTransferMessage message)
+	public void onMessage(HostTransferEvent message)
 	{
 		if (message == null || message.getKind() == null)
 		{
@@ -91,11 +95,10 @@ public class HostTransferHandler
 	/** Drop any in-flight transfer (called when the party ends). Call on the EDT. */
 	void reset()
 	{
-		clearOutgoing();
-		clearIncoming();
+		clearPending();
 	}
 
-	private void handle(HostTransferMessage message)
+	private void handle(HostTransferEvent message)
 	{
 		switch (message.getKind())
 		{
@@ -118,200 +121,218 @@ public class HostTransferHandler
 
 	// ---- new host side -------------------------------------------------------
 
-	private void onOffer(HostTransferMessage message)
+	private void onOffer(HostTransferEvent message)
 	{
 		if (!liveParty.isForLocalMember(message.getTargetMemberId()))
 		{
 			return; // not aimed at us
 		}
 		// We can only take over if we're actually an admitted member of a party we don't already host.
-		if (liveParty.isHosting() || !liveParty.isLocalAdmitted() || partyState.getCurrentParty() == null)
+		if (liveParty.isHosting() || !liveParty.isLocalAdmitted() || partyState.getCurrentAd() == null)
 		{
 			return;
 		}
-		clearIncoming();
-		Timer timeout = new Timer(HANDSHAKE_TIMEOUT_MS, e -> clearIncoming());
+		clearPending();
+		Timer timeout = new Timer(HANDSHAKE_TIMEOUT_MS, e -> clearPending());
 		timeout.setRepeats(false);
-		incoming = new IncomingTransfer(message.getMemberId(), message.getNewHostKey(), timeout);
+		pending = new PendingTransfer(Direction.INCOMING, message.getMemberId(), null, null,
+			message.getNewHostKey(), false, timeout);
 		liveParty.acceptHostTransfer(message.getMemberId());
 		timeout.start();
 	}
 
-	private void onCommit(HostTransferMessage message)
+	private void onCommit(HostTransferEvent message)
 	{
-		if (incoming == null || !liveParty.isForLocalMember(message.getTargetMemberId())
-			|| message.getMemberId() != incoming.oldHostId)
+		PendingTransfer transfer = pending(Direction.INCOMING);
+		if (transfer == null || !liveParty.isForLocalMember(message.getTargetMemberId())
+			|| message.getMemberId() != transfer.peerId)
 		{
 			return;
 		}
-		Party party = partyState.getCurrentParty();
-		if (party == null)
+		Advertisement ad = partyState.getCurrentAd();
+		if (ad == null)
 		{
-			clearIncoming();
+			clearPending();
 			return;
 		}
-		String key = message.getNewHostKey() != null ? message.getNewHostKey() : incoming.newKey;
+		String key = message.getNewHostKey() != null ? message.getNewHostKey() : transfer.newKey;
 		String localName = localNameSupplier.get();
 		liveParty.promoteToHost(localName);
 		// The backend re-keyed the ad to us; mirror that locally or host-name lookups (and the
-		// ad-still-exists check) would keep asking about the old host and fold the tab.
-		party.setHost(localName);
-		partyService.adoptHostedParty(party.getId(), key);
-		partyState.setHosting(party, key);
+		// ad-still-exists check) would keep asking about the old host and fold the tab. The badge
+		// travels with the name, or our card keeps advertising the outgoing host's account type.
+		ad.setHost(localName);
+		ad.setHostAccountType(localAccountType());
+		boardService.adoptHostedAd(ad.getId(), key);
+		partyState.setHosting(ad, key);
 		notifier.accept("You are now the host of this party.");
-		clearIncoming();
+		clearPending();
 	}
 
-	private void onAbort(HostTransferMessage message)
+	private void onAbort(HostTransferEvent message)
 	{
-		if (incoming != null && liveParty.isForLocalMember(message.getTargetMemberId()))
+		if (pending(Direction.INCOMING) != null && liveParty.isForLocalMember(message.getTargetMemberId()))
 		{
-			clearIncoming();
+			clearPending();
 		}
 	}
 
 	// ---- old host side -------------------------------------------------------
 
-	private void onAccept(HostTransferMessage message)
+	private void onAccept(HostTransferEvent message)
 	{
-		if (outgoing == null || !liveParty.isForLocalMember(message.getTargetMemberId())
-			|| message.getMemberId() != outgoing.targetId)
+		final PendingTransfer transfer = pending(Direction.OUTGOING);
+		if (transfer == null || !liveParty.isForLocalMember(message.getTargetMemberId())
+			|| message.getMemberId() != transfer.peerId)
 		{
 			return;
 		}
-		Party party = partyState.getCurrentParty();
-		if (party == null)
+		Advertisement ad = partyState.getCurrentAd();
+		if (ad == null)
 		{
-			clearOutgoing();
+			clearPending();
 			return;
 		}
-		outgoing.stopTimeout();
-		final OutgoingTransfer transfer = outgoing;
-		partyService.transferHost(party.getId(), partyState.getHostKey(), transfer.targetName, transfer.newKey,
-			ignored -> SwingUtilities.invokeLater(() -> onTransferAcked(party, transfer)),
+		transfer.stopTimeout();
+		boardService.transferHost(ad.getId(), partyState.getHostKey(), transfer.peerName,
+			transfer.peerAccountType, transfer.newKey,
+			ignored -> SwingUtilities.invokeLater(() -> onTransferAcked(ad, transfer)),
 			error -> SwingUtilities.invokeLater(() -> onTransferFailed(transfer)));
 	}
 
-	private void onTransferAcked(Party party, OutgoingTransfer transfer)
+	private void onTransferAcked(Advertisement ad, PendingTransfer transfer)
 	{
 		// Guard against a party that ended (or a second transfer) while the ack was in flight.
-		if (outgoing != transfer)
+		if (pending != transfer)
 		{
 			return;
 		}
-		liveParty.commitHostTransfer(transfer.targetId, transfer.newKey, transfer.hostStays);
+		liveParty.commitHostTransfer(transfer.peerId, transfer.newKey, transfer.hostStays);
 		liveParty.demoteToMember();
-		partyService.releaseHostedParty(party.getId());
-		party.setHost(transfer.targetName);
+		boardService.releaseHostedAd(ad.getId());
+		ad.setHost(transfer.peerName);
+		ad.setHostAccountType(transfer.peerAccountType);
 		if (transfer.hostStays)
 		{
-			partyState.demoteToMember(party);
-			notifier.accept("You handed the party to " + transfer.targetName + " and are now a member.");
+			partyState.demoteToMember(ad);
+			notifier.accept("You handed the party to " + transfer.peerName + " and are now a member.");
 		}
 		else
 		{
 			liveParty.leave();
 			partyState.clear();
-			notifier.accept("You handed the party to " + transfer.targetName + " and left.");
+			notifier.accept("You handed the party to " + transfer.peerName + " and left.");
 		}
-		clearOutgoing();
+		clearPending();
 	}
 
-	private void onTransferFailed(OutgoingTransfer transfer)
+	private void onTransferFailed(PendingTransfer transfer)
 	{
-		if (outgoing != transfer)
+		if (pending != transfer)
 		{
 			return;
 		}
-		liveParty.abortHostTransfer(transfer.targetId);
+		liveParty.abortHostTransfer(transfer.peerId);
 		notifier.accept("Couldn't transfer the party. You're still the host.");
-		clearOutgoing();
+		clearPending();
 	}
 
 	private void onOfferTimedOut()
 	{
-		if (outgoing == null)
+		PendingTransfer transfer = pending(Direction.OUTGOING);
+		if (transfer == null)
 		{
 			return;
 		}
-		String name = outgoing.targetName;
-		liveParty.abortHostTransfer(outgoing.targetId);
-		clearOutgoing();
-		notifier.accept(name + " didn't respond - you're still the host.");
+		liveParty.abortHostTransfer(transfer.peerId);
+		clearPending();
+		notifier.accept(transfer.peerName + " didn't respond - you're still the host.");
 	}
 
 	// ---- helpers -------------------------------------------------------------
 
-	/** The display name of an admitted, online member (excluding us), or null if not a valid target. */
-	private String memberName(long memberId)
+	/** An admitted, online member (excluding us) we could hand the party to, or null if not a valid target. */
+	private RosterMember candidate(long memberId)
 	{
-		for (LiveParty.RosterMember member : liveParty.roster())
+		for (RosterMember member : liveParty.roster())
 		{
 			if (member.getMemberId() == memberId)
 			{
-				return isCandidate(member) ? member.getName() : null;
+				return isCandidate(member) ? member : null;
 			}
 		}
 		return null;
 	}
 
+	/**
+	 * The account type a member last reported, or null until they have sent a live update. The board's
+	 * copy is only rewritten on the transfer itself, so an unknown one has to travel as "no badge"
+	 * rather than leave the outgoing host's badge on the ad.
+	 */
+	private static String accountTypeOf(RosterMember member)
+	{
+		return member.getData() == null ? null : member.getData().getAccountType();
+	}
+
+	/** Our own account type by name, or null when we aren't logged in far enough to know it. */
+	private String localAccountType()
+	{
+		AccountType type = localAccountTypeSupplier.get();
+		return type == null ? null : type.name();
+	}
+
 	/** A member we could hand the party to: an admitted, online member that isn't us. */
-	private static boolean isCandidate(LiveParty.RosterMember member)
+	private static boolean isCandidate(RosterMember member)
 	{
-		return member.getStatus() == LiveParty.Status.MEMBER && member.isOnline() && !member.isLocal();
+		return member.getStatus() == PartyStatus.MEMBER && member.isOnline() && !member.isLocal();
 	}
 
-	private void clearOutgoing()
+	/** The in-flight transfer when it runs in {@code direction}, else null. */
+	private PendingTransfer pending(Direction direction)
 	{
-		if (outgoing != null)
+		return pending != null && pending.direction == direction ? pending : null;
+	}
+
+	private void clearPending()
+	{
+		if (pending != null)
 		{
-			outgoing.stopTimeout();
-			outgoing = null;
+			pending.stopTimeout();
+			pending = null;
 		}
 	}
 
-	private void clearIncoming()
+	private enum Direction
 	{
-		if (incoming != null)
-		{
-			incoming.stopTimeout();
-			incoming = null;
-		}
+		/** We're the old host, awaiting the target's ACCEPT. */
+		OUTGOING,
+		/** We're the new host, awaiting the old host's COMMIT. */
+		INCOMING
 	}
 
-	private static final class OutgoingTransfer
+	private static final class PendingTransfer
 	{
-		final long targetId;
-		final String targetName;
+		final Direction direction;
+		/** The other side: the target we offered, or the old host that offered us. */
+		final long peerId;
+		/** Outgoing only: the target's display name. */
+		final String peerName;
+		/** Outgoing only: the target's account type, so the ad's badge follows the name. */
+		final String peerAccountType;
 		final String newKey;
+		/** Outgoing only: whether we stay in the party after handing it over. */
 		final boolean hostStays;
 		final Timer timeout;
 
-		OutgoingTransfer(long targetId, String targetName, String newKey, boolean hostStays, Timer timeout)
+		PendingTransfer(Direction direction, long peerId, String peerName, String peerAccountType, String newKey,
+			boolean hostStays, Timer timeout)
 		{
-			this.targetId = targetId;
-			this.targetName = targetName;
+			this.direction = direction;
+			this.peerId = peerId;
+			this.peerName = peerName;
+			this.peerAccountType = peerAccountType;
 			this.newKey = newKey;
 			this.hostStays = hostStays;
-			this.timeout = timeout;
-		}
-
-		void stopTimeout()
-		{
-			timeout.stop();
-		}
-	}
-
-	private static final class IncomingTransfer
-	{
-		final long oldHostId;
-		final String newKey;
-		final Timer timeout;
-
-		IncomingTransfer(long oldHostId, String newKey, Timer timeout)
-		{
-			this.oldHostId = oldHostId;
-			this.newKey = newKey;
 			this.timeout = timeout;
 		}
 

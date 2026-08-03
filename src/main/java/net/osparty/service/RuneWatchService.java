@@ -7,9 +7,10 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -47,9 +48,9 @@ public class RuneWatchService
 	private final Gson gson;
 	private final OSPartyConfig config;
 
-	private final Map<String, RuneWatchCase> cases = new ConcurrentHashMap<>();
+	/** Swapped wholesale on refresh, so a lookup never sees a half-built list. */
+	private volatile Map<String, RuneWatchCase> cases = Collections.emptyMap();
 	private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
-	private volatile boolean loaded;
 
 	@Inject
 	private RuneWatchService(OkHttpClient httpClient, Gson gson, OSPartyConfig config)
@@ -63,11 +64,6 @@ public class RuneWatchService
 	public void addListener(Runnable listener)
 	{
 		listeners.add(listener);
-	}
-
-	public boolean isLoaded()
-	{
-		return loaded;
 	}
 
 	public RuneWatchCase get(String rsn)
@@ -110,7 +106,7 @@ public class RuneWatchService
 					List<RuneWatchCase> list = gson.fromJson(
 						new InputStreamReader(body.byteStream(), StandardCharsets.UTF_8), LIST_TYPE);
 
-					Map<String, RuneWatchCase> fresh = new ConcurrentHashMap<>();
+					Map<String, RuneWatchCase> fresh = new HashMap<>();
 					if (list != null)
 					{
 						for (RuneWatchCase c : list)
@@ -122,10 +118,8 @@ public class RuneWatchService
 						}
 					}
 
-					cases.clear();
-					cases.putAll(fresh);
-					loaded = true;
-					log.debug("RuneWatch watchlist loaded: {} cases", cases.size());
+					cases = fresh;
+					log.debug("RuneWatch watchlist loaded: {} cases", fresh.size());
 					fire();
 				}
 				catch (Exception e)

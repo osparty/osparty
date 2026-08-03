@@ -27,7 +27,7 @@ final class TabIcons
 	 * Shared canvas size (px) every tab icon is centred into, so all tabs render the same size.
 	 * Kept at 16: larger tips the five-tab in-party bar over the sidebar width, wrapping a tab off-screen.
 	 */
-	static final int BOX = 16;
+	private static final int BOX = 16;
 
 	/** Tab icon size in px. A touch larger than {@link StatusIcons} so tabs stay easy to hit. */
 	private static final int SIZE = 16;
@@ -37,7 +37,7 @@ final class TabIcons
 	private static final Color GOLD = new Color(0xEC, 0xC1, 0x3B);
 	/** Shading tones for the hourglass (History): darker outline and near-black sand. */
 	private static final Color RIM = new Color(0x7A, 0x5A, 0x12);
-	private static final Color HAND = new Color(0x3A, 0x2A, 0x10);
+	private static final Color SAND = new Color(0x3A, 0x2A, 0x10);
 
 	private TabIcons()
 	{
@@ -176,7 +176,7 @@ final class TabIcons
 		g.drawRoundRect(2, 1, 12, 2, 2, 2);
 		g.drawRoundRect(2, 13, 12, 2, 2, 2);
 		// Sand: a settled pile in the lower bulb plus a thin falling stream.
-		g.setColor(HAND);
+		g.setColor(SAND);
 		g.fillPolygon(new Polygon(new int[]{6, 10, 8}, new int[]{12, 12, 9}, 3));
 		g.setStroke(new BasicStroke(1.1f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
 		g.drawLine(8, 8, 8, 11);

@@ -28,7 +28,7 @@ public class PartyHistoryEntry
 	/** True when the player hosted this party; false when they joined as a member. */
 	private boolean hosted;
 
-	/** Currently-present member count (updated as members join/leave) and the party's capacity. */
+	/** Currently-present member count, updated as members join/leave. */
 	private int size;
 	private int capacity;
 

@@ -6,10 +6,10 @@ import net.osparty.tools.HostApplicationHandler;
 import net.osparty.service.KillcountService;
 import net.osparty.OSPartyConfig;
 import net.osparty.api.DiscordLinkStatus;
-import net.osparty.api.PartyService;
+import net.osparty.api.BoardService;
 import net.osparty.service.PartyHistoryService;
-import net.osparty.model.Party;
-import net.osparty.party.HostTransferMessage;
+import net.osparty.model.Advertisement;
+import net.osparty.party.HostTransferEvent;
 import net.osparty.party.LivePartyBackend;
 import com.google.gson.Gson;
 import net.osparty.service.RuneWatchService;
@@ -65,6 +65,11 @@ public class OSPartyPanel extends PluginPanel
 	private static final String VERSION = "1.0.50";
 	private static final String GITHUB_URL = "https://github.com/osparty/osparty";
 	private static final String DISCORD_URL = "https://discord.gg/EtMRxTHXWJ";
+	/** How long an unanswered invite banner stays on the panel, and how often we sweep for expired ones. */
+	private static final long INVITE_TTL_MS = 5 * 60_000;
+	private static final int INVITE_SWEEP_MS = 30_000;
+	/** How long to wait before re-asking for link status after the server didn't answer. */
+	private static final long LINK_RETRY_MS = 30_000;
 
 	/** Green "party running" underline for the Party tab, distinct from the orange selection underline. */
 	private static final Color PARTY_ACTIVE_COLOR = new Color(0x4C, 0xAF, 0x50);
@@ -88,16 +93,19 @@ public class OSPartyPanel extends PluginPanel
 
 	private final PartyState partyState;
 	private final LivePartyBackend liveParty;
-	private final PartyService partyService;
+	private final BoardService boardService;
 	/** The backend party we're in (host or member), mirrored for off-EDT reads (invite menu); null when none. */
-	private volatile Party contextParty;
+	private volatile Advertisement contextAd;
 	/** Run when the side panel is opened (used to stop the sidebar invite blink). */
 	private volatile Runnable onActivated;
 	/** Run when the side panel is closed (used to restore the normal sidebar icon). */
 	private volatile Runnable onDeactivated;
 	/** Stacked invite banners shown at the top of the panel; keyed by backend party id. EDT only. */
-	private JPanel invitePanel;
+	private final JPanel invitePanel = buildInvitePanel();
 	private final java.util.Map<String, JPanel> inviteBanners = new java.util.HashMap<>();
+	/** When each banner stops being offered, so an ignored invite doesn't sit there for the session. */
+	private final java.util.Map<String, Long> inviteExpiry = new java.util.HashMap<>();
+	private Timer inviteSweepTimer;
 	private Consumer<net.osparty.api.PartyInvite> onInviteAccept;
 	private Consumer<net.osparty.api.PartyInvite> onInviteDecline;
 	private final HostTransferHandler hostTransferHandler;
@@ -108,12 +116,14 @@ public class OSPartyPanel extends PluginPanel
 	private Timer linkPollTimer;
 	/** Last accountHash we queried link status for, so we only re-query when the logged-in account changes. */
 	private long lastLinkQueryHash = Long.MIN_VALUE;
+	/** Epoch millis before which a failed link query isn't retried. */
+	private long linkRetryAfter;
 	/** Whether the local account is currently Discord-linked; gates the Party tab's voice buttons. */
 	private volatile boolean discordLinked;
 	/** The account's server-side badge-privacy preference, mirrored from the last link status. */
 	private volatile boolean badgesVisible = true;
 	private final SearchPanel searchPanel;
-	private final FriendsPanel favoritesPanel;
+	private final FavoritesPanel favoritesPanel;
 	private final BlockedPanel blockedPanel;
 	private final CreatePanel createPanel;
 	private final PartyPanel partyPanel;
@@ -122,12 +132,10 @@ public class OSPartyPanel extends PluginPanel
 	private final MaterialTabGroup tabGroup;
 	private final MaterialTab searchTab;
 	private final MaterialTab createTab;
-	private final MaterialTab favesTab;
+	private final MaterialTab favoritesTab;
 	private final MaterialTab blockedTab;
 	private final MaterialTab partyTab;
 	private final MaterialTab historyTab;
-	/** Resolved icon for the Party/Create tab (the OSRS sprite once loaded, else the drawn fallback). */
-	private ImageIcon partyTabIcon = TabIcons.PARTY;
 	private boolean wasInParty;
 	/** Id of the party currently logged in history, so we can stamp it ended once we leave it. */
 	private String currentHistoryPartyId;
@@ -138,7 +146,7 @@ public class OSPartyPanel extends PluginPanel
 	/** Whether the host is editing their party (the create form is shown alongside the roster). */
 	private boolean editing;
 
-	public OSPartyPanel(PartyService partyService, OSPartyConfig config, Supplier<String> playerNameSupplier,
+	public OSPartyPanel(BoardService boardService, OSPartyConfig config, Supplier<String> playerNameSupplier,
 		HostApplicationHandler hostApplicationHandler, Supplier<String> friendsChatOwnerSupplier,
 		IntSupplier worldSupplier, ItemManager itemManager, LivePartyBackend liveParty,
 		RuneWatchService runeWatchService, Supplier<AccountType> accountTypeSupplier,
@@ -153,24 +161,23 @@ public class OSPartyPanel extends PluginPanel
 		super(false);
 
 		this.liveParty = liveParty;
-		this.partyService = partyService;
+		this.boardService = boardService;
 		this.accountHashSupplier = accountHashSupplier;
 		this.historyService = historyService;
 		this.partyState = new PartyState(configManager);
-		this.hostTransferHandler = new HostTransferHandler(liveParty, partyService, partyState,
-			playerNameSupplier, gameMessage);
+		this.hostTransferHandler = new HostTransferHandler(liveParty, boardService, partyState,
+			playerNameSupplier, accountTypeSupplier, gameMessage);
 
 		setLayout(new BorderLayout());
 		setBackground(ColorScheme.DARK_GRAY_COLOR);
 		// super(false) skips PluginPanel's default border, so add our own padding.
 		setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
-		searchPanel = new SearchPanel(partyService, playerNameSupplier,
-			friendsChatOwnerSupplier, worldSupplier, partyState, liveParty, accountTypeSupplier,
-			mapRegionsSupplier, worldRegionResolver, killcountService, configManager,
+		searchPanel = new SearchPanel(boardService, playerNameSupplier, partyState, liveParty,
+			accountTypeSupplier, mapRegionsSupplier, worldRegionResolver, killcountService, configManager,
 			worldPinger, worldAddressResolver, friendNamesSupplier, favoritesService, blockListService,
 			spriteManager, config);
-		favoritesPanel = new FriendsPanel(partyService, playerNameSupplier, partyState,
+		favoritesPanel = new FavoritesPanel(boardService, playerNameSupplier, partyState,
 			liveParty, accountTypeSupplier, killcountService, worldPinger, worldRegionResolver,
 			worldAddressResolver, favoritesService, blockListService, friendNamesSupplier, spriteManager,
 			config);
@@ -182,11 +189,11 @@ public class OSPartyPanel extends PluginPanel
 		searchPanel.setOnBlockChanged(() -> { favoritesPanel.render(); blockedPanel.render(); });
 		favoritesPanel.setOnBlockChanged(() -> { searchPanel.renderCurrent(); blockedPanel.render(); });
 		blockedPanel.setOnBlockChanged(() -> { searchPanel.renderCurrent(); favoritesPanel.render(); });
-		createPanel = new CreatePanel(partyService, config, playerNameSupplier, partyState, liveParty,
-			accountTypeSupplier, accountHashSupplier, mapRegionsSupplier, coxLayoutSupplier, configManager, gson,
+		createPanel = new CreatePanel(boardService, config, playerNameSupplier, partyState, liveParty,
+			accountTypeSupplier, accountHashSupplier, mapRegionsSupplier, configManager, gson,
 			killcountService, worldSupplier);
 		createPanel.setJoinByCodeHandler(searchPanel::joinByCode);
-		partyPanel = new PartyPanel(partyService, playerNameSupplier,
+		partyPanel = new PartyPanel(boardService,
 			hostApplicationHandler, partyState, itemManager, liveParty, runeWatchService, killcountService,
 			skillIconManager, worldSupplier, friendsChatOwnerSupplier, coxLayoutSupplier,
 			config, configManager, favoritesService, blockListService, spriteManager,
@@ -219,8 +226,8 @@ public class OSPartyPanel extends PluginPanel
 		searchTab.setToolTipText("Search");
 		createTab = new MaterialTab(TabIcons.PARTY, tabGroup, createScroll);
 		createTab.setToolTipText("Party");
-		favesTab = new MaterialTab(TabIcons.FAVORITES, tabGroup, favoritesPanel);
-		favesTab.setToolTipText("Favorites");
+		favoritesTab = new MaterialTab(TabIcons.FAVORITES, tabGroup, favoritesPanel);
+		favoritesTab.setToolTipText("Favorites");
 		blockedTab = new MaterialTab(TabIcons.BLOCK, tabGroup, blockedPanel);
 		blockedTab.setToolTipText("Blocked");
 		partyTab = new MaterialTab(TabIcons.PARTY, tabGroup, partyPanel)
@@ -247,23 +254,19 @@ public class OSPartyPanel extends PluginPanel
 
 		// Upgrade tabs to OSRS sprites; Party keeps its bundled PNG (no clean square sprite exists).
 		applyTabSprite(spriteManager, SpriteID.GE_SEARCH, searchTab::setIcon);
-		applyTabSprite(spriteManager, SpriteID.WORLD_SWITCHER_STAR_MEMBERS, favesTab::setIcon);
+		applyTabSprite(spriteManager, SpriteID.WORLD_SWITCHER_STAR_MEMBERS, favoritesTab::setIcon);
 		applyTabSprite(spriteManager, SpriteID.TAB_IGNORES, blockedTab::setIcon);
 		applyTabItem(itemManager, ItemID.HOURGLASS, historyTab::setIcon);
 
 		// Register all tabs (needed for select()); rebuildTabs lays out the idle bar.
 		tabGroup.addTab(searchTab);
 		tabGroup.addTab(createTab);
-		tabGroup.addTab(favesTab);
+		tabGroup.addTab(favoritesTab);
 		tabGroup.addTab(blockedTab);
 		tabGroup.addTab(partyTab);
 		tabGroup.addTab(historyTab);
 		rebuildTabs(false);
 		tabGroup.select(searchTab);
-
-		invitePanel = new JPanel();
-		invitePanel.setLayout(new javax.swing.BoxLayout(invitePanel, javax.swing.BoxLayout.Y_AXIS));
-		invitePanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
 		JPanel north = new JPanel(new BorderLayout());
 		north.setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -287,51 +290,11 @@ public class OSPartyPanel extends PluginPanel
 		footer.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		footer.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 
-		// ---- Row 1: GitHub + Discord community buttons, centred ----
-		JButton github = new JButton();
-		github.setToolTipText("Open the OSParty GitHub page");
-		github.setFocusPainted(false);
-		github.setBorder(BorderFactory.createEmptyBorder());
-		github.setContentAreaFilled(false);
-		github.setCursor(new Cursor(Cursor.HAND_CURSOR));
-		BufferedImage logo = ImageUtil.loadImageResource(getClass(), "/net/osparty/icons/github.png");
-		if (logo != null)
-		{
-			github.setIcon(new ImageIcon(ImageUtil.resizeImage(logo, 16, 16)));
-		}
-		else
-		{
-			github.setText("GitHub");
-			github.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-			github.setFont(FontManager.getRunescapeSmallFont());
-		}
-		github.addActionListener(e -> LinkBrowser.browse(GITHUB_URL));
-
-		JButton discord = new JButton();
-		discord.setToolTipText("Open the OSParty Discord");
-		discord.setFocusPainted(false);
-		discord.setBorder(BorderFactory.createEmptyBorder());
-		discord.setContentAreaFilled(false);
-		discord.setCursor(new Cursor(Cursor.HAND_CURSOR));
-		BufferedImage discordLogo = ImageUtil.loadImageResource(getClass(), "/net/osparty/icons/discord.png");
-		if (discordLogo != null)
-		{
-			discord.setIcon(new ImageIcon(ImageUtil.resizeImage(discordLogo, 16, 16)));
-		}
-		else
-		{
-			discord.setText("Discord");
-			discord.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-			discord.setFont(FontManager.getRunescapeSmallFont());
-		}
-		discord.addActionListener(e -> LinkBrowser.browse(DISCORD_URL));
-
 		JPanel row1 = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 0));
 		row1.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		row1.add(github);
-		row1.add(discord);
+		row1.add(linkButton("GitHub", "Open the OSParty GitHub page", "github.png", GITHUB_URL));
+		row1.add(linkButton("Discord", "Open the OSParty Discord", "discord.png", DISCORD_URL));
 
-		// ---- Row 2: online (left) | link state (centre) | version (right) ----
 		JPanel row2 = new JPanel(new BorderLayout());
 		row2.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
@@ -364,14 +327,38 @@ public class OSPartyPanel extends PluginPanel
 		return footer;
 	}
 
+	/** A borderless icon button opening {@code url}, falling back to a text label when the icon is missing. */
+	private JButton linkButton(String text, String tooltip, String iconFile, String url)
+	{
+		JButton button = new JButton();
+		button.setToolTipText(tooltip);
+		button.setFocusPainted(false);
+		button.setBorder(BorderFactory.createEmptyBorder());
+		button.setContentAreaFilled(false);
+		button.setCursor(new Cursor(Cursor.HAND_CURSOR));
+		BufferedImage icon = ImageUtil.loadImageResource(getClass(), "/net/osparty/icons/" + iconFile);
+		if (icon != null)
+		{
+			button.setIcon(new ImageIcon(ImageUtil.resizeImage(icon, 16, 16)));
+		}
+		else
+		{
+			button.setText(text);
+			button.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			button.setFont(FontManager.getRunescapeSmallFont());
+		}
+		button.addActionListener(e -> LinkBrowser.browse(url));
+		return button;
+	}
+
 	private void updateActiveUsers()
 	{
-		int online = partyService.onlineUsers();
+		int online = boardService.onlineUserCount();
 		activeUsersLabel.setText(online < 0 ? "" : online + " online");
 
 		// Only re-query link status when the logged-in account changes, not every tick.
 		long hash = accountHashSupplier.getAsLong();
-		if (hash != lastLinkQueryHash)
+		if (hash != lastLinkQueryHash && System.currentTimeMillis() >= linkRetryAfter)
 		{
 			lastLinkQueryHash = hash;
 			refreshDiscordLinkStatus();
@@ -435,7 +422,7 @@ public class OSPartyPanel extends PluginPanel
 		{
 			return;
 		}
-		partyService.setBadgeVisibility(hash, visible,
+		boardService.setBadgeVisibility(hash, visible,
 			status -> SwingUtilities.invokeLater(() -> applyLinkStatus(status)));
 	}
 
@@ -447,7 +434,7 @@ public class OSPartyPanel extends PluginPanel
 		{
 			return;
 		}
-		partyService.unlinkDiscord(hash);
+		boardService.unlinkDiscord(hash);
 		applyLinkStatus(null); // reset the button (and re-gate the Party tab's voice buttons)
 	}
 
@@ -460,7 +447,18 @@ public class OSPartyPanel extends PluginPanel
 			applyLinkStatus(null);
 			return;
 		}
-		partyService.getDiscordLink(hash, status -> SwingUtilities.invokeLater(() -> applyLinkStatus(status)));
+		boardService.fetchDiscordLink(hash, status -> SwingUtilities.invokeLater(() ->
+		{
+			if (status == null)
+			{
+				// Unknown, not "not linked": a server we couldn't reach must not latch the footer to
+				// "Link Discord" (and the Party tab to "Authorize") for the rest of the session.
+				lastLinkQueryHash = Long.MIN_VALUE;
+				linkRetryAfter = System.currentTimeMillis() + LINK_RETRY_MS;
+				return;
+			}
+			applyLinkStatus(status);
+		}));
 	}
 
 	private void applyLinkStatus(DiscordLinkStatus status)
@@ -471,7 +469,10 @@ public class OSPartyPanel extends PluginPanel
 		discordLinkButton.setVisible(loggedIn);
 
 		boolean linked = loggedIn && status != null && status.isLinked();
-		badgesVisible = status == null || status.isBadgesVisible();
+		if (status != null)
+		{
+			badgesVisible = status.isBadgesVisible();
+		}
 		discordLinkButton.setIconTextGap(4);
 		if (linked)
 		{
@@ -514,7 +515,7 @@ public class OSPartyPanel extends PluginPanel
 		}
 		discordLinkButton.setEnabled(false);
 		discordLinkButton.setText("Linking…");
-		partyService.startDiscordLink(hash,
+		boardService.startDiscordLink(hash,
 			url -> SwingUtilities.invokeLater(() ->
 			{
 				LinkBrowser.browse(url);
@@ -541,7 +542,7 @@ public class OSPartyPanel extends PluginPanel
 		linkPollTimer = new Timer(2000, e ->
 		{
 			ticks[0]++;
-			partyService.getDiscordLink(hash, status -> SwingUtilities.invokeLater(() ->
+			boardService.fetchDiscordLink(hash, status -> SwingUtilities.invokeLater(() ->
 			{
 				if (status != null && status.isLinked())
 				{
@@ -562,7 +563,7 @@ public class OSPartyPanel extends PluginPanel
 		linkPollTimer.start();
 	}
 
-	/** Release the live party-list socket (and timers). Call when the plugin unloads. */
+	/** Stop every timer this panel owns and drop pending invites. Call when the plugin unloads. */
 	public void dispose()
 	{
 		if (presenceTimer != null)
@@ -573,13 +574,24 @@ public class OSPartyPanel extends PluginPanel
 		{
 			linkPollTimer.stop();
 		}
+		if (inviteSweepTimer != null)
+		{
+			inviteSweepTimer.stop();
+		}
+		inviteBanners.clear();
+		inviteExpiry.clear();
+		invitePanel.removeAll();
 		searchPanel.dispose();
+		favoritesPanel.dispose();
+		partyPanel.dispose();
+		createPanel.dispose();
+		historyPanel.dispose();
 	}
 
-	/** The backend party we're currently in (host or member), or null. Safe to read off the EDT. */
-	public Party currentBackendParty()
+	/** The ad for the party we're currently in (host or member), or null. Safe to read off the EDT. */
+	public Advertisement currentAd()
 	{
-		return contextParty;
+		return contextAd;
 	}
 
 	/** Register a callback invoked when the side panel is opened (used to clear the invite blink). */
@@ -633,22 +645,60 @@ public class OSPartyPanel extends PluginPanel
 	/** Show an Accept/Decline invite banner at the top of the panel. Idempotent per party. EDT only. */
 	public void addInvite(net.osparty.api.PartyInvite invite)
 	{
-		Party party = invite.getParty();
-		if (party == null || party.getId() == null || inviteBanners.containsKey(party.getId()))
+		Advertisement ad = invite.getAd();
+		if (ad == null || ad.getId() == null || inviteBanners.containsKey(ad.getId()))
 		{
 			return;
 		}
 		JPanel banner = buildInviteBanner(invite);
-		inviteBanners.put(party.getId(), banner);
+		inviteBanners.put(ad.getId(), banner);
+		inviteExpiry.put(ad.getId(), System.currentTimeMillis() + INVITE_TTL_MS);
 		invitePanel.add(banner);
 		invitePanel.revalidate();
 		invitePanel.repaint();
+		startInviteSweep();
+	}
+
+	/** Drop banners whose invite has gone stale, so an ignored one can't sit on the panel forever. */
+	private void startInviteSweep()
+	{
+		if (inviteSweepTimer == null)
+		{
+			inviteSweepTimer = new Timer(INVITE_SWEEP_MS, e ->
+			{
+				long now = System.currentTimeMillis();
+				for (String adId : new java.util.ArrayList<>(inviteExpiry.keySet()))
+				{
+					if (inviteExpiry.get(adId) <= now)
+					{
+						removeInvite(adId);
+					}
+				}
+				if (inviteBanners.isEmpty())
+				{
+					inviteSweepTimer.stop();
+				}
+			});
+		}
+		if (!inviteSweepTimer.isRunning())
+		{
+			inviteSweepTimer.start();
+		}
+	}
+
+	private static JPanel buildInvitePanel()
+	{
+		JPanel panel = new JPanel();
+		panel.setLayout(new javax.swing.BoxLayout(panel, javax.swing.BoxLayout.Y_AXIS));
+		panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		return panel;
 	}
 
 	/** Remove the invite banner for a party (once accepted/declined elsewhere). EDT only. */
-	public void removeInvite(String partyId)
+	public void removeInvite(String adId)
 	{
-		JPanel banner = partyId == null ? null : inviteBanners.remove(partyId);
+		JPanel banner = adId == null ? null : inviteBanners.remove(adId);
+		inviteExpiry.remove(adId);
 		if (banner != null)
 		{
 			invitePanel.remove(banner);
@@ -659,13 +709,13 @@ public class OSPartyPanel extends PluginPanel
 
 	private JPanel buildInviteBanner(net.osparty.api.PartyInvite invite)
 	{
-		Party party = invite.getParty();
-		String from = invite.getFromName() != null ? invite.getFromName() : party.getHost();
+		Advertisement ad = invite.getAd();
+		String from = invite.getFromName() != null ? invite.getFromName() : ad.getHost();
 		if (from == null)
 		{
 			from = "A friend";
 		}
-		net.osparty.model.Activity activity = net.osparty.model.Activity.fromId(party.getActivity());
+		net.osparty.model.Activity activity = net.osparty.model.Activity.fromId(ad.getActivity());
 		String label = activity != null ? activity.getDisplayName() : "a party";
 
 		JPanel banner = new JPanel(new BorderLayout(0, 4));
@@ -717,22 +767,21 @@ public class OSPartyPanel extends PluginPanel
 	}
 
 	/** Restore a party the player was hosting before a restart. No-op if already in a party. */
-	public void resumeHostedParty(Party party)
+	public void resumeHostedParty(Advertisement ad)
 	{
-		if (partyState.isInParty() || party == null || party.getPassphrase() == null)
+		if (partyState.isInParty() || ad == null || ad.getPassphrase() == null)
 		{
 			return;
 		}
-		liveParty.hostParty(party.getPassphrase(), party.getHost(), party.getActivity(), party.getCapacity(), false,
-			party.getHostRole(), party.isLearner(), party.isTeacher());
-		// Re-admit members who were already in the party before the restart, so they don't come back as
-		// applicants the host has to accept again.
-		liveParty.rememberResumedRoster(party.getMembers());
-		partyState.resumeHosting(party);
+		// The room lives on the owner node, so hosting again rejoins the existing room with its roster
+		// intact — members who were already in it stay admitted rather than coming back as applicants.
+		liveParty.hostParty(ad.getPassphrase(), ad.getHost(), ad.getActivity(), ad.getCapacity(), false,
+			ad.getHostRole(), ad.isLearner(), ad.isTeacher());
+		partyState.resumeHosting(ad);
 	}
 
 	/** Route an inbound host-transfer handshake message (from the plugin's party-bus subscription). */
-	public void onHostTransferMessage(HostTransferMessage message)
+	public void onHostTransferEvent(HostTransferEvent message)
 	{
 		hostTransferHandler.onMessage(message);
 	}
@@ -741,7 +790,7 @@ public class OSPartyPanel extends PluginPanel
 	{
 		boolean inParty = partyState.isInParty();
 		// Mirror the current backend party so the in-game invite menu (client thread) can read it safely.
-		contextParty = partyState.getCurrentParty();
+		contextAd = partyState.getCurrentAd();
 
 		// The party ended while editing — drop edit mode (and its tab layout) first.
 		if (!inParty && editing)
@@ -772,12 +821,12 @@ public class OSPartyPanel extends PluginPanel
 		{
 			// Entered a party. Only admitted players get a history row; a joiner's record is deferred
 			// to syncHistoryRoster() until the host admits them.
-			Party party = partyState.getCurrentParty();
-			currentHistoryPartyId = party == null ? null : party.getId();
+			Advertisement ad = partyState.getCurrentAd();
+			currentHistoryPartyId = ad == null ? null : ad.getId();
 			historyRecorded = false;
 			if (liveParty.isLocalAdmitted())
 			{
-				historyService.record(party, partyState.isHost());
+				historyService.record(ad, partyState.isHost());
 				historyRecorded = true;
 				historyPanel.refresh();
 			}
@@ -809,19 +858,19 @@ public class OSPartyPanel extends PluginPanel
 		{
 			return;
 		}
-		Party party = partyState.getCurrentParty();
-		if (party == null)
+		Advertisement ad = partyState.getCurrentAd();
+		if (ad == null)
 		{
 			return;
 		}
 		// Deferred record for joiners: the host just admitted us, so record now (see onPartyStateChanged).
 		if (!historyRecorded && liveParty.isLocalAdmitted())
 		{
-			historyService.record(party, partyState.isHost());
+			historyService.record(ad, partyState.isHost());
 			historyRecorded = true;
 			historyPanel.refresh();
 		}
-		if (historyService.updateRoster(party.getId(), liveParty.currentMembers()))
+		if (historyService.updateRoster(ad.getId(), liveParty.currentMembers()))
 		{
 			historyPanel.refresh();
 		}
@@ -830,7 +879,7 @@ public class OSPartyPanel extends PluginPanel
 	/** Restore the Create/Party tab to its default party icon + tooltip (leaving edit mode). */
 	private void setCreateTabParty()
 	{
-		createTab.setIcon(partyTabIcon);
+		createTab.setIcon(TabIcons.PARTY);
 		createTab.setToolTipText("Party");
 	}
 
@@ -841,19 +890,14 @@ public class OSPartyPanel extends PluginPanel
 		{
 			return;
 		}
+		// The sprite callback runs on the client thread when it isn't cached yet.
 		spriteManager.getSpriteAsync(spriteId, 0, img ->
 		{
 			if (img != null)
 			{
-				apply.accept(toTabIcon(img));
+				SwingUtilities.invokeLater(() -> apply.accept(TabIcons.boxed(img)));
 			}
 		});
-	}
-
-	/** Centre a sprite into the shared tab-icon box so every tab button stays the same size. */
-	private static ImageIcon toTabIcon(BufferedImage img)
-	{
-		return TabIcons.boxed(img);
 	}
 
 	/** Fetch an item sprite (async) and set it as a tab icon once loaded. No-op when ItemManager is null. */
@@ -874,13 +918,13 @@ public class OSPartyPanel extends PluginPanel
 	/** Host clicked "Edit party": open the create form in edit mode beside the Party (roster) tab. */
 	private void openEditParty()
 	{
-		Party party = partyState.getCurrentParty();
-		if (party == null || !partyState.isHost())
+		Advertisement ad = partyState.getCurrentAd();
+		if (ad == null || !partyState.isHost())
 		{
 			return;
 		}
 		editing = true;
-		createPanel.enterEditMode(party);
+		createPanel.enterEditMode(ad);
 		createTab.setIcon(TabIcons.EDIT);
 		createTab.setToolTipText("Edit party");
 		rebuildTabsForEdit();
@@ -907,46 +951,29 @@ public class OSPartyPanel extends PluginPanel
 	/** Edit layout: Search | Party | Edit | Favorites (the create form stays available while hosting). */
 	private void rebuildTabsForEdit()
 	{
-		tabGroup.remove(searchTab);
-		tabGroup.remove(createTab);
-		tabGroup.remove(favesTab);
-		tabGroup.remove(blockedTab);
-		tabGroup.remove(partyTab);
-		tabGroup.remove(historyTab);
-
-		tabGroup.add(searchTab);
-		tabGroup.add(partyTab);
-		tabGroup.add(createTab);
-		tabGroup.add(favesTab);
-		tabGroup.add(blockedTab);
-		tabGroup.add(historyTab);
-
-		tabGroup.revalidate();
-		tabGroup.repaint();
+		layoutTabs(searchTab, partyTab, createTab, favoritesTab, blockedTab, historyTab);
 	}
 
 	/** Rebuild the tab bar for idle (Create shown) vs in-party (Party shown, Create hidden). */
 	private void rebuildTabs(boolean inParty)
 	{
+		layoutTabs(searchTab, inParty ? partyTab : createTab, favoritesTab, blockedTab, historyTab);
+	}
+
+	/** Lay the bar out as exactly {@code order}; every tab stays registered with the group either way. */
+	private void layoutTabs(MaterialTab... order)
+	{
 		tabGroup.remove(searchTab);
 		tabGroup.remove(createTab);
-		tabGroup.remove(favesTab);
+		tabGroup.remove(favoritesTab);
 		tabGroup.remove(blockedTab);
 		tabGroup.remove(partyTab);
 		tabGroup.remove(historyTab);
 
-		tabGroup.add(searchTab);
-		if (inParty)
+		for (MaterialTab tab : order)
 		{
-			tabGroup.add(partyTab);
+			tabGroup.add(tab);
 		}
-		else
-		{
-			tabGroup.add(createTab);
-		}
-		tabGroup.add(favesTab);
-		tabGroup.add(blockedTab);
-		tabGroup.add(historyTab);
 
 		tabGroup.revalidate();
 		tabGroup.repaint();

@@ -1,41 +1,42 @@
 package net.osparty.api;
 
 import net.osparty.model.Member;
-import net.osparty.model.Party;
-import net.osparty.model.PartyEditRequest;
-import net.osparty.model.PartyRequest;
+import net.osparty.model.Advertisement;
+import net.osparty.model.AdvertisementEditRequest;
+import net.osparty.model.AdvertisementRequest;
 import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * Source of party advertisements, implemented by {@link PartyApiClient} over the live WebSocket.
- * Results may arrive off the EDT, so UI callers must marshal back themselves.
+ * The advertisement board: everything the plugin asks of the listing service. Implemented by
+ * {@link BoardApiClient} over the shared WebSocket. Results may arrive off the EDT, so UI callers must
+ * marshal back themselves.
  */
-public interface PartyService
+public interface BoardService
 {
 	/**
-	 * Subscribe to live updates of the open-party list; {@code onParties} gets the full list on each
+	 * Subscribe to live updates of the open-ad list; {@code onAds} gets the full list on each
 	 * change. Reconnects automatically. Returns a handle to close when done.
 	 */
-	PartySubscription subscribeParties(Consumer<List<Party>> onParties, Consumer<Throwable> onError);
+	BoardSubscription subscribeAds(Consumer<List<Advertisement>> onAds, Consumer<Throwable> onError);
 
 	/**
-	 * Like {@link #subscribeParties(Consumer, Consumer)} but scopes the feed to one activity id
-	 * ({@code null} = all). Re-scope later via {@link PartySubscription#setActivity}.
+	 * Like {@link #subscribeAds(Consumer, Consumer)} but scopes the feed to one activity id
+	 * ({@code null} = all). Re-scope later via {@link BoardSubscription#setActivity}.
 	 */
-	PartySubscription subscribeParties(Consumer<List<Party>> onParties, Consumer<Throwable> onError, String activityId);
+	BoardSubscription subscribeAds(Consumer<List<Advertisement>> onAds, Consumer<Throwable> onError, String activityId);
 
-	/** One-shot lookup of a party by invite code (public or private). */
-	void getPartyByCode(String code, Consumer<Party> onSuccess, Consumer<Throwable> onError);
+	/** One-shot lookup of an ad by invite code (public or private). */
+	void fetchAdByCode(String code, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError);
 
 	/** One-shot lookup of the ad hosted by a player (used to rejoin after a restart). */
-	void getPartyByHost(String host, Consumer<Party> onSuccess, Consumer<Throwable> onError);
+	void fetchAdByHost(String host, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError);
 
 	/**
-	 * Register a callback fired (off the EDT) with the party id when the server reports the
+	 * Register a callback fired (off the EDT) with the ad id when the server reports the
 	 * hosted ad no longer exists (stale purge, manual cleanup, or expiry before a resume).
 	 */
-	default void setOnHostedPartyGone(Consumer<String> callback)
+	default void setOnHostedAdGone(Consumer<String> callback)
 	{
 	}
 
@@ -49,53 +50,55 @@ public interface PartyService
 	 * Create an advertised party. {@code hostKey} is a secret the caller mints; the server requires it on
 	 * later host-only mutations, so only the real host can change or close the ad.
 	 */
-	void createParty(PartyRequest partyRequest, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError);
+	void createAd(AdvertisementRequest request, String hostKey, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError);
 
 	/**
 	 * Report live occupancy/world/layout/roles for the hosted ad; only genuine changes are sent. A
 	 * non-positive/null/blank field means "unknown" and is left unchanged. {@code members} is the live
 	 * roster (host first, with accountHashes) for block/favourite matching. {@code hostKey} authorises it.
 	 */
-	void heartbeat(String partyId, int size, int world, String layout, String roles, List<Member> members,
-		String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError);
+	void heartbeat(String adId, int size, int world, String layout, String roles, List<Member> members,
+		String hostKey, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError);
 
 	/**
 	 * Host action: edit the advertised party settings. Unlike {@link #heartbeat} this carries every
 	 * editable field so values can be cleared as well as set. {@code hostKey} authorises it.
 	 */
-	void editParty(String partyId, String hostKey, PartyEditRequest edit, Consumer<Party> onSuccess,
+	void editAd(String adId, String hostKey, AdvertisementEditRequest edit, Consumer<Advertisement> onSuccess,
 		Consumer<Throwable> onError);
 
-	/** Host action: close the ad. {@code hostKey} authorises it. */
-	void disbandParty(String partyId, String host, String hostKey, Consumer<Party> onSuccess, Consumer<Throwable> onError);
+	/** Host action: take the ad down (what the UI calls disbanding). {@code hostKey} authorises it. */
+	void removeAd(String adId, String host, String hostKey, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError);
 
 	/**
 	 * Host action: reassign the ad to {@code newHost} in place (same id/code/channel). {@code newHostKey}
-	 * becomes the ad's credential. {@code onSuccess} fires on the ack; {@code onError} on failure.
+	 * becomes the ad's credential. {@code newHostAccountType} re-stamps the ad's account-type badge, which
+	 * belongs to whoever runs it; null means "not an ironman" (the board treats it as a normal account).
+	 * {@code onSuccess} fires on the ack; {@code onError} on failure.
 	 */
-	void transferHost(String partyId, String currentHostKey, String newHost, String newHostKey,
-		Consumer<Party> onSuccess, Consumer<Throwable> onError);
+	void transferHost(String adId, String currentHostKey, String newHost, String newHostAccountType,
+		String newHostKey, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError);
 
 	/** New host: adopt an ad handed to us via {@link #transferHost} so the socket owns and resumes it. */
-	void adoptHostedParty(String partyId, String hostKey);
+	void adoptHostedAd(String adId, String hostKey);
 
-	/** Old host: drop local hosting state for a handed-away party WITHOUT disbanding it. */
-	void releaseHostedParty(String partyId);
+	/** Old host: drop local hosting state for a handed-away ad WITHOUT disbanding it. */
+	void releaseHostedAd(String adId);
 
 	/**
 	 * Host action: provision a Discord voice channel via the backend bot. {@code onUrl} gets the invite
 	 * URL, {@code onError} on failure. Idempotent. {@code hostKey} authorises it. Callbacks may be off the EDT.
 	 */
-	void createVoiceChannel(String partyId, String hostKey, Consumer<String> onUrl, Consumer<Throwable> onError);
+	void createVoiceChannel(String adId, String hostKey, Consumer<String> onUrl, Consumer<Throwable> onError);
 
 	/**
 	 * Begin an OAuth2 Discord link for {@code accountHash}. {@code onUrl} gets the authorize URL,
-	 * {@code onError} on failure. Poll {@link #getDiscordLink} to learn when it completes.
+	 * {@code onError} on failure. Poll {@link #fetchDiscordLink} to learn when it completes.
 	 */
 	void startDiscordLink(long accountHash, Consumer<String> onUrl, Consumer<Throwable> onError);
 
 	/** Look up whether {@code accountHash} is linked to a Discord account; result may be null if offline. */
-	void getDiscordLink(long accountHash, Consumer<DiscordLinkStatus> onResult);
+	void fetchDiscordLink(long accountHash, Consumer<DiscordLinkStatus> onResult);
 
 	/** Remove the Discord binding for {@code accountHash} server-side. Fire-and-forget. */
 	void unlinkDiscord(long accountHash);
@@ -110,15 +113,15 @@ public interface PartyService
 	 * Host action: disconnect a kicked member from the party's voice channel. Fire-and-forget; no-ops
 	 * unless they're linked and in that channel. {@code hostKey} authorises it.
 	 */
-	void kickVoiceMember(String partyId, String hostKey, long accountHash);
+	void kickVoiceMember(String adId, String hostKey, long accountHash);
 
-	void reportParty(String partyId);
+	void reportAd(String adId);
 
 	/**
 	 * Member action: request per-user access to the party's voice channel, then open the invite.
 	 * {@code onGranted} fires on success; {@code onError} if refused or offline.
 	 */
-	void requestVoiceAccess(String partyId, long accountHash, Runnable onGranted, Consumer<Throwable> onError);
+	void requestVoiceAccess(String adId, long accountHash, Runnable onGranted, Consumer<Throwable> onError);
 
 	/**
 	 * Register our OSRS identity so the backend can route incoming invites to us. Remembered and re-sent
@@ -130,12 +133,12 @@ public interface PartyService
 	 * Invite an online friend to a party we're in. {@code onDelivered} gets true if the invite reached the
 	 * friend's client, false if they weren't online in OSParty (or we're offline). May fire off the EDT.
 	 */
-	void inviteFriend(String partyId, String fromName, long fromAccountHash, String targetName,
+	void inviteFriend(String adId, String fromName, long fromAccountHash, String targetName,
 		Consumer<Boolean> onDelivered);
 
 	/** Register where inbound invites are delivered; replaces any previous listener. May fire off the EDT. */
 	void setInviteListener(Consumer<PartyInvite> listener);
 
 	/** @return the server-reported number of connected plugin users, or {@code -1} if not yet known. */
-	int onlineUsers();
+	int onlineUserCount();
 }

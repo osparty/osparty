@@ -4,13 +4,8 @@ import java.util.function.IntUnaryOperator;
 import net.runelite.api.gameval.ItemID;
 
 /**
- * The defence-draining special-attack weapons OSParty tracks, with the equipped
- * item ids used to recognise them and each weapon's projectile hit delay. A
- * trimmed, self-contained copy of the data OSParty previously read from
- * RuneLite's Special Attack Counter plugin, so the defence tracker no longer
- * needs that plugin installed or enabled. Only defence-draining weapons are
- * listed; other special weapons are simply not recognised (and would be ignored
- * by the tracker anyway).
+ * The defence-draining special-attack weapons OSParty tracks, with the equipped item ids used to
+ * recognise them and each weapon's projectile hit delay. Weapons that drain nothing aren't listed.
  */
 public enum SpecWeapon
 {

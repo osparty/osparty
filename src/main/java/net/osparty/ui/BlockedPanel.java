@@ -3,10 +3,6 @@ package net.osparty.ui;
 import net.osparty.service.BlockListService;
 import net.osparty.store.PlayerFlag;
 import java.awt.BorderLayout;
-import java.awt.Component;
-import java.awt.Dimension;
-import java.awt.Font;
-import java.util.ArrayList;
 import java.util.List;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -24,10 +20,9 @@ import net.runelite.client.ui.FontManager;
 /**
  * The "Blocked" tab: a management list of the players on the local block list, each with
  * an Unblock button. Blocked players are hidden from Search by default (see
- * {@link BlockListService}); this tab is where you review and lift those blocks. Formerly a
- * collapsible section on the Favorites tab. Re-rendered when the tab is shown and whenever a
- * block changes elsewhere (via {@link #render()}); unblocking here notifies the other tabs
- * through {@link #setOnBlockChanged(Runnable)}.
+ * {@link BlockListService}); this tab is where you review and lift those blocks. Re-rendered
+ * when the tab is shown and whenever a block changes elsewhere (via {@link #render()});
+ * unblocking here notifies the other tabs through {@link #setOnBlockChanged(Runnable)}.
  */
 class BlockedPanel extends JPanel
 {
@@ -44,19 +39,7 @@ class BlockedPanel extends JPanel
 		setBackground(ColorScheme.DARK_GRAY_COLOR);
 		setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
 
-		JPanel header = new JPanel(new BorderLayout(6, 0));
-		header.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		header.setBorder(BorderFactory.createCompoundBorder(
-			BorderFactory.createMatteBorder(0, 0, 1, 0, ColorScheme.MEDIUM_GRAY_COLOR),
-			BorderFactory.createEmptyBorder(5, 8, 5, 8)));
-		header.setMaximumSize(new Dimension(Integer.MAX_VALUE, header.getPreferredSize().height));
-
-		JLabel title = new JLabel("Blocked players");
-		title.setIcon(StatusIcons.BLOCK_ON);
-		title.setIconTextGap(6);
-		title.setFont(FontManager.getRunescapeSmallFont().deriveFont(Font.BOLD));
-		title.setForeground(ColorScheme.BRAND_ORANGE);
-		header.add(title, BorderLayout.CENTER);
+		JPanel header = SectionHeader.plain("Blocked players", StatusIcons.BLOCK_ON);
 
 		listContent = new JPanel();
 		listContent.setLayout(new BoxLayout(listContent, BoxLayout.Y_AXIS));
@@ -112,7 +95,7 @@ class BlockedPanel extends JPanel
 	void render()
 	{
 		listContent.removeAll();
-		List<PlayerFlag> blocked = blockListService == null ? new ArrayList<>() : blockListService.entries();
+		List<PlayerFlag> blocked = blockListService.entries();
 		blocked.sort((a, b) -> a.getUsername().compareToIgnoreCase(b.getUsername()));
 
 		statusLabel.setText(blocked.isEmpty() ? "No blocked players." : "");
@@ -128,10 +111,9 @@ class BlockedPanel extends JPanel
 
 	private JPanel buildRow(PlayerFlag flag)
 	{
-		JPanel row = new JPanel(new BorderLayout(4, 0));
+		JPanel row = PanelWidgets.cappedRow(new BorderLayout(4, 0));
 		row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		row.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 6));
-		row.setAlignmentX(Component.LEFT_ALIGNMENT);
 
 		JLabel name = new JLabel(flag.getUsername());
 		name.setFont(FontManager.getRunescapeSmallFont());
@@ -156,8 +138,6 @@ class BlockedPanel extends JPanel
 
 		row.add(name, BorderLayout.CENTER);
 		row.add(unblock, BorderLayout.EAST);
-		// Cap the height so the Y-axis BoxLayout doesn't stretch each row to fill the panel.
-		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
 		return row;
 	}
 }

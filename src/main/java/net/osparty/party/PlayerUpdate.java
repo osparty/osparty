@@ -2,31 +2,28 @@ package net.osparty.party;
 
 import java.util.Map;
 import lombok.Data;
-import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
-import net.runelite.client.party.messages.PartyMemberMessage;
 
 /**
- * Live self-report a party member broadcasts about their own character: worn
- * gear, inventory and combat stats. Every member sends their own; the framework
- * stamps the sender's {@code memberId} on receipt.
+ * Live self-report a party member broadcasts about their own character: worn gear, inventory and combat
+ * stats. Every member sends their own, and only the parts that changed.
  *
- * <p>Sent whole rather than diffed/bit-packed — simpler, and the payload (a couple
- * of int arrays plus a small map) is small enough not to matter.
- *
- * <p>Field names are the wire names on RuneLite's own party relay, which is what this class is registered
- * with, so they cannot move: a peer on any other version of this plugin reads them by these names, and a
- * rename would make an updated client invisible to everyone who had not updated yet. Nothing is gained
- * there either — that relay is RuneLite's server, not ours.
- *
- * <p>The OSParty live socket does shorten them, because there the bytes are ours to pay for. That
- * translation lives at the V2 boundary ({@code LivePartyV2.toWire}/{@code fromWire}), not here.
+ * <p>This is the plugin's own shape, not a wire format. Frames carry the short names in
+ * {@code LiveStateCodec.TO_WIRE}, and {@code toWire}/{@code fromWire} translate at that boundary: a peer
+ * running a different version of this plugin reads the frame by those short names, so they are what
+ * cannot move. The field names here can.
  */
 @Data
 @NoArgsConstructor
-@EqualsAndHashCode(callSuper = true)
-public class PlayerUpdate extends PartyMemberMessage
+public class PlayerUpdate
 {
+	/**
+	 * The member this report is about. Sent in the profile frame and read back by
+	 * {@code PartyPanel.toApplicant}, which is how a pending applicant gets an id the host can admit or
+	 * reject. Goes on the wire under this name, unshortened.
+	 */
+	private long memberId;
+
 	private String name;
 	/** The member's stable accountHash; {@code 0} when unknown (older client). Used for block/favourite matching. */
 	private long accountHash;
@@ -106,13 +103,14 @@ public class PlayerUpdate extends PartyMemberMessage
 	private String friendsChatOwner;
 
 	/**
-	 * V2: the sender is deliberately withholding its inventory (and rune pouch), rather than not having sent
-	 * it yet. Receivers merge each update into the last one they held, so an omitted field means "unchanged"
-	 * — without this, turning privacy on would leave peers looking at the last inventory it saw. Boxed and
-	 * left null on the RuneLite-relay path, so V1's wire format is unchanged. Delete with that path at P6.
+	 * The sender is deliberately withholding its inventory (and rune pouch), rather than not having sent it
+	 * yet. Receivers merge each update into the last one they held, so an omitted field means "unchanged" —
+	 * without this, turning privacy on would leave peers looking at the last inventory they saw. Boxed so
+	 * that a frame which says nothing about privacy leaves the receiver's copy alone; {@code stripPrivate}
+	 * always writes both, on and off, so the flag can never get stuck true.
 	 */
 	private Boolean hideInventory;
 
-	/** V2: as {@link #hideInventory}, for worn equipment. */
+	/** As {@link #hideInventory}, for worn equipment. */
 	private Boolean hideGear;
 }

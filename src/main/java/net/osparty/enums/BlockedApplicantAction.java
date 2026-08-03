@@ -8,11 +8,8 @@ import net.osparty.OSPartyConfig;
  */
 public enum BlockedApplicantAction
 {
-	/** Still show the applicant, but flagged as blocked so the host decides. */
 	WARN("Warn (don't reject)"),
-	/** Automatically decline, and post a chat line so the host knows. */
 	REJECT_NOTIFY("Auto-reject + notify"),
-	/** Automatically decline with no message. */
 	REJECT_SILENT("Auto-reject silently");
 
 	private final String label;

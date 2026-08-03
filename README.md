@@ -14,15 +14,16 @@ The plugin is split into two layers:
   passphrase. The reference server lives in its own repo,
   [github.com/osparty/ospartyapi](https://github.com/osparty/ospartyapi)
   (Spring Boot + Redis).
-- The **live party**: RuneLite's built-in peer-to-peer party network
-  (`PartyService`/`WSClient`). Joining an ad means joining the host's passphrase
-  room. The roster, each member's live gear/inventory/combat stats and their
-  chosen role are all exchanged P2P. On top of that the plugin adds a
-  host-authoritative management layer (admit, decline, kick, capacity); see
-  [Live party](#live-party-peer-to-peer).
+- The **live party**: an in-memory room on the listing service, owned by exactly
+  one node. Joining an ad means joining the host's passphrase room. The roster is
+  server-authoritative; each member's live gear/inventory/combat stats and chosen
+  role are relayed between members without the server reading them. On top of that
+  the plugin adds host management (admit, decline, kick, capacity); see
+  [Live party](#live-party).
 
-Discovery, hosting and the optional Discord features all run over a single
-WebSocket to the listing service; there is no REST API.
+Discovery, hosting, the live party and the optional Discord features all run over
+a **single** WebSocket, with each frame tagged for the channel it belongs to;
+there is no REST API.
 
 ## Side panel
 
@@ -84,19 +85,22 @@ mode can't be matched against a party in another:
 
 | Mode | Roles |
 |------|-------|
-| **ToB** | Melee · Ranged · North freeze · South freeze |
-| **HMT** (ToB hard mode) | Melee · Ranged · North freeze · South freeze |
+| **ToB** | Melee · Ranged · Freeze · North freeze · South freeze |
+| **HMT** (ToB hard mode) | Melee · Ranged · Freeze · North freeze · South freeze |
 | **CoX** | Melee · Mage · Runner · Fill |
 | **CM** (CoX challenge mode) | Veng · Ancient · Normal spells · Fill |
 | **BA** (Barbarian Assault) | Attacker · Defender · Collector · Healer |
 
-- Hosting: pick your own role and the team composition. ToB's composition is
-  fixed by party size; CoX, HMT and BA use a count per role, with CoX's Fill
-  absorbing the remainder. The composition has to fill the party and include the
-  host's role.
+- Hosting: pick your own role and the team composition. ToB and HMT share one
+  composition, fixed by party size: a three-man is Melee · Ranged · Freeze (a
+  lone freezer covers both sides), four and five split the freezers north/south.
+  CoX and BA use a count per role, with CoX's Fill absorbing the remainder. The
+  composition has to fill the party and include the host's role.
 - Searching: the Roles filter has a tab per mode. Tick the roles you're willing
   to fill (Fill / Any means "any role"). A party matches if it still needs one of
   your ticked roles, and applying prompts you to commit to one of its open roles.
+  The freeze roles are interchangeable when matching, so a north freezer still
+  finds three-man teams looking for a Freeze.
 - The host keeps the still-open roles up to date as members join and leave, so
   search cards and the apply prompt always show what's left.
 
@@ -201,10 +205,11 @@ The list starts empty; Search shows parties once people advertise them.
 ## Listing protocol
 
 The listing service is a bulletin board: it advertises open parties and tracks no
-membership (that lives in the P2P room). The reference implementation is
+membership (that lives in the live room, on whichever node owns it). The reference
+implementation is
 [github.com/osparty/ospartyapi](https://github.com/osparty/ospartyapi).
 
-The plugin keeps one WebSocket open to `/api/v1/ws/parties` for the whole session
+The plugin keeps one WebSocket open to `/api/ws` for the whole session
 (`PartySocket`) and uses it for reading, hosting and the Discord features. The
 open connection is itself the ad's keep-alive: the server refreshes the ad's TTL
 while the client is connected, so there is no periodic heartbeat. On a brief drop
@@ -309,23 +314,28 @@ and so on). `minHardModeKillCount` only means something for activities with a
 harder variant (`hardModeLabel` in `Activity.java`: CoX to CM, ToB to HM, ToA to
 Expert). The host key never appears in a `Party`.
 
-## Live party (peer-to-peer)
+## Live party
 
-Once you create or join an ad, the actual party runs over RuneLite's party
-network, keyed by the ad's passphrase.
+Once you create or join an ad, the party runs as an in-memory room on the listing
+service, keyed by the ad's passphrase and owned by one node. The host's
+advertisement names that node, so joiners connect straight to it.
 
-- **Roster and live data**: every member broadcasts a `PlayerUpdate` (equipment,
-  inventory, combat stats, chosen role, learner mark) that everyone renders on the
-  Party tab. The host broadcasts a `PartyStateMessage`: the authoritative admitted
-  roster plus the rules.
-- **Host management**: applicants who join the room are pending until the host
-  admits them, so the host sees their real gear, stats and role before deciding.
-  Decline and Kick send a `MemberCommand` the target honours by leaving, and
-  capacity is enforced by the host. Admitting or declining from the side panel
-  also dismisses the in-game chatbox prompt for that applicant.
-- **Trust**: enforcement is cooperative, not server-enforced; a modified client
-  could ignore it. This is the same trust model as the rest of RuneLite's party
-  network.
+- **Roster**: the owning node holds it and broadcasts it. Who is in the party,
+  who is pending and what the capacity is are the server's answer, not a claim
+  any client makes.
+- **Live data**: every member sends a `PlayerUpdate` (equipment, inventory,
+  combat stats, chosen role, learner mark) as the parts that changed, and the
+  node relays it to the rest of the room without reading it. Receivers merge each
+  update into the copy they hold and render it on the Party tab.
+- **Host management**: applicants are pending until the host admits them, so the
+  host sees their real gear, stats and role before deciding. Admit, Decline and
+  Kick are enforced by the owning node, and capacity with them. Admitting or
+  declining from the side panel also dismisses the in-game chatbox prompt for
+  that applicant.
+- **Trust**: the server owns membership, so admission, capacity and kicks hold
+  against a modified client. What a member reports about *itself* — gear, stats,
+  role — is self-asserted and relayed verbatim, exactly as it would be anywhere
+  else.
 
 ### Applying and joining
 

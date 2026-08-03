@@ -29,7 +29,6 @@ final class StatusIcons
 	static final ImageIcon RUNEWATCH = new ImageIcon(runewatch());
 	static final ImageIcon STAR_FILLED = new ImageIcon(star(true));
 	static final ImageIcon STAR_OUTLINE = new ImageIcon(star(false));
-	static final ImageIcon CROWN = loadCrown();
 	static final ImageIcon PLUS = new ImageIcon(plus());
 	/** "No entry" ban glyph for the block toggle: red when blocked, grey when not. */
 	static final ImageIcon BLOCK_ON = new ImageIcon(ban(new Color(0xD1, 0x3A, 0x3A)));
@@ -188,19 +187,6 @@ final class StatusIcons
 		g.drawLine(3, 7, 11, 7);
 		g.dispose();
 		return img;
-	}
-
-	/** The real OSRS Jagex Moderator emblem (bundled PNG), used at its native pixel size. */
-	private static ImageIcon loadCrown()
-	{
-		try
-		{
-			return new ImageIcon(ImageUtil.loadImageResource(StatusIcons.class, "/net/osparty/icons/mod_crown.png"));
-		}
-		catch (Exception e)
-		{
-			return null;
-		}
 	}
 
 	private static BufferedImage star(boolean filled)

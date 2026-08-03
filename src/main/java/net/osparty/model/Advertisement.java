@@ -4,16 +4,30 @@ import java.util.List;
 import lombok.Data;
 
 /**
- * A party as returned by the queue API. The {@code activity} field is the
- * activity id (see {@link Activity#getId()}) so the model stays decoupled from
- * the client's enum when (de)serialising.
+ * One advertisement from the board: what a host is running, who is in it, and how to reach it. Not the
+ * party — the party is the live room, reached over the same socket on the other channel.
+ *
+ * <p>The {@code activity} field is the activity id (see {@link Activity#getId()}) so the model stays
+ * decoupled from the client's enum when (de)serialising.
+ *
+ * <p>Field names here are the wire, and they must match the server's {@code net.osparty.api.model
+ * .Advertisement} exactly — neither side annotates, so both serialise by field name.
  */
 @Data
-public class Party
+public class Advertisement
 {
 	private String id;
 	private String activity;
 	private String host;
+
+	/**
+	 * The current host's account hash as the server reports it, or 0 from a server that predates the
+	 * field. Read it through {@link #getHostAccountHash()}, never directly: a host transfer rewrites
+	 * {@code host} without touching the member list, so the old fallback of member zero goes stale the
+	 * moment a party changes hands.
+	 */
+	private long hostAccountHash;
+
 	private String description;
 	private int size;
 	private int capacity;
@@ -26,8 +40,8 @@ public class Party
 	private long createdAt;
 
 	/**
-	 * Live RuneLite P2P room backing this ad; roster/live data is exchanged P2P,
-	 * not via the API. {@code null} for legacy/seed ads with no live room.
+	 * Live room backing this ad. Roster and live member state travel over the live socket, not the
+	 * advertisement. {@code null} for seed ads with no live room.
 	 */
 	private String passphrase;
 
@@ -35,17 +49,23 @@ public class Party
 	private List<Member> members;
 
 	/**
-	 * @return the host's accountHash (the first member's), or {@code 0} when unknown
-	 * (older host client, or legacy/seed ad). Used for block/favourite matching.
+	 * @return the host's accountHash, or {@code 0} when unknown (older host client, or legacy/seed ad).
+	 * Used for block/favourite matching. Falls back to member zero only for a server that predates
+	 * {@link #hostAccountHash}, where it is the best guess available; member zero is wrong after a host
+	 * transfer, which is why the server sends the hash itself.
 	 */
 	public long getHostAccountHash()
 	{
+		if (hostAccountHash != 0L)
+		{
+			return hostAccountHash;
+		}
 		return members == null || members.isEmpty() ? 0L : members.get(0).getAccountHash();
 	}
 
 	private int minKillCount;
 	private int minHardModeKillCount;
-	private boolean privateParty;
+	private boolean privateAd;
 	/**
 	 * The pod the host's live room is on, reported by the host. Null on an ad from a plugin that predates
 	 * it, in which case joining costs a redirect exactly as it always did.
@@ -66,6 +86,12 @@ public class Party
 
 	private boolean learner;
 	private boolean teacher;
+
+	/** Discord voice channel the server made for this ad, or null when it made none. */
+	private String discordChannelId;
+
+	/** Invite to {@link #discordChannelId}, or null when there is no channel. */
+	private String discordInviteUrl;
 
 	public boolean isFull()
 	{

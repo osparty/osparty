@@ -1,7 +1,6 @@
 package net.osparty.tools;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.Value;
@@ -12,14 +11,13 @@ import net.runelite.api.Actor;
 import net.runelite.api.Client;
 import net.runelite.api.NPC;
 import net.runelite.api.Player;
-import net.runelite.api.Varbits;
 import net.runelite.api.gameval.VarbitID;
 
 /**
  * Tracks the live defence of the monster a party is draining with defence-lowering
  * special attacks. Both the physical Defence level and the magic-defence roll are
  * tracked. Drains are supplied by {@link SpecialAttackTracker} for both the local
- * player and party members (via the party bus), so the computed values reflect the
+ * player and party members (over the live socket), so the computed values reflect the
  * whole party's draining, not just our own.
  *
  * <p>The drain formulas and CoX party-size and Challenge Mode scaling mirror the OSRS
@@ -34,7 +32,28 @@ import net.runelite.api.gameval.VarbitID;
 @Singleton
 public class DefenceTracker
 {
-	private static final int COX_SCALED_PARTY_SIZE_VARBIT = 9540;
+	private static final int PERCENT = 100;
+
+	/** The magic-defence roll is {@code (9 + Magic level) * (Magic-def bonus + 64)}. */
+	private static final int MAGIC_ROLL_LEVEL_OFFSET = 9;
+	private static final int MAGIC_ROLL_BONUS_OFFSET = 64;
+
+	private static final int DWH_DRAIN_PCT = 30;
+	private static final int ELDER_MAUL_DRAIN_PCT = 35;
+	/** Condemn leaves 85% of the levels it touches, applied to the current values rather than the base. */
+	private static final int CONDEMN_KEEPS_PCT = 85;
+	private static final int ARCLIGHT_DRAIN_PCT = 5;
+	private static final int ARCLIGHT_DEMON_DRAIN_PCT = 10;
+	private static final int EMBERLIGHT_DRAIN_PCT = 5;
+	private static final int EMBERLIGHT_DEMON_DRAIN_PCT = 15;
+	/** Each landed Ralos glaive takes an eighth of the target's current Magic level off its Defence. */
+	private static final int RALOS_GLAIVE_MAGIC_DIVISOR = 8;
+	private static final int ANCHOR_DAMAGE_DIVISOR = 10;
+
+	private static final int CM_SCALE_PCT = 50;
+	private static final int TEKTON_CM_SMALL_PARTY = 4;
+	private static final int TEKTON_CM_DEFENCE_PCT_SMALL_PARTY = 20;
+	private static final int TEKTON_CM_DEFENCE_PCT = 35;
 
 	private final Client client;
 	private final OSPartyConfig config;
@@ -55,12 +74,14 @@ public class DefenceTracker
 	private long magicDefBonus;
 	private long magicStartDefBonus;
 	private boolean magicUsesDefence;
+	private boolean demon;
 	/** The accursed sceptre's curse doesn't stack, so it only ever lands once per monster. */
 	private boolean accursedApplied;
 	/** True once a special attack has actually landed on the tracked monster. */
 	private boolean drained;
 
-	private final List<Drain> pending = new ArrayList<>();
+	/** Filled from the socket reader thread, drained on the client thread. */
+	private final ConcurrentLinkedDeque<Drain> pending = new ConcurrentLinkedDeque<>();
 
 	@Value
 	public static class DefenceState
@@ -108,22 +129,21 @@ public class DefenceTracker
 		Drain drain = new Drain(weapon, npcIndex, hit, world);
 		if (weapon == SpecWeapon.ELDER_MAUL)
 		{
-			pending.add(0, drain);
+			pending.addFirst(drain);
 		}
 		else
 		{
-			pending.add(drain);
+			pending.addLast(drain);
 		}
 	}
 
 	/** Client thread. */
 	public void onGameTick()
 	{
-		for (Drain drain : pending)
+		for (Drain drain = pending.poll(); drain != null; drain = pending.poll())
 		{
 			process(drain);
 		}
-		pending.clear();
 
 		if (bossIndex != -1)
 		{
@@ -152,7 +172,7 @@ public class DefenceTracker
 			return;
 		}
 		NPC target = interactingNpc();
-		if (target == null || target.getName() == null || BossDefence.forName(target.getName()) == null)
+		if (target == null || target.getName() == null || BossDefence.matchingNpcName(target.getName()) == null)
 		{
 			if (bossIndex != -1)
 			{
@@ -186,7 +206,7 @@ public class DefenceTracker
 			return;
 		}
 		String name = npc.getName();
-		if (BossDefence.forName(name) == null && bossIndex != index)
+		if (BossDefence.matchingNpcName(name) == null && bossIndex != index)
 		{
 			return; // not a tracked monster
 		}
@@ -203,7 +223,7 @@ public class DefenceTracker
 
 	private void setBoss(String name, int index)
 	{
-		BossDefence boss = BossDefence.forName(name);
+		BossDefence boss = BossDefence.matchingNpcName(name);
 		bossName = name;
 		bossIndex = index;
 		bossDef = boss != null ? boss.getBaseDef() : 0;
@@ -213,30 +233,35 @@ public class DefenceTracker
 		magicLevel = boss != null ? boss.getBaseMagic() : 0;
 		magicDefBonus = boss != null ? boss.getBaseMagicDef() : 0;
 		magicUsesDefence = boss != null && boss.has(BossDefence.Flag.MAGIC_USES_DEFENCE);
+		demon = boss != null && boss.has(BossDefence.Flag.DEMON);
 		accursedApplied = false;
 		drained = false;
 
 		// In CoX, the boss's combat levels are scaled up by the (scaled) party size and again
 		// in Challenge Mode, but the magic-defence bonus is not. Defence always scales as a
 		// defensive stat; Magic counts as defensive for a few monsters and offensive for the rest.
-		if (boss != null && client.getVarbitValue(Varbits.IN_RAID) == 1 && isCoxBoss(name))
+		if (boss != null && boss.has(BossDefence.Flag.COX_SCALED)
+			&& client.getVarbitValue(VarbitID.RAIDS_CLIENT_INDUNGEON) == 1)
 		{
-			int partySize = Math.max(1, client.getVarbitValue(COX_SCALED_PARTY_SIZE_VARBIT));
+			int partySize = Math.max(1, client.getVarbitValue(VarbitID.RAIDS_CLIENT_PARTYSIZE_SCALED));
 			int n = partySize - 1;
-			int defensivePct = 100 + (int) Math.sqrt(n) + n * 7 / 10;
-			int offensivePct = 100 + (int) Math.sqrt(n) * 7 + n;
+			int defensivePct = coxDefensivePct(n);
+			int offensivePct = coxOffensivePct(n);
 			boolean magicIsDefensive = boss.has(BossDefence.Flag.COX_MAGIC_IS_DEFENSIVE);
 
-			bossDef = bossDef * defensivePct / 100;
-			magicLevel = magicLevel * (magicIsDefensive ? defensivePct : offensivePct) / 100;
+			bossDef = bossDef * defensivePct / PERCENT;
+			magicLevel = magicLevel * (magicIsDefensive ? defensivePct : offensivePct) / PERCENT;
 
 			if (client.getVarbitValue(VarbitID.RAIDS_CHALLENGE_MODE) == 1)
 			{
 				// Tekton is given a smaller defensive bump than everything else so that
 				// specs still land; offensive stats always take the flat 50%.
-				int cmDefencePct = isTekton(name) ? (partySize < 4 ? 20 : 35) : 50;
+				int cmDefencePct = boss.has(BossDefence.Flag.COX_CM_SMALL_DEFENCE_BUMP)
+					? (partySize < TEKTON_CM_SMALL_PARTY
+						? TEKTON_CM_DEFENCE_PCT_SMALL_PARTY : TEKTON_CM_DEFENCE_PCT)
+					: CM_SCALE_PCT;
 				bossDef = addPercent(bossDef, cmDefencePct);
-				magicLevel = addPercent(magicLevel, magicIsDefensive ? cmDefencePct : 50);
+				magicLevel = addPercent(magicLevel, magicIsDefensive ? cmDefencePct : CM_SCALE_PCT);
 			}
 		}
 		bossStartDef = bossDef;
@@ -254,13 +279,13 @@ public class DefenceTracker
 			case DRAGON_WARHAMMER:
 				if (hit > 0)
 				{
-					bossDef -= bossDef * 3 / 10;
+					bossDef -= bossDef * DWH_DRAIN_PCT / PERCENT;
 				}
 				break;
 			case ELDER_MAUL:
 				if (hit > 0)
 				{
-					bossDef -= bossDef * 35 / 100;
+					bossDef -= bossDef * ELDER_MAUL_DRAIN_PCT / PERCENT;
 				}
 				break;
 			case BANDOS_GODSWORD:
@@ -278,24 +303,24 @@ public class DefenceTracker
 				// glaives that connected, not damage.
 				for (int i = 0; i < hit; i++)
 				{
-					bossDef -= magicLevel / 8;
+					bossDef -= magicLevel / RALOS_GLAIVE_MAGIC_DIVISOR;
 				}
 				break;
 			case ARCLIGHT:
 			case DARKLIGHT:
 				if (hit > 0)
 				{
-					bossDef -= base * (isDemon(bossName) ? 2 : 1) / 20 + 1;
+					bossDef -= base * (demon ? ARCLIGHT_DEMON_DRAIN_PCT : ARCLIGHT_DRAIN_PCT) / PERCENT + 1;
 				}
 				break;
 			case EMBERLIGHT:
 				if (hit > 0)
 				{
-					bossDef -= base * (isDemon(bossName) ? 3 : 1) / 20 + 1;
+					bossDef -= base * (demon ? EMBERLIGHT_DEMON_DRAIN_PCT : EMBERLIGHT_DRAIN_PCT) / PERCENT + 1;
 				}
 				break;
 			case BARRELCHEST_ANCHOR:
-				bossDef -= hit / 10;
+				bossDef -= hit / ANCHOR_DAMAGE_DIVISOR;
 				break;
 			case BONE_DAGGER:
 			case DORGESHUUN_CROSSBOW:
@@ -311,8 +336,8 @@ public class DefenceTracker
 				if (hit > 0 && !accursedApplied)
 				{
 					accursedApplied = true;
-					bossDef = bossDef * 17 / 20;
-					magicLevel = magicLevel * 17 / 20;
+					bossDef = bossDef * CONDEMN_KEEPS_PCT / PERCENT;
+					magicLevel = magicLevel * CONDEMN_KEEPS_PCT / PERCENT;
 				}
 				break;
 			case SEERCULL:
@@ -366,41 +391,19 @@ public class DefenceTracker
 	/** Integer percentage increase, truncated, as the game applies it. */
 	private static long addPercent(long value, int percent)
 	{
-		return value + value * percent / 100;
+		return value + value * percent / PERCENT;
 	}
 
-	private static boolean isTekton(String name)
+	/** CoX defensive stats scale by sqrt(n) + 0.7n percent, for n players beyond the first. */
+	private static int coxDefensivePct(int extraPlayers)
 	{
-		return name.equals("Tekton") || name.equals("Tekton (enraged)");
+		return PERCENT + (int) Math.sqrt(extraPlayers) + extraPlayers * 7 / 10;
 	}
 
-	private static boolean isDemon(String name)
+	/** CoX offensive stats scale by 7*sqrt(n) + n percent, for n players beyond the first. */
+	private static int coxOffensivePct(int extraPlayers)
 	{
-		return name.equalsIgnoreCase("K'ril Tsutsaroth")
-			|| name.equalsIgnoreCase("Abyssal Sire")
-			|| name.equalsIgnoreCase("Yama");
-	}
-
-	private static boolean isCoxBoss(String name)
-	{
-		switch (name)
-		{
-			case "Abyssal portal":
-			case "Deathly mage":
-			case "Deathly ranger":
-			case "Great Olm":
-			case "Great Olm (Left claw)":
-			case "Great Olm (Right claw)":
-			case "Ice Demon":
-			case "Skeletal Mystic":
-			case "Tekton":
-			case "Tekton (enraged)":
-			case "Vasa Nistirio":
-			case "Lizardman shaman":
-				return true;
-			default:
-				return false;
-		}
+		return PERCENT + (int) Math.sqrt(extraPlayers) * 7 + extraPlayers;
 	}
 
 	private NPC npcByIndex(int index)
@@ -421,8 +424,10 @@ public class DefenceTracker
 		{
 			return null;
 		}
-		long roll = (9 + (magicUsesDefence ? bossDef : magicLevel)) * (magicDefBonus + 64);
-		long baseRoll = (9 + (magicUsesDefence ? bossStartDef : magicStartLevel)) * (magicStartDefBonus + 64);
+		long roll = (MAGIC_ROLL_LEVEL_OFFSET + (magicUsesDefence ? bossDef : magicLevel))
+			* (magicDefBonus + MAGIC_ROLL_BONUS_OFFSET);
+		long baseRoll = (MAGIC_ROLL_LEVEL_OFFSET + (magicUsesDefence ? bossStartDef : magicStartLevel))
+			* (magicStartDefBonus + MAGIC_ROLL_BONUS_OFFSET);
 		return new DefenceState(bossIndex, bossDef, minDef, bossStartDef, roll, baseRoll,
 			magicDefBonus, magicStartDefBonus);
 	}
@@ -441,6 +446,7 @@ public class DefenceTracker
 		magicDefBonus = 0;
 		magicStartDefBonus = 0;
 		magicUsesDefence = false;
+		demon = false;
 		accursedApplied = false;
 		drained = false;
 		pending.clear();

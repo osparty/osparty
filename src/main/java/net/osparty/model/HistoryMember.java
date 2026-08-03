@@ -30,7 +30,6 @@ public class HistoryMember
 	/** Epoch millis we first observed this member gone; {@code 0} means still present. */
 	private long leftAt;
 
-	/** @return true while this member is still in the party (has not been seen to leave). */
 	public boolean isPresent()
 	{
 		return leftAt == 0;

@@ -4,10 +4,10 @@ import net.osparty.model.Activity;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import javax.swing.SwingUtilities;
@@ -21,13 +21,18 @@ import net.runelite.client.hiscore.Skill;
 /**
  * Looks up a player's killcount for an activity from the OSRS hiscores, since we
  * can't read another account's boss KC locally. Results are cached per
- * (player, activity); the normal hiscores endpoint covers every account type.
+ * (player, activity), bounded and time-limited; the normal hiscores endpoint covers
+ * every account type.
  */
 @Slf4j
 @Singleton
 public class KillcountService
 {
 	private static final long FAILURE_RETRY_MS = 60_000L;
+	/** A killcount goes stale as the player keeps playing, so a hit is only good for so long. */
+	private static final long SUCCESS_TTL_MS = 30 * 60_000L;
+	/** Browsing the board touches a new (player, activity) every card, so the cache is capped. */
+	private static final int MAX_ENTRIES = 250;
 
 	/** {@code -1} = unknown / unranked. */
 	public static final class Killcount
@@ -52,12 +57,21 @@ public class KillcountService
 
 		private boolean isStale()
 		{
-			return unavailable && System.currentTimeMillis() - fetchedAt > FAILURE_RETRY_MS;
+			long age = System.currentTimeMillis() - fetchedAt;
+			return age > (unavailable ? FAILURE_RETRY_MS : SUCCESS_TTL_MS);
 		}
 	}
 
 	private final HiscoreClient hiscoreClient;
-	private final Map<String, Killcount> cache = new ConcurrentHashMap<>();
+	/** Insertion-ordered and capped; guarded by {@link #lock} like the rest of the lookup state. */
+	private final Map<String, Killcount> cache = new LinkedHashMap<String, Killcount>()
+	{
+		@Override
+		protected boolean removeEldestEntry(Map.Entry<String, Killcount> eldest)
+		{
+			return size() > MAX_ENTRIES;
+		}
+	};
 	/** Guards {@link #inFlight} and {@link #waiting} together, so a callback is never dropped on a race. */
 	private final Object lock = new Object();
 	private final Set<String> inFlight = new HashSet<>();
@@ -75,12 +89,17 @@ public class KillcountService
 		{
 			return null;
 		}
-		return cache.get(key(rsn, activity));
+		synchronized (lock)
+		{
+			Killcount hit = cache.get(key(rsn, activity));
+			return hit == null || hit.isStale() ? null : hit;
+		}
 	}
 
 	/**
 	 * Look up the activity killcount for {@code rsn}, hitting the hiscores at most once per
-	 * (player, activity) — a failed lookup is retried after {@link #FAILURE_RETRY_MS}.
+	 * (player, activity) until the cached result goes stale ({@link #FAILURE_RETRY_MS} for a
+	 * failure, {@link #SUCCESS_TTL_MS} for a hit).
 	 * {@code onComplete} always fires on the EDT, including when the result is already cached
 	 * or another caller's lookup is already in flight; callers may rely on it to resume work.
 	 */

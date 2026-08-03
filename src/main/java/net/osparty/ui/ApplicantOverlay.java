@@ -36,12 +36,6 @@ public class ApplicantOverlay extends OverlayPanel
 		this.activity = activity;
 	}
 
-	public void clear()
-	{
-		this.applicants = new ArrayList<>();
-		this.activity = null;
-	}
-
 	@Override
 	public Dimension render(Graphics2D graphics)
 	{
@@ -60,7 +54,7 @@ public class ApplicantOverlay extends OverlayPanel
 			.color(Color.ORANGE)
 			.build());
 
-		// Cap the list so the overlay can't grow off the bottom of the screen (point 43).
+		// Cap the list so the overlay can't grow off the bottom of the screen.
 		int max = Math.max(1, config.applicantOverlayMax());
 		int shown = 0;
 		for (Applicant a : list)

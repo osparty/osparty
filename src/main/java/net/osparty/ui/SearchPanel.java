@@ -4,12 +4,12 @@ import net.osparty.service.FavoritesService;
 import net.osparty.service.KillcountService;
 import net.osparty.OSPartyConfig;
 import net.osparty.tools.WorldPinger;
-import net.osparty.api.PartyService;
-import net.osparty.api.PartySubscription;
+import net.osparty.api.BoardService;
+import net.osparty.api.BoardSubscription;
 import net.osparty.model.Activity;
 import net.osparty.model.LootRule;
 import net.osparty.model.Member;
-import net.osparty.model.Party;
+import net.osparty.model.Advertisement;
 import net.osparty.model.Role;
 import net.osparty.party.LivePartyBackend;
 import java.awt.BorderLayout;
@@ -39,7 +39,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.IntFunction;
-import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -118,8 +117,6 @@ class SearchPanel extends PartyCardPanel
 	private static final String SORT_PING   = "Lowest ping";
 	private static final String SORT_FULL   = "Closest to full";
 
-	private final Supplier<String> friendsChatOwnerSupplier;
-	private final IntSupplier worldSupplier;
 	private final Supplier<int[]> mapRegionsSupplier;
 	private final ConfigManager configManager;
 
@@ -133,6 +130,8 @@ class SearchPanel extends PartyCardPanel
 	/** Per-activity open-party count badge, refreshed as the live list changes. */
 	private final Map<Activity, JLabel> activityCountLabels = new EnumMap<>(Activity.class);
 	private final Set<Role> selectedRoles = EnumSet.noneOf(Role.class);
+	/** Keeps a handle to each role checkbox so Reset can sync their visual state. */
+	private final Map<Role, JCheckBox> roleCheckboxes = new EnumMap<>(Role.class);
 	private boolean rolesExpanded;
 	private final JButton roleToggle = new JButton();
 	private final JTabbedPane roleTabs = new JTabbedPane();
@@ -144,7 +143,7 @@ class SearchPanel extends PartyCardPanel
 	private boolean regionsExpanded;
 	private final JButton regionToggle = new JButton();
 	private final JPanel regionContent = new JPanel();
-	/** Outer "Filters" disclosure that wraps every filter section except Activities (point 8). */
+	/** Outer "Filters" disclosure that wraps every filter section except Activities. */
 	private boolean filtersExpanded;
 	private final JButton filtersToggle = new JButton();
 	private final JPanel filtersContent = new JPanel();
@@ -188,24 +187,64 @@ class SearchPanel extends PartyCardPanel
 	private final JButton applyFiltersButton = new JButton("Apply filters");
 	private final JLabel statusLabel = new JLabel();
 	private final JPanel resultsPanel = new JPanel();
-	/** Results scroll vs the offline message + Reconnect button (point 52). */
+	/** Results scroll vs the offline message + Reconnect button. */
 	private JScrollPane scroll;
 	private final JButton reconnectButton = new JButton("Reconnect");
 	private JPanel disconnectedPanel;
 	private boolean showingDisconnected;
 
-	private List<Party> lastResults;
+	private List<Advertisement> lastResults;
 	private String renderedSignature;
 	/** Rendered card per party id, reused across refreshes so a push only touches changed cards. */
 	private final Map<String, JComponent> cardsById = new HashMap<>();
 	/** The content signature each card was rendered from; a mismatch rebuilds just that card. */
 	private final Map<String, String> cardSignatures = new HashMap<>();
 	private Timer autoRefreshTimer;
+	private Timer buttonStateTimer;
 	/** Live party-list socket; non-null only while the Search tab is visible. */
-	private PartySubscription subscription;
+	private BoardSubscription subscription;
 
-	SearchPanel(PartyService partyService, Supplier<String> playerNameSupplier,
-                Supplier<String> friendsChatOwnerSupplier, IntSupplier worldSupplier, PartyState partyState,
+	/**
+	 * Every keystroke in the search / max-ping fields costs a full filter, sort, signature and
+	 * persist pass, so coalesce them: each keystroke restarts the timer and only the pause fires.
+	 */
+	private static final int FILTER_DEBOUNCE_MS = 200;
+	private final Timer searchDebounce = debounce(e -> searchTextChanged());
+	private final Timer maxPingDebounce = debounce(e -> filtersChanged());
+
+	private static Timer debounce(java.awt.event.ActionListener action)
+	{
+		Timer timer = new Timer(FILTER_DEBOUNCE_MS, action);
+		timer.setRepeats(false);
+		return timer;
+	}
+
+	/** A document listener that restarts {@code timer} on every edit. */
+	private static DocumentListener restarting(Timer timer)
+	{
+		return new DocumentListener()
+		{
+			@Override
+			public void insertUpdate(DocumentEvent e)
+			{
+				timer.restart();
+			}
+
+			@Override
+			public void removeUpdate(DocumentEvent e)
+			{
+				timer.restart();
+			}
+
+			@Override
+			public void changedUpdate(DocumentEvent e)
+			{
+				timer.restart();
+			}
+		};
+	}
+
+	SearchPanel(BoardService boardService, Supplier<String> playerNameSupplier, PartyState partyState,
                 LivePartyBackend liveParty, Supplier<AccountType> accountTypeSupplier, Supplier<int[]> mapRegionsSupplier,
                 IntFunction<WorldRegion> worldRegionResolver, KillcountService killcountService, ConfigManager configManager,
                 WorldPinger worldPinger, IntFunction<String> worldAddressResolver,
@@ -213,11 +252,9 @@ class SearchPanel extends PartyCardPanel
                 BlockListService blockListService, SpriteManager spriteManager,
                 OSPartyConfig config)
 	{
-		super(partyService, playerNameSupplier, partyState, liveParty, accountTypeSupplier,
+		super(boardService, playerNameSupplier, partyState, liveParty, accountTypeSupplier,
 			killcountService, worldPinger, worldRegionResolver, worldAddressResolver,
 			favoritesService, blockListService, friendNamesSupplier, spriteManager, config);
-		this.friendsChatOwnerSupplier = friendsChatOwnerSupplier;
-		this.worldSupplier = worldSupplier;
 		this.mapRegionsSupplier = mapRegionsSupplier;
 		this.configManager = configManager;
 
@@ -242,7 +279,7 @@ class SearchPanel extends PartyCardPanel
 		resultsPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
 
 		// The whole tab scrolls as one; tracks viewport width so cards never overflow their Apply button.
-		JPanel content = new ScrollableColumn(new BorderLayout(0, 8));
+		JPanel content = new ScrollableColumn(new BorderLayout(0, 8), 64);
 		content.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		content.add(north, BorderLayout.NORTH);
 		content.add(resultsPanel, BorderLayout.CENTER);
@@ -302,22 +339,23 @@ class SearchPanel extends PartyCardPanel
 		});
 
 		// Keep the Apply/Join buttons in step with login state (cheap, no network).
-		new Timer(1_000, e -> {
+		buttonStateTimer = new Timer(1_000, e -> {
 			if (isShowing())
 			{
 				updateAllButtons();
 				updateConnectionView();
 			}
-		}).start();
+		});
+		buttonStateTimer.start();
 	}
 
 	/** Wraps the non-activity filter sections in one collapsible "Filters" disclosure (collapsed by default). */
 	private JPanel buildFiltersSection()
 	{
-		JPanel panel = cappedRow(new BorderLayout(0, 4));
+		JPanel panel = PanelWidgets.cappedRow(new BorderLayout(0, 4));
 		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 
-		styleCollapsibleHeader(filtersToggle);
+		SectionHeader.filterToggle(filtersToggle, false);
 		filtersToggle.addActionListener(e -> setFiltersExpanded(!filtersExpanded));
 		panel.add(filtersToggle, BorderLayout.NORTH);
 
@@ -346,7 +384,7 @@ class SearchPanel extends PartyCardPanel
 
 	private void updateFiltersToggleText()
 	{
-		filtersToggle.setIcon(filtersExpanded ? CARET_EXPANDED : CARET_COLLAPSED);
+		filtersToggle.setIcon(filtersExpanded ? Carets.EXPANDED : Carets.COLLAPSED);
 		int active = countActiveFilters();
 		filtersToggle.setText(active == 0 ? "Filters" : "Filters (" + active + ")");
 	}
@@ -359,7 +397,7 @@ class SearchPanel extends PartyCardPanel
 		applyFiltersButton.setToolTipText("Refresh the party list with the current filters");
 		applyFiltersButton.addActionListener(e -> forceRefresh());
 
-		JPanel row = cappedRow(new BorderLayout());
+		JPanel row = PanelWidgets.cappedRow(new BorderLayout());
 		row.setBorder(BorderFactory.createEmptyBorder(2, 0, 0, 0));
 		row.add(applyFiltersButton, BorderLayout.CENTER);
 		return row;
@@ -388,7 +426,7 @@ class SearchPanel extends PartyCardPanel
 	/** Active-filters badge + Reset, kept outside the Filters disclosure so it stays visible when collapsed. */
 	private JPanel buildControlsBar()
 	{
-		JPanel bottomRow = cappedRow(new BorderLayout(4, 0));
+		JPanel bottomRow = PanelWidgets.cappedRow(new BorderLayout(4, 0));
 		bottomRow.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 		activeFiltersLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		activeFiltersLabel.setFont(FontManager.getRunescapeSmallFont());
@@ -409,10 +447,10 @@ class SearchPanel extends PartyCardPanel
 	/** The activity multiselect: a collapsible section with a checkbox per activity. */
 	private JPanel buildActivityFilter()
 	{
-		JPanel panel = cappedRow(new BorderLayout(0, 4));
+		JPanel panel = PanelWidgets.cappedRow(new BorderLayout(0, 4));
 		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 
-		styleCollapsibleHeader(activitiesToggle);
+		SectionHeader.filterToggle(activitiesToggle, false);
 		updateActivitiesToggleText();
 		activitiesToggle.addActionListener(e -> setActivitiesExpanded(!activitiesExpanded));
 		panel.add(activitiesToggle, BorderLayout.NORTH);
@@ -479,64 +517,18 @@ class SearchPanel extends PartyCardPanel
 
 	private void updateActivitiesToggleText()
 	{
-		activitiesToggle.setIcon(activitiesExpanded ? CARET_EXPANDED : CARET_COLLAPSED);
+		activitiesToggle.setIcon(activitiesExpanded ? Carets.EXPANDED : Carets.COLLAPSED);
 		activitiesToggle.setText("Activities");
-	}
-
-	/** RuneLite's config-section caret (grey), pointing right when collapsed / down when expanded.
-	 *  Package-private so other tabs (e.g. Create) can render matching collapsible headers. */
-	static final ImageIcon CARET_COLLAPSED = caret(0);
-	static final ImageIcon CARET_EXPANDED = caret(Math.PI / 2);
-
-	private static ImageIcon caret(double rotation)
-	{
-		BufferedImage arrow = ImageUtil.loadImageResource(SearchPanel.class, "/util/arrow_right.png");
-		if (arrow == null)
-		{
-			return null;
-		}
-		BufferedImage grey = ImageUtil.luminanceOffset(arrow, -121);
-		if (rotation != 0)
-		{
-			grey = ImageUtil.rotateImage(grey, rotation);
-		}
-		return new ImageIcon(grey);
-	}
-
-	/** Style a collapsible header like RuneLite's config sections (bold orange title, grey caret, separator). */
-	private static void styleCollapsibleHeader(JButton toggle)
-	{
-		styleCollapsibleHeader(toggle, false);
-	}
-
-	/** @param sub when true, a nested section under "Filters", rendered a step smaller than the top-level header. */
-	private static void styleCollapsibleHeader(JButton toggle, boolean sub)
-	{
-		toggle.setHorizontalAlignment(SwingConstants.LEFT);
-		toggle.setFocusPainted(false);
-		toggle.setContentAreaFilled(false);
-		toggle.setForeground(ColorScheme.BRAND_ORANGE);
-		Font base = new JLabel().getFont();
-		toggle.setFont(sub
-			? base.deriveFont(Font.BOLD, base.getSize2D() - 2f)
-			: base.deriveFont(Font.BOLD));
-		toggle.setIconTextGap(6);
-		toggle.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-		// Sub-headers indent only the chevron and title, so they read as children of the
-		// "Filters" header while the underline and content keep the full sidebar width.
-		toggle.setBorder(BorderFactory.createCompoundBorder(
-			BorderFactory.createMatteBorder(0, 0, 1, 0, ColorScheme.MEDIUM_GRAY_COLOR),
-			BorderFactory.createEmptyBorder(3, sub ? 10 : 0, 4, 0)));
 	}
 
 	/** The role multiselect (ToB/CoX): tick roles you'll fill; none ticked means no constraint. */
 	private JPanel buildRoleFilter()
 	{
-		JPanel panel = cappedRow(new BorderLayout(0, 4));
+		JPanel panel = PanelWidgets.cappedRow(new BorderLayout(0, 4));
 		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 
 		// Collapsible header: clicking it shows/hides the (fairly tall) tabbed picker.
-		styleCollapsibleHeader(roleToggle, true);
+		SectionHeader.filterToggle(roleToggle, true);
 		roleToggle.addActionListener(e -> setRolesExpanded(!rolesExpanded));
 		panel.add(roleToggle, BorderLayout.NORTH);
 
@@ -572,7 +564,7 @@ class SearchPanel extends PartyCardPanel
 
 	private void updateRoleToggleText()
 	{
-		roleToggle.setIcon(rolesExpanded ? CARET_EXPANDED : CARET_COLLAPSED);
+		roleToggle.setIcon(rolesExpanded ? Carets.EXPANDED : Carets.COLLAPSED);
 		roleToggle.setText("Roles");
 	}
 
@@ -607,13 +599,14 @@ class SearchPanel extends PartyCardPanel
 				updateRoleToggleText();
 				filtersChanged();
 			});
+			roleCheckboxes.put(role, check);
 			box.add(check);
 		}
 		return box;
 	}
 
 	/** Whether a party passes the role filter: it must still need one of this activity's ticked roles. */
-	private boolean matchesRoleFilter(Party party, Activity activity)
+	private boolean matchesRoleFilter(Advertisement ad, Activity activity)
 	{
 		if (activity == null || !activity.hasRoles())
 		{
@@ -632,27 +625,30 @@ class SearchPanel extends PartyCardPanel
 		{
 			return true; // this activity's box is unconstrained
 		}
-		List<String> needed = neededRolesOf(party);
+		List<String> needed = neededRolesOf(ad);
 		if (needed == null || needed.isEmpty())
 		{
 			return true; // no role info on the ad - don't over-filter
 		}
 		// The party's difficulty selects which wildcard/Fill applies (CM party uses the CM Fill, etc.).
-		Role any = activity.anyRole(party.isHardMode());
+		Role any = activity.anyRole(ad.isHardMode());
 		if (any != null && picked.contains(any))
 		{
 			return true; // "I'll do any role"
 		}
-		Role fill = activity.fillRole(party.isHardMode());
+		Role fill = activity.fillRole(ad.isHardMode());
 		if (fill != null && needed.contains(fill.getId()))
 		{
 			return true; // an advertised Fill slot accepts anyone
 		}
 		for (Role role : picked)
 		{
-			if (needed.contains(role.getId()))
+			for (String neededId : needed)
 			{
-				return true;
+				if (role.canFill(neededId))
+				{
+					return true;
+				}
 			}
 		}
 		return false;
@@ -662,26 +658,7 @@ class SearchPanel extends PartyCardPanel
 	private JPanel buildSearchBar()
 	{
 		textField.setToolTipText("Filter by host, description or activity");
-		textField.getDocument().addDocumentListener(new DocumentListener()
-		{
-			@Override
-			public void insertUpdate(DocumentEvent e)
-			{
-				reapplyFilters();
-			}
-
-			@Override
-			public void removeUpdate(DocumentEvent e)
-			{
-				reapplyFilters();
-			}
-
-			@Override
-			public void changedUpdate(DocumentEvent e)
-			{
-				reapplyFilters();
-			}
-		});
+		textField.getDocument().addDocumentListener(restarting(searchDebounce));
 		// Repaint so the placeholder shows/hides as focus comes and goes.
 		textField.addFocusListener(new java.awt.event.FocusAdapter()
 		{
@@ -698,7 +675,7 @@ class SearchPanel extends PartyCardPanel
 			}
 		});
 
-		JPanel bar = cappedRow(new BorderLayout());
+		JPanel bar = PanelWidgets.cappedRow(new BorderLayout());
 		bar.setBorder(BorderFactory.createEmptyBorder(8, 0, 4, 0));
 		bar.add(textField, BorderLayout.CENTER);
 		return bar;
@@ -706,11 +683,11 @@ class SearchPanel extends PartyCardPanel
 
 	private JPanel buildTextFilter()
 	{
-		JPanel panel = cappedRow(new BorderLayout(0, 4));
+		JPanel panel = PanelWidgets.cappedRow(new BorderLayout(0, 4));
 		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 
 		// Collapsible header for the secondary filters (the search field itself is pinned up top).
-		styleCollapsibleHeader(searchToggle, true);
+		SectionHeader.filterToggle(searchToggle, true);
 		searchToggle.addActionListener(e -> setSearchExpanded(!searchExpanded));
 		panel.add(searchToggle, BorderLayout.NORTH);
 
@@ -755,26 +732,7 @@ class SearchPanel extends PartyCardPanel
 					}
 				}
 			});
-		maxPingField.getDocument().addDocumentListener(new DocumentListener()
-		{
-			@Override
-			public void insertUpdate(DocumentEvent e)
-			{
-				filtersChanged();
-			}
-
-			@Override
-			public void removeUpdate(DocumentEvent e)
-			{
-				filtersChanged();
-			}
-
-			@Override
-			public void changedUpdate(DocumentEvent e)
-			{
-				filtersChanged();
-			}
-		});
+		maxPingField.getDocument().addDocumentListener(restarting(maxPingDebounce));
 
 		searchContent.setLayout(new BoxLayout(searchContent, BoxLayout.Y_AXIS));
 		searchContent.setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -795,7 +753,7 @@ class SearchPanel extends PartyCardPanel
 	/** One full-width, height-capped row (used for self-labelled controls like checkboxes). */
 	private static JPanel searchRow(Component control)
 	{
-		JPanel row = cappedRow(new BorderLayout());
+		JPanel row = PanelWidgets.cappedRow(new BorderLayout());
 		row.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
 		row.add(control, BorderLayout.CENTER);
 		return row;
@@ -807,7 +765,7 @@ class SearchPanel extends PartyCardPanel
 	/** A row with a fixed-width descriptor on the left and its control filling the rest. */
 	private static JPanel labeledRow(String labelText, Component control)
 	{
-		JPanel row = cappedRow(new BorderLayout(6, 0));
+		JPanel row = PanelWidgets.cappedRow(new BorderLayout(6, 0));
 		row.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
 		JLabel label = new JLabel(labelText);
 		label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
@@ -832,17 +790,17 @@ class SearchPanel extends PartyCardPanel
 
 	private void updateSearchToggleText()
 	{
-		searchToggle.setIcon(searchExpanded ? CARET_EXPANDED : CARET_COLLAPSED);
+		searchToggle.setIcon(searchExpanded ? Carets.EXPANDED : Carets.COLLAPSED);
 		searchToggle.setText("More filters");
 	}
 
 	/** Collapsible region multi-select: a 2-column flag-checkbox grid; deselecting a region hides its parties. */
 	private JPanel buildRegionFilter()
 	{
-		JPanel panel = cappedRow(new BorderLayout(0, 4));
+		JPanel panel = PanelWidgets.cappedRow(new BorderLayout(0, 4));
 		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 
-		styleCollapsibleHeader(regionToggle, true);
+		SectionHeader.filterToggle(regionToggle, true);
 		updateRegionToggleText();
 		regionToggle.addActionListener(e -> setRegionsExpanded(!regionsExpanded));
 		panel.add(regionToggle, BorderLayout.NORTH);
@@ -908,7 +866,7 @@ class SearchPanel extends PartyCardPanel
 
 	private void updateRegionToggleText()
 	{
-		regionToggle.setIcon(regionsExpanded ? CARET_EXPANDED : CARET_COLLAPSED);
+		regionToggle.setIcon(regionsExpanded ? Carets.EXPANDED : Carets.COLLAPSED);
 		int deselected = 0;
 		for (WorldRegion r : KNOWN_REGIONS)
 		{
@@ -944,7 +902,7 @@ class SearchPanel extends PartyCardPanel
 		for (ActivityGroup group : ACTIVITY_GROUPS)
 		{
 			// Group header: label + per-group All / None toggles.
-			JPanel header = cappedRow(new BorderLayout(4, 0));
+			JPanel header = PanelWidgets.cappedRow(new BorderLayout(4, 0));
 			header.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 			header.setBorder(BorderFactory.createCompoundBorder(
 				BorderFactory.createMatteBorder(0, 0, 1, 0, ColorScheme.MEDIUM_GRAY_COLOR),
@@ -996,7 +954,7 @@ class SearchPanel extends PartyCardPanel
 				badgeWrap.setOpaque(false);
 				badgeWrap.add(count);
 
-				JPanel row = cappedRow(new BorderLayout(4, 0));
+				JPanel row = PanelWidgets.cappedRow(new BorderLayout(4, 0));
 				row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 				row.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 6));
 				row.add(box, BorderLayout.CENTER);
@@ -1015,19 +973,18 @@ class SearchPanel extends PartyCardPanel
 		Map<Activity, Integer> counts = new EnumMap<>(Activity.class);
 		if (lastResults != null)
 		{
-			boolean showBlocked = Boolean.parseBoolean(
-				configManager.getConfiguration(OSPartyConfig.GROUP, "showBlockedParties"));
-			for (Party party : lastResults)
+			boolean showBlocked = config.showBlockedParties();
+			for (Advertisement ad : lastResults)
 			{
-				if (party.isFull())
+				if (ad.isFull())
 				{
 					continue;
 				}
-				if (!showBlocked && blockListService.hasAnyBlocked(party))
+				if (!showBlocked && blockListService.hasAnyBlocked(ad))
 				{
 					continue;
 				}
-				Activity act = Activity.fromId(party.getActivity());
+				Activity act = Activity.fromId(ad.getActivity());
 				if (act != null)
 				{
 					counts.merge(act, 1, Integer::sum);
@@ -1044,7 +1001,7 @@ class SearchPanel extends PartyCardPanel
 		}
 	}
 
-	/** Float the nearby activity to the top and highlight it, but never auto-check it (point 13). */
+	/** Float the nearby activity to the top and highlight it, but never auto-check it. */
 	private void applyRecommendation()
 	{
 		Activity near = Activity.nearby(mapRegionsSupplier.get());
@@ -1054,30 +1011,21 @@ class SearchPanel extends PartyCardPanel
 		}
 		recommended = near;
 		rebuildActivityList();
-		reapplyFilters();
+		renderCurrent();
 	}
 
-	private static JPanel cappedRow(LayoutManager layout)
-	{
-		JPanel panel = new JPanel(layout)
-		{
-			@Override
-			public Dimension getMaximumSize()
-			{
-				return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-			}
-		};
-		panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		panel.setAlignmentX(Component.LEFT_ALIGNMENT);
-		return panel;
-	}
-
+	/** Kept for OSPartyPanel's call site; identical to {@link #renderCurrent()}. */
 	void reapplyFilters()
 	{
-		if (lastResults != null)
-		{
-			showResults(lastResults);
-		}
+		renderCurrent();
+	}
+
+	/** The search text narrows the list without going through {@link #filtersChanged}, so refresh the badge too. */
+	private void searchTextChanged()
+	{
+		updateActiveFiltersLabel();
+		updateFiltersToggleText();
+		renderCurrent();
 	}
 
 	/** A filter changed: save the new selection and re-render the results. */
@@ -1088,7 +1036,7 @@ class SearchPanel extends PartyCardPanel
 		updateFiltersToggleText();
 		updateActivitiesToggleText();
 		updateSelectAllActivitiesText();
-		reapplyFilters();
+		renderCurrent();
 		// Narrow/widen the server feed to match: scope to a single activity, else all.
 		if (subscription != null)
 		{
@@ -1284,39 +1232,39 @@ class SearchPanel extends PartyCardPanel
 			return;
 		}
 		status.accept("Looking up code " + trimmed + "...");
-		partyService.getPartyByCode(trimmed,
-			party -> SwingUtilities.invokeLater(() -> joinFetched(party, status, invited)),
+		boardService.fetchAdByCode(trimmed,
+			ad -> SwingUtilities.invokeLater(() -> joinFetched(ad, status, invited)),
 			error -> SwingUtilities.invokeLater(() -> status.accept("No party found for code " + trimmed + ".")));
 	}
 
-	private void joinFetched(Party party, Consumer<String> status, boolean invited)
+	private void joinFetched(Advertisement ad, Consumer<String> status, boolean invited)
 	{
-		if (party == null)
+		if (ad == null)
 		{
 			status.accept("No party found for that code.");
 			return;
 		}
-		if (isOwnParty(party))
+		if (isOwnParty(ad))
 		{
 			status.accept("That's your own party.");
 			return;
 		}
-		if (!meetsIronmanRule(party))
+		if (!meetsIronmanRule(ad))
 		{
 			status.accept("That party is for ironman accounts.");
 			return;
 		}
-		if (kcStatus(party) == KcStatus.BELOW)
+		if (kcStatus(ad) == KcStatus.BELOW)
 		{
 			status.accept("You don't meet that party's minimum killcount.");
 			return;
 		}
 
-		Activity activity = Activity.fromId(party.getActivity());
+		Activity activity = Activity.fromId(ad.getActivity());
 		String role = null;
 		if (activity != null && activity.hasRoles())
 		{
-			role = promptForRole(party, activity);
+			role = promptForRole(ad, activity);
 			if (role == null)
 			{
 				return; // cancelled the role dialog
@@ -1324,7 +1272,7 @@ class SearchPanel extends PartyCardPanel
 		}
 
 		final String chosenRole = role;
-		leaveCurrentThen(() -> doApply(party, chosenRole, false, invited));
+		leaveCurrentThen(() -> doApply(ad, chosenRole, false, invited));
 	}
 
 	private LootRule lootFilterValue()
@@ -1352,14 +1300,14 @@ class SearchPanel extends PartyCardPanel
 
 	/** Blocking a host from a card hides it (unless "Show blocked parties" is on): re-filter now. */
 	@Override
-	protected void onBlockToggled(Party party)
+	protected void onBlockToggled(Advertisement ad)
 	{
 		renderCurrent();
 	}
 
 	/** Favouriting from a card's menu: re-render so the card (and its menu label) reflect the new state. */
 	@Override
-	protected void onFavoriteToggled(Party party)
+	protected void onFavoriteToggled(Advertisement ad)
 	{
 		renderCurrent();
 	}
@@ -1371,14 +1319,14 @@ class SearchPanel extends PartyCardPanel
 		{
 			return;
 		}
-		subscription = partyService.subscribeParties(
-			parties -> SwingUtilities.invokeLater(() -> acceptPushedParties(parties)),
+		subscription = boardService.subscribeAds(
+			ads -> SwingUtilities.invokeLater(() -> acceptPushedAds(ads)),
 			error -> SwingUtilities.invokeLater(this::updateConnectionView),
 			scopeActivityId());
 		updateConnectionView();
 	}
 
-	/** Swap the results area for an offline message + Reconnect button when the socket is down (point 52). */
+	/** Swap the results area for an offline message + Reconnect button when the socket is down. */
 	private void updateConnectionView()
 	{
 		boolean down = subscription != null && !subscription.isConnected();
@@ -1467,29 +1415,37 @@ class SearchPanel extends PartyCardPanel
 	}
 
 	/** A list pushed by the socket: kept as the latest result even when hidden, repainted only when visible. */
-	private void acceptPushedParties(List<Party> parties)
+	private void acceptPushedAds(List<Advertisement> ads)
 	{
-		lastResults = parties;
+		lastResults = ads;
 		updateConnectionView();
 		if (isShowing())
 		{
-			showResults(parties);
+			showResults(ads);
 		}
 	}
 
 	/** Unsubscribe and stop timers; called when the plugin shuts down. */
+	@Override
 	void dispose()
 	{
+		super.dispose();
 		if (autoRefreshTimer != null)
 		{
 			autoRefreshTimer.stop();
 		}
+		if (buttonStateTimer != null)
+		{
+			buttonStateTimer.stop();
+		}
+		searchDebounce.stop();
+		maxPingDebounce.stop();
 		stopSubscription();
 	}
 
-	private void showResults(List<Party> parties)
+	private void showResults(List<Advertisement> ads)
 	{
-		lastResults = parties;
+		lastResults = ads;
 		// Badges refresh on every push, even when the visible-card render below is skipped.
 		updateActivityCounts();
 
@@ -1512,73 +1468,71 @@ class SearchPanel extends PartyCardPanel
 		}
 
 		// Blocked parties are hidden entirely unless the player opts to see them greyed out.
-		boolean showBlocked = Boolean.parseBoolean(
-			configManager.getConfiguration(OSPartyConfig.GROUP, "showBlockedParties"));
+		boolean showBlocked = config.showBlockedParties();
 
 		// Show only joinable parties matching every active filter (full ones hidden).
-		List<Party> visible = new ArrayList<>();
+		List<Advertisement> visible = new ArrayList<>();
 		int totalOpen = 0; // all joinable parties, before filters (for the "X of total" count)
-		if (parties != null)
+		if (ads != null)
 		{
-			for (Party party : parties)
+			for (Advertisement ad : ads)
 			{
 				// Record current names for favourited/blocked accounts we see (name-change detection + hash backfill).
-				favoritesService.observeParty(party);
-				blockListService.observeParty(party);
+				favoritesService.observeAd(ad);
+				blockListService.observeAd(ad);
 
-				if (party.isFull())
+				if (ad.isFull())
 				{
 					continue;
 				}
-				if (!showBlocked && blockListService.hasAnyBlocked(party))
+				if (!showBlocked && blockListService.hasAnyBlocked(ad))
 				{
 					continue;
 				}
 				totalOpen++;
-				Activity act = Activity.fromId(party.getActivity());
+				Activity act = Activity.fromId(ad.getActivity());
 				if (act == null || !selectedActivities.contains(act))
 				{
 					continue;
 				}
-				if (wantLoot != null && LootRule.fromName(party.getLootRule()) != wantLoot)
+				if (wantLoot != null && LootRule.fromName(ad.getLootRule()) != wantLoot)
 				{
 					continue;
 				}
-				if (ironOnly && !party.isIronmanOnly())
+				if (ironOnly && !ad.isIronmanOnly())
 				{
 					continue;
 				}
-				// Learner-raid filter (feature 6).
-				if (learnerIdx == 1 && !party.isLearnerRaid())
+				if (learnerIdx == 1 && !ad.isLearnerRaid())
 				{
 					continue; // "Learner only" — hide non-learner parties
 				}
-				if (learnerIdx == 2 && party.isLearnerRaid())
+				if (learnerIdx == 2 && ad.isLearnerRaid())
 				{
 					continue; // "Hide learner raids" — hide learner parties
 				}
-				// Hide-ineligible filter (feature 5): a PENDING KC check is never treated as BELOW.
+				// A PENDING KC check is never treated as BELOW.
 				if (hideIneligible)
 				{
-					if (!meetsIronmanRule(party))
+					if (!meetsIronmanRule(ad))
 					{
 						continue;
 					}
-					if (kcStatus(party) == KcStatus.BELOW)
+					if (kcStatus(ad) == KcStatus.BELOW)
 					{
 						continue;
 					}
 				}
-				if (!matchesRoleFilter(party, act))
+				if (!matchesRoleFilter(ad, act))
 				{
 					continue;
 				}
-				if (!text.isEmpty() && !matchesText(party, act, text))
+				if (!text.isEmpty() && !matchesText(ad, act, text))
 				{
 					continue;
 				}
 
-				Integer worldNum = parseWorldNum(party);
+				Integer worldNum = parseWorldNum(ad);
 
 				// Region filter: skip parties whose host world has a deselected region.
 				if (regionFilterActive && worldNum != null)
@@ -1600,20 +1554,20 @@ class SearchPanel extends PartyCardPanel
 					}
 				}
 
-				visible.add(party);
+				visible.add(ad);
 			}
 		}
 
 		// Sort the visible list by the chosen order, then float friends to the top.
-		Comparator<Party> comp = buildComparator();
+		Comparator<Advertisement> comp = buildComparator();
 		if (friendNamesSupplier != null)
 		{
 			Set<String> friends = friendNamesSupplier.get();
 			if (friends != null && !friends.isEmpty())
 			{
-				Comparator<Party> friendFirst = Comparator.comparingInt(
-					(Party p) -> {
-						String key = p.getHost() == null ? "" : normalize(p.getHost()).toLowerCase();
+				Comparator<Advertisement> friendFirst = Comparator.comparingInt(
+					(Advertisement p) -> {
+						String key = p.getHost() == null ? "" : AdText.normalizeName(p.getHost()).toLowerCase();
 						return friends.contains(key) ? 0 : 1;
 					});
 				comp = friendFirst.thenComparing(comp);
@@ -1624,14 +1578,14 @@ class SearchPanel extends PartyCardPanel
 		// Request pings for all visible parties. No-op if already cached or in flight.
 		if (worldPinger != null)
 		{
-			for (Party party : visible)
+			for (Advertisement ad : visible)
 			{
-				Integer worldNum = parseWorldNum(party);
+				Integer worldNum = parseWorldNum(ad);
 				if (worldNum != null)
 				{
 					String address = worldAddressResolver != null ? worldAddressResolver.apply(worldNum) : null;
 					worldPinger.requestPing(worldNum, address,
-						() -> javax.swing.SwingUtilities.invokeLater(this::reapplyFilters));
+						() -> SwingUtilities.invokeLater(this::renderCurrent));
 				}
 			}
 		}
@@ -1701,9 +1655,9 @@ class SearchPanel extends PartyCardPanel
 		// Reconcile the card list in place: drop departed cards, rebuild only changed ones, reorder the rest,
 		// so a push doesn't flicker the panel or disturb the scroll position or an open role picker.
 		Set<String> visibleIds = new HashSet<>();
-		for (Party party : visible)
+		for (Advertisement ad : visible)
 		{
-			visibleIds.add(party.getId());
+			visibleIds.add(ad.getId());
 		}
 		for (Iterator<Map.Entry<String, JComponent>> it = cardsById.entrySet().iterator(); it.hasNext(); )
 		{
@@ -1714,16 +1668,16 @@ class SearchPanel extends PartyCardPanel
 				it.remove();
 				cardSignatures.remove(entry.getKey());
 				applyButtons.remove(entry.getKey());
-				partiesById.remove(entry.getKey());
+				adsById.remove(entry.getKey());
 				reasonLabels.remove(entry.getKey());
 				rolePickers.remove(entry.getKey());
 			}
 		}
 		int index = 0;
-		for (Party party : visible)
+		for (Advertisement ad : visible)
 		{
-			String id = party.getId();
-			String cardSig = cardSignature(party);
+			String id = ad.getId();
+			String cardSig = cardSignature(ad);
 			JComponent card = cardsById.get(id);
 			if (card != null && !cardSig.equals(cardSignatures.get(id)))
 			{
@@ -1732,12 +1686,12 @@ class SearchPanel extends PartyCardPanel
 			}
 			if (card == null)
 			{
-				card = wrapCard(buildPartyCard(Activity.fromId(party.getActivity()), party));
+				card = wrapCard(buildPartyCard(Activity.fromId(ad.getActivity()), ad));
 				cardsById.put(id, card);
 				cardSignatures.put(id, cardSig);
 			}
 			// Keep actions on fresh data even when the card is reused (e.g. a rotated passphrase).
-			partiesById.put(id, party);
+			adsById.put(id, ad);
 			if (index >= resultsPanel.getComponentCount() || resultsPanel.getComponent(index) != card)
 			{
 				resultsPanel.add(card, index); // moves the card if it is already a child
@@ -1784,14 +1738,14 @@ class SearchPanel extends PartyCardPanel
 		return wrap;
 	}
 
-	private static boolean matchesText(Party party, Activity activity, String lowerQuery)
+	private static boolean matchesText(Advertisement ad, Activity activity, String lowerQuery)
 	{
-		if (contains(party.getHost(), lowerQuery) || contains(party.getDescription(), lowerQuery))
+		if (contains(ad.getHost(), lowerQuery) || contains(ad.getDescription(), lowerQuery))
 		{
 			return true;
 		}
 		// The CoX team-size scaling as shown on the card, e.g. "3+4" (so "4", "3" and "3+4" all match).
-		if (contains(coxScaleOf(party), lowerQuery))
+		if (contains(coxScaleOf(ad), lowerQuery))
 		{
 			return true;
 		}
@@ -1832,47 +1786,47 @@ class SearchPanel extends PartyCardPanel
 	}
 
 	/** A stable signature of the visible parties (incl. age in minutes) so unchanged refreshes can no-op. */
-	private static String signatureOf(List<Party> parties)
+	private static String signatureOf(List<Advertisement> ads)
 	{
 		long now = System.currentTimeMillis();
 		StringBuilder sb = new StringBuilder();
-		for (Party party : parties)
+		for (Advertisement ad : ads)
 		{
-			sb.append(party.getId()).append(':').append(partyContentSignature(party, now)).append(';');
+			sb.append(ad.getId()).append(':').append(adContentSignature(ad, now)).append(';');
 		}
 		return sb.toString();
 	}
 
 	/** The party-payload fields a card renders; shared by the list and per-card signatures. */
-	private static String partyContentSignature(Party party, long now)
+	private static String adContentSignature(Advertisement ad, long now)
 	{
-		return new StringBuilder().append(party.getSize())
-			.append('/').append(party.getCapacity())
-			.append('w').append(party.getWorld() == null ? "" : party.getWorld())
-			.append('L').append(party.getLayout() == null ? "" : party.getLayout())
-			.append('R').append(neededRolesOf(party) == null ? "" : neededRolesOf(party))
-			.append('d').append(party.isHardMode() ? "h" : "").append(party.getInvocation())
-			.append('c').append(party.getCoxScale() == null ? "" : party.getCoxScale())
+		return new StringBuilder().append(ad.getSize())
+			.append('/').append(ad.getCapacity())
+			.append('w').append(ad.getWorld() == null ? "" : ad.getWorld())
+			.append('L').append(ad.getLayout() == null ? "" : ad.getLayout())
+			.append('R').append(neededRolesOf(ad) == null ? "" : neededRolesOf(ad))
+			.append('d').append(ad.isHardMode() ? "h" : "").append(ad.getInvocation())
+			.append('c').append(ad.getCoxScale() == null ? "" : ad.getCoxScale())
 			// Host-editable card content, so an edit invalidates the cached render.
-			.append('K').append(party.getMinKillCount()).append('/').append(party.getMinHardModeKillCount())
-			.append('o').append(party.getLootRule() == null ? "" : party.getLootRule())
-			.append('i').append(party.isIronmanOnly() ? '1' : '0')
-			.append('l').append(party.isLearnerRaid() ? '1' : '0')
-			.append('D').append(party.getDescription() == null ? "" : party.getDescription())
-			.append('@').append(ageMinutes(now, party.getCreatedAt()))
+			.append('K').append(ad.getMinKillCount()).append('/').append(ad.getMinHardModeKillCount())
+			.append('o').append(ad.getLootRule() == null ? "" : ad.getLootRule())
+			.append('i').append(ad.isIronmanOnly() ? '1' : '0')
+			.append('l').append(ad.isLearnerRaid() ? '1' : '0')
+			.append('D').append(ad.getDescription() == null ? "" : ad.getDescription())
+			.append('@').append(ageMinutes(now, ad.getCreatedAt()))
 			.toString();
 	}
 
 	/** Everything a card renders (payload + live decorations) so a refresh rebuilds it only when it changed. */
-	private String cardSignature(Party party)
+	private String cardSignature(Advertisement ad)
 	{
-		StringBuilder sb = new StringBuilder(partyContentSignature(party, System.currentTimeMillis()));
-		sb.append('h').append(party.getHost() == null ? "" : party.getHost())
-			.append('t').append(party.getHostAccountType() == null ? "" : party.getHostAccountType());
+		StringBuilder sb = new StringBuilder(adContentSignature(ad, System.currentTimeMillis()));
+		sb.append('h').append(ad.getHost() == null ? "" : ad.getHost())
+			.append('t').append(ad.getHostAccountType() == null ? "" : ad.getHostAccountType());
 		// Host Discord-role badges — without this, a badge change in a members delta wouldn't rebuild the card.
 		if (config == null || config.showDiscordBadges())
 		{
-			List<Member> sigMembers = party.getMembers();
+			List<Member> sigMembers = ad.getMembers();
 			if (sigMembers != null && !sigMembers.isEmpty() && sigMembers.get(0).getBadges() != null)
 			{
 				sb.append('B').append(sigMembers.get(0).getBadges());
@@ -1882,36 +1836,36 @@ class SearchPanel extends PartyCardPanel
 		{
 			sb.append("B-off");
 		}
-		Integer worldNum = parseWorldNum(party);
+		Integer worldNum = parseWorldNum(ad);
 		if (worldNum != null && worldPinger != null)
 		{
 			Integer ping = worldPinger.getCachedPing(worldNum);
 			sb.append('p').append(ping != null ? ping : "?");
 		}
 		Set<String> friends = friendNamesSupplier != null ? friendNamesSupplier.get() : null;
-		sb.append('F').append(friends != null && party.getHost() != null
-			&& friends.contains(normalize(party.getHost()).toLowerCase()) ? '1' : '0');
+		sb.append('F').append(friends != null && ad.getHost() != null
+			&& friends.contains(AdText.normalizeName(ad.getHost()).toLowerCase()) ? '1' : '0');
 		if (favoritesService != null)
 		{
-			sb.append('v').append(favoritesService.hasAnyFavorite(party) ? '1' : '0')
-				.append(favoritesService.isFavorite(party.getHostAccountHash(), party.getHost()) ? 'H' : '_');
+			sb.append('v').append(favoritesService.hasAnyFavorite(ad) ? '1' : '0')
+				.append(favoritesService.isFavorite(ad.getHostAccountHash(), ad.getHost()) ? 'H' : '_');
 		}
 		if (blockListService != null)
 		{
-			sb.append('b').append(blockListService.isBlocked(party.getHostAccountHash(), party.getHost()) ? '1' : '0');
+			sb.append('b').append(blockListService.isBlocked(ad.getHostAccountHash(), ad.getHost()) ? '1' : '0');
 		}
 		return sb.toString();
 	}
 
 	/** Signature of which visible-party hosts are blocked (rendered greyed when shown at all). */
-	private String blockSignatureOf(List<Party> parties)
+	private String blockSignatureOf(List<Advertisement> ads)
 	{
 		if (blockListService == null)
 		{
 			return "";
 		}
 		StringBuilder sb = new StringBuilder();
-		for (Party p : parties)
+		for (Advertisement p : ads)
 		{
 			if (blockListService.isBlocked(p.getHostAccountHash(), p.getHost()))
 			{
@@ -1954,14 +1908,14 @@ class SearchPanel extends PartyCardPanel
 	}
 
 	/** Signature of cached pings so a ping arriving via callback re-renders the world label. */
-	private String pingSignatureOf(List<Party> parties)
+	private String pingSignatureOf(List<Advertisement> ads)
 	{
 		if (worldPinger == null)
 		{
 			return "";
 		}
 		StringBuilder sb = new StringBuilder();
-		for (Party p : parties)
+		for (Advertisement p : ads)
 		{
 			Integer wn = parseWorldNum(p);
 			if (wn != null)
@@ -1974,7 +1928,7 @@ class SearchPanel extends PartyCardPanel
 	}
 
 	/** Build a sort comparator for the chosen sort order. */
-	private Comparator<Party> buildComparator()
+	private Comparator<Advertisement> buildComparator()
 	{
 		String selected = (String) sortComboBox.getSelectedItem();
 		if (selected == null)
@@ -1984,7 +1938,7 @@ class SearchPanel extends PartyCardPanel
 		switch (selected)
 		{
 			case SORT_OLDEST:
-				return Comparator.comparingLong(Party::getCreatedAt);
+				return Comparator.comparingLong(Advertisement::getCreatedAt);
 			case SORT_PING:
 				return (a, b) -> Integer.compare(pingForSort(a), pingForSort(b));
 			case SORT_FULL:
@@ -1999,9 +1953,9 @@ class SearchPanel extends PartyCardPanel
 	}
 
 	/** Ping value used for sorting: unknown near-last, unreachable last. */
-	private int pingForSort(Party party)
+	private int pingForSort(Advertisement ad)
 	{
-		Integer wn = parseWorldNum(party);
+		Integer wn = parseWorldNum(ad);
 		if (wn == null || worldPinger == null)
 		{
 			return Integer.MAX_VALUE - 1;
@@ -2015,7 +1969,7 @@ class SearchPanel extends PartyCardPanel
 	}
 
 	/** Signature of which visible-party hosts are friends, so sort changes trigger a re-render. */
-	private String friendSignatureOf(List<Party> parties)
+	private String friendSignatureOf(List<Advertisement> ads)
 	{
 		if (friendNamesSupplier == null)
 		{
@@ -2027,9 +1981,9 @@ class SearchPanel extends PartyCardPanel
 			return "";
 		}
 		StringBuilder sb = new StringBuilder();
-		for (Party p : parties)
+		for (Advertisement p : ads)
 		{
-			String key = p.getHost() == null ? "" : normalize(p.getHost()).toLowerCase();
+			String key = p.getHost() == null ? "" : AdText.normalizeName(p.getHost()).toLowerCase();
 			if (friends.contains(key))
 			{
 				sb.append(p.getId()).append(',');
@@ -2039,14 +1993,14 @@ class SearchPanel extends PartyCardPanel
 	}
 
 	/** Signature of which visible parties are favourited, so toggling a star rebuilds the icons. */
-	private String favSignatureOf(List<Party> parties)
+	private String favSignatureOf(List<Advertisement> ads)
 	{
 		if (favoritesService == null)
 		{
 			return "";
 		}
 		StringBuilder sb = new StringBuilder();
-		for (Party p : parties)
+		for (Advertisement p : ads)
 		{
 			if (favoritesService.hasAnyFavorite(p))
 			{
@@ -2064,7 +2018,7 @@ class SearchPanel extends PartyCardPanel
 		{
 			count++;
 		}
-		if (sortComboBox.getSelectedIndex() > 0)
+		if (!textField.getText().trim().isEmpty())
 		{
 			count++;
 		}
@@ -2122,6 +2076,11 @@ class SearchPanel extends PartyCardPanel
 		selectedActivities.clear();
 		selectedActivities.addAll(EnumSet.allOf(Activity.class));
 		selectedRoles.clear();
+		// The role tabs are built once, so untick them here rather than rebuilding them.
+		for (JCheckBox cb : roleCheckboxes.values())
+		{
+			cb.setSelected(false);
+		}
 		for (WorldRegion r : KNOWN_REGIONS)
 		{
 			selectedRegions.add(r);
@@ -2136,6 +2095,7 @@ class SearchPanel extends PartyCardPanel
 		learnerComboBox.setSelectedIndex(0);   // "Any"
 		hideIneligibleFilter.setSelected(false);
 		maxPingField.setText("");
+		textField.setText("");
 		sortComboBox.setSelectedIndex(0);      // "Newest first"
 		updateRoleToggleText();
 		updateRegionToggleText();
@@ -2149,42 +2109,4 @@ class SearchPanel extends PartyCardPanel
 		statusLabel.setText(text);
 	}
 
-	/** A scroll view that tracks the viewport width so cards' right-aligned buttons never clip off the edge. */
-	private static final class ScrollableColumn extends JPanel implements Scrollable
-	{
-		ScrollableColumn(LayoutManager layout)
-		{
-			super(layout);
-		}
-
-		@Override
-		public Dimension getPreferredScrollableViewportSize()
-		{
-			return getPreferredSize();
-		}
-
-		@Override
-		public int getScrollableUnitIncrement(Rectangle visible, int orientation, int direction)
-		{
-			return 16;
-		}
-
-		@Override
-		public int getScrollableBlockIncrement(Rectangle visible, int orientation, int direction)
-		{
-			return 64;
-		}
-
-		@Override
-		public boolean getScrollableTracksViewportWidth()
-		{
-			return true;
-		}
-
-		@Override
-		public boolean getScrollableTracksViewportHeight()
-		{
-			return false;
-		}
-	}
 }

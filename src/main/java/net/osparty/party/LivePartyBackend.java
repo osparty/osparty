@@ -9,19 +9,11 @@ import net.runelite.api.coords.WorldPoint;
 
 /**
  * The plugin's view of the live party, independent of transport. The UI, overlays and trackers talk to
- * this seam so the underlying live-party implementation can be swapped without touching them.
+ * this seam rather than to the implementation behind it.
  *
- * <p>Two implementations exist in parallel during the V2 migration (see PARTY_V2_MIGRATION.md):
- * <ul>
- *   <li>{@link RuneLiteLivePartyBackend} — wraps the existing {@link LiveParty} (RuneLite's built-in P2P
- *       party relay). The default; unchanged behaviour.</li>
- *   <li>{@code LivePartyV2} — OSParty's own node-affine, server-authoritative live party (built in P1+).</li>
- * </ul>
- *
- * <p>The value types this exposes ({@link LiveParty.RosterMember}, {@link LiveParty.Status},
- * {@link LiveParty.Marker}, {@link LiveParty.ReadyCheckStatus}) deliberately still live on {@link LiveParty}
- * so no call site had to move them; they can be lifted to a neutral home when the RuneLite backend is
- * removed at P6.
+ * <p>One implementation: {@link LiveParty}, OSParty's own node-affine, server-authoritative live party. The
+ * seam remains because everything above it is written against an interface and mocks one in tests, not
+ * because there is still a choice to make.
  */
 public interface LivePartyBackend
 {
@@ -33,6 +25,12 @@ public interface LivePartyBackend
 	void addListener(Runnable listener);
 
 	void setOnEnded(Runnable onEnded);
+
+	/**
+	 * The host removed us from the party. Fired in addition to {@link #setOnEnded}, which cannot tell a kick
+	 * from a disband — and only a kick is worth a sound.
+	 */
+	void setOnKicked(Runnable onKicked);
 
 	void setOnReadyCheckStarted(Consumer<String> onReadyCheckStarted);
 
@@ -50,11 +48,9 @@ public interface LivePartyBackend
 	 * Where the party we are about to join keeps its live room, if the advertisement said.
 	 *
 	 * <p>Called before {@link #joinParty}, so the connection can move to that pod first rather than landing
-	 * anywhere and being redirected off it. A default no-op: only the V2 backend is node-affine, and an
-	 * advertisement that does not name a node simply leaves this unsaid.
+	 * anywhere and being redirected off it. An advertisement that does not name a node leaves this unsaid.
 	 */
-	default void hintLiveNode(String node) {
-	}
+	void hintLiveNode(String node);
 
 	void joinParty(String passphrase, String activityId, int teamSize, String role, boolean learner);
 
@@ -65,9 +61,8 @@ public interface LivePartyBackend
 
 	void leaveForSwitch();
 
-	void rememberResumedRoster(List<Member> members);
-
-	boolean isConnected();
+	/** Whether we are in a party at all, as host or member. Says nothing about the socket. */
+	boolean isInParty();
 
 	boolean isHosting();
 
@@ -89,11 +84,9 @@ public interface LivePartyBackend
 	void markLocalDirty();
 
 	/**
-	 * Our inventory or worn gear changed. Separate from {@link #markLocalDirty} because a backend that sends
-	 * only what changed needs to know <em>what</em> changed — resending 500 bytes of item ids because run
-	 * energy ticked is most of what makes the live stream expensive.
-	 *
-	 * <p>The RuneLite-relay backend ignores the distinction and marks everything dirty, as it always has.
+	 * Our inventory or worn gear changed. Separate from {@link #markLocalDirty} because only what changed is
+	 * sent — resending 500 bytes of item ids because run energy ticked is most of what made the live stream
+	 * expensive.
 	 */
 	void markItemsDirty();
 
@@ -119,17 +112,12 @@ public interface LivePartyBackend
 
 	/**
 	 * Host: publish the advertised party's settings to the room, so members track edits to the ad instead of
-	 * being stuck with the copy they took when they applied. No-op on backends with no channel for it.
+	 * being stuck with the copy they took when they applied.
 	 */
-	default void setPartyMeta(net.osparty.model.PartyMeta meta)
-	{
-	}
+	void setPartyMeta(net.osparty.model.PartyMeta meta);
 
 	/** Member: the host's last published ad settings, or null if none have arrived. */
-	default net.osparty.model.PartyMeta partyMeta()
-	{
-		return null;
-	}
+	net.osparty.model.PartyMeta partyMeta();
 
 	boolean canAdmitMore();
 
@@ -138,8 +126,6 @@ public interface LivePartyBackend
 	void kick(long memberId);
 
 	void reject(long memberId);
-
-	void requestFriendsChat(long targetMemberId, String friendsChat);
 
 	void sendJoinPrompt(long targetMemberId, String kind, String friendsChat);
 
@@ -169,33 +155,18 @@ public interface LivePartyBackend
 
 	void markReady();
 
-	void onReadyCheck(ReadyCheckMessage message);
-
-	LiveParty.ReadyCheckStatus readyCheck();
+	ReadyCheckStatus readyCheck();
 
 	// ---- map pings ----------------------------------------------------------
 	boolean sendPing(WorldPoint point, Color color);
 
-	boolean onPing(PingMessage message);
-
 	List<TilePing> activePings();
 
 	// ---- markers ------------------------------------------------------------
-	Map<String, LiveParty.Marker> learnerMarkers();
+	Map<String, PartyMarker> learnerMarkers();
 
 	// ---- per-tick -----------------------------------------------------------
 	void tick();
-
-	// ---- inbound message handlers -------------------------------------------
-	void onPlayerUpdate(PlayerUpdate update);
-
-	void onPartyState(PartyStateMessage state);
-
-	void onMemberCommand(MemberCommand command);
-
-	void onPeerJoined(long memberId);
-
-	void onPeerLeft(long memberId);
 
 	// ---- queries ------------------------------------------------------------
 	boolean isForLocalMember(long memberId);
@@ -210,7 +181,7 @@ public interface LivePartyBackend
 
 	List<Member> currentMembers();
 
-	List<LiveParty.RosterMember> roster();
+	List<RosterMember> roster();
 
 	int hostWorld();
 

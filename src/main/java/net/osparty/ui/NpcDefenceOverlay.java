@@ -23,6 +23,7 @@ import net.runelite.client.ui.overlay.OverlayUtil;
 public class NpcDefenceOverlay extends Overlay
 {
 	private static final Color DRAIN_COLOR = new Color(255, 80, 80);
+	private static final Color PLATE_COLOR = new Color(0, 0, 0, 150);
 	private static final int GAP = 3;
 
 	private final Client client;
@@ -133,7 +134,7 @@ public class NpcDefenceOverlay extends Overlay
 
 		if (config.defenceTextPlate())
 		{
-			graphics.setColor(new Color(0, 0, 0, 150));
+			graphics.setColor(PLATE_COLOR);
 			graphics.fillRect(x - 2, baseline - fm.getAscent() - 1, totalW + 4, fm.getHeight() + 2);
 		}
 		if (image != null)
@@ -183,13 +184,6 @@ public class NpcDefenceOverlay extends Overlay
 
 	private NPC npcByIndex(int index)
 	{
-		for (NPC npc : client.getNpcs())
-		{
-			if (npc != null && npc.getIndex() == index)
-			{
-				return npc;
-			}
-		}
-		return null;
+		return client.getTopLevelWorldView().npcs().byIndex(index);
 	}
 }

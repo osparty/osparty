@@ -3,18 +3,28 @@ package net.osparty.model;
 import java.util.List;
 
 /**
- * A partial update for an existing {@link Party}, mirroring the server's {@code PartyDelta}.
+ * A partial update for an existing {@link Advertisement}, mirroring the server's {@code AdvertisementDelta}.
  * Only the fields actually changed (plus {@code id}/{@code activity}) are populated in an
  * {@code updated} entry of a {@code batch} frame; the rest are null and left untouched on merge.
  *
  * <p>Boxed types matter: a primitive {@code 0}/{@code false} is indistinguishable from "absent",
  * so the nullable wrappers let {@link #applyTo} merge only the fields the server actually sent.
  */
-public class PartyDelta
+public class AdvertisementDelta
 {
 	private String id;
 	private String activity;
 	private String host;
+
+	/**
+	 * Travels with {@code host}: a transfer rewrites the host without touching the member list, so
+	 * without this the ad's hash would keep pointing at the outgoing host.
+	 */
+	private Long hostAccountHash;
+
+	/** Travels with {@code host} too: the account-type badge belongs to whoever runs the ad. */
+	private String hostAccountType;
+
 	private Integer size;
 	private List<Member> members;
 	private String world;
@@ -24,12 +34,22 @@ public class PartyDelta
 	private Integer capacity;
 	private String lootRule;
 	private Boolean ironmanOnly;
-	private Boolean privateParty;
+	private Boolean privateAd;
 	private Integer minKillCount;
 	private Integer minHardModeKillCount;
 	private Integer invocation;
 	private Boolean hardMode;
 	private String coxScale;
+	private List<String> requiredRoles;
+	private String hostRole;
+	private Boolean learner;
+	private Boolean teacher;
+
+	/**
+	 * The pod the host's live room moved to. Only ever delivered as a delta: a host cannot know where
+	 * its room landed until the live welcome tells it, which is after it advertised.
+	 */
+	private String node;
 
 	public String getId()
 	{
@@ -37,11 +57,19 @@ public class PartyDelta
 	}
 
 	/** Merge the present (non-null) fields of this delta onto an existing party in place. */
-	public void applyTo(Party p)
+	public void applyTo(Advertisement p)
 	{
 		if (host != null)
 		{
 			p.setHost(host);
+		}
+		if (hostAccountHash != null)
+		{
+			p.setHostAccountHash(hostAccountHash);
+		}
+		if (hostAccountType != null)
+		{
+			p.setHostAccountType(hostAccountType);
 		}
 		if (size != null)
 		{
@@ -79,9 +107,9 @@ public class PartyDelta
 		{
 			p.setIronmanOnly(ironmanOnly);
 		}
-		if (privateParty != null)
+		if (privateAd != null)
 		{
-			p.setPrivateParty(privateParty);
+			p.setPrivateAd(privateAd);
 		}
 		if (minKillCount != null)
 		{
@@ -102,6 +130,26 @@ public class PartyDelta
 		if (coxScale != null)
 		{
 			p.setCoxScale(coxScale);
+		}
+		if (requiredRoles != null)
+		{
+			p.setRequiredRoles(requiredRoles);
+		}
+		if (hostRole != null)
+		{
+			p.setHostRole(hostRole);
+		}
+		if (learner != null)
+		{
+			p.setLearner(learner);
+		}
+		if (teacher != null)
+		{
+			p.setTeacher(teacher);
+		}
+		if (node != null)
+		{
+			p.setNode(node);
 		}
 	}
 }

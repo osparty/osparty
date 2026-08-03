@@ -1,7 +1,7 @@
 package net.osparty.ui;
 
 import net.osparty.party.LivePartyBackend;
-import net.osparty.party.LiveParty.ReadyCheckStatus;
+import net.osparty.party.ReadyCheckStatus;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;

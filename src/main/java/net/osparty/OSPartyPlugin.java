@@ -1,25 +1,26 @@
 package net.osparty;
 
-import net.osparty.api.PartyApiClient;
-import net.osparty.api.PartyService;
+import net.osparty.api.BoardApiClient;
+import net.osparty.api.BoardService;
+import net.osparty.api.OSPartySocket;
 import net.osparty.service.*;
+import net.osparty.store.PartyStore;
 import net.osparty.tools.*;
+import net.osparty.model.AccountTypes;
 import net.osparty.model.Activity;
 import net.osparty.model.Applicant;
-import net.osparty.model.Party;
-import net.osparty.party.FcRequestMessage;
-import net.osparty.party.HostTransferMessage;
+import net.osparty.model.Advertisement;
+import net.osparty.model.Member;
+import net.osparty.party.JoinPromptEvent;
+import net.osparty.party.PlayerNames;
+import net.osparty.party.HostTransferEvent;
+import net.osparty.party.LiveParty;
+import net.osparty.party.LocalPlayerSnapshot;
 import net.osparty.party.LivePartyBackend;
-import net.osparty.party.RuneLiteLivePartyBackend;
-import net.osparty.party.MemberCommand;
-import net.osparty.party.PartyStateMessage;
-import net.osparty.party.PingMessage;
-import net.osparty.party.PlayerUpdate;
-import net.osparty.party.ReadyCheckMessage;
-import net.osparty.party.SpecDrainMessage;
+import net.osparty.party.SpecDrainEvent;
 import net.osparty.ui.OSPartyPanel;
 import net.osparty.ui.ApplicantOverlay;
-import net.osparty.ui.FcRequestOverlay;
+import net.osparty.ui.JoinPromptOverlay;
 import net.osparty.ui.DefenceInfoBox;
 import net.osparty.ui.NpcDefenceOverlay;
 import net.osparty.ui.PlayerMarkerOverlay;
@@ -35,8 +36,10 @@ import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayDeque;
-import java.util.Deque;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -44,13 +47,17 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 
 import com.google.gson.Gson;
 import javax.inject.Inject;
+import javax.inject.Singleton;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
+import net.runelite.api.Friend;
 import net.runelite.api.FriendsChatManager;
 import net.runelite.api.GameState;
 import net.runelite.api.MenuAction;
+import net.runelite.api.NameableContainer;
 import net.runelite.api.Player;
 import net.runelite.api.Skill;
 import net.runelite.api.SoundEffectID;
@@ -58,19 +65,22 @@ import net.runelite.api.Tile;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.FakeXpDrop;
 import net.runelite.api.events.GameStateChanged;
-import net.runelite.api.InventoryID;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.HitsplatApplied;
 import net.runelite.api.events.NpcDespawned;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.gameval.InterfaceID;
+import net.runelite.api.gameval.InventoryID;
+import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.widgets.WidgetUtil;
 import net.runelite.api.events.VarbitChanged;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.StatChanged;
 import net.runelite.api.vars.AccountType;
+import net.runelite.client.Notifier;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.audio.AudioPlayer;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.config.Keybind;
@@ -84,10 +94,9 @@ import net.runelite.client.game.SkillIconManager;
 import net.runelite.client.game.chatbox.ChatboxPanelManager;
 import net.runelite.client.game.SpriteManager;
 import net.runelite.client.game.WorldService;
+import net.runelite.http.api.worlds.World;
 import net.runelite.http.api.worlds.WorldRegion;
 import net.runelite.http.api.worlds.WorldResult;
-import net.runelite.client.party.events.UserJoin;
-import net.runelite.client.party.events.UserPart;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.task.Schedule;
@@ -119,7 +128,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private OverlayManager overlayManager;
 
 	@Inject
-	private PartyApiClient apiClient;
+	private BoardApiClient apiClient;
 
 	@Inject
 	private ItemManager itemManager;
@@ -128,7 +137,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private SkillIconManager skillIconManager;
 
 	@Inject
-	// V2: LivePartyBackend seam — RuneLite relay today, LivePartyV2 when P1 lands (see provideLivePartyBackend).
 	private LivePartyBackend liveParty;
 
 	@Inject
@@ -174,7 +182,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private OSPartyConfig config;
 
 	@Inject
-	private net.osparty.api.PartySocket partySocket;
+	private OSPartySocket socket;
 
 	@Inject
 	private FavoritesService favoritesService;
@@ -183,10 +191,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private BlockListService blockListService;
 
 	@Inject
-	private net.runelite.client.Notifier notifier;
+	private Notifier notifier;
 
 	@Inject
-	private net.osparty.store.PartyStore partyStore;
+	private PartyStore partyStore;
 
 	@Inject
 	private PartyHistoryService partyHistoryService;
@@ -198,18 +206,22 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private BufferedImage navIcon;
 	private NavigationButton navButton;
 	private NavigationButton navButtonAlert;
-	private javax.swing.Timer navBlinkTimer;
+	private Timer navBlinkTimer;
 	private boolean navAlertShown;
 	private volatile boolean panelActive;
 	private final ConcurrentLinkedDeque<PartyInvite> invitePromptQueue = new ConcurrentLinkedDeque<>();
 	private final Map<String, PartyInvite> activeInvites = new ConcurrentHashMap<>();
 	private static final long INVITE_COOLDOWN_MS = 30_000;
+	private static final String SOUND_READY_CHECK = "/net/osparty/sounds/readycheck.wav";
+	private static final String SOUND_ALL_READY = "/net/osparty/sounds/ready.wav";
+	private static final String SOUND_KICKED = "/net/osparty/sounds/kicked.wav";
+	private static final String SOUND_FRIENDS_CHAT = "/net/osparty/sounds/friendschatsound.wav";
 	private final Map<String, Long> lastInviteAt = new ConcurrentHashMap<>();
 	private String openInviteId;
 	private long identifiedHash;
 	private String identifiedName;
 	private ApplicantOverlay applicantOverlay;
-	private FcRequestOverlay fcRequestOverlay;
+	private JoinPromptOverlay joinPromptOverlay;
 	private ReadyCheckOverlay readyCheckOverlay;
 	private TilePingOverlay tilePingOverlay;
 	private PingArrowOverlay pingArrowOverlay;
@@ -227,10 +239,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private boolean rejoinChecked;
 	private WorldPinger worldPinger;
 
-	private volatile Set<String> friendNames = java.util.Collections.emptySet();
+	private volatile Set<String> friendNames = Collections.emptySet();
+	private int friendsSignature;
 
-	private final Deque<PendingPrompt> promptQueue = new ArrayDeque<>();
-	private boolean promptOpen;
+	/** Filled from the EDT (the panel's refresh), drained on the client thread. */
+	private final ConcurrentLinkedDeque<PendingPrompt> promptQueue = new ConcurrentLinkedDeque<>();
+	private volatile boolean promptOpen;
 	private long openPromptMemberId;
 
 	/**
@@ -257,6 +271,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		int twin = graveTwin(bind.getKeyCode());
 		if (release)
 		{
+			// A modifier-only bind (Shift, Ctrl, ...) is normalised to VK_UNDEFINED with the
+			// modifier in the mask, so there is no key code to compare; Keybind knows how to
+			// match its release.
+			if (bind.getKeyCode() == KeyEvent.VK_UNDEFINED)
+			{
+				return bind.matches(e);
+			}
 			// Match the key alone so releasing a modifier first can't leave the hotkey stuck down.
 			return e.getKeyCode() == bind.getKeyCode()
 				|| (twin != KeyEvent.VK_UNDEFINED && e.getKeyCode() == twin);
@@ -289,6 +310,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 				pingHotkeyDown = false;
 			}
 		}
+
+		@Override
+		public void focusLost()
+		{
+			// A key released while the client is unfocused delivers no keyReleased.
+			pingHotkeyDown = false;
+		}
 	};
 
 	private final MouseAdapter pingMouseListener = new MouseAdapter()
@@ -296,8 +324,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		@Override
 		public MouseEvent mousePressed(MouseEvent event)
 		{
-			if (pingHotkeyDown && config.pings() && javax.swing.SwingUtilities.isLeftMouseButton(event)
-					&& liveParty.isConnected())
+			if (pingHotkeyDown && config.pings() && SwingUtilities.isLeftMouseButton(event)
+					&& liveParty.isInParty())
 			{
 				pingHoveredTile();
 				event.consume();
@@ -321,16 +349,15 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Override
 	protected void startUp()
 	{
-		// Discovery/advertising via the API; the live party runs peer-to-peer (see LiveParty).
-		PartyService partyService = apiClient;
+		BoardService boardService = apiClient;
 
-		partySocket.start();
+		socket.start();
 
 		applicantOverlay = new ApplicantOverlay(config);
 		overlayManager.add(applicantOverlay);
 
-		fcRequestOverlay = new FcRequestOverlay();
-		overlayManager.add(fcRequestOverlay);
+		joinPromptOverlay = new JoinPromptOverlay();
+		overlayManager.add(joinPromptOverlay);
 
 		readyCheckOverlay = new ReadyCheckOverlay(liveParty);
 		overlayManager.add(readyCheckOverlay);
@@ -356,23 +383,29 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		// Ready-check notifications: chat pings and an optional all-ready sound.
 		liveParty.setOnReadyCheckStarted(starter -> {
-			gameMessage(starter + " started a ready check - ready up in the OSParty panel.");
+			chat(starter + " started a ready check - ready up in the OSParty panel.", true);
 			desktopNotify(starter + " started a ready check.");
 			if (config.readyCheckSound())
 			{
-				playResourceSound("/net/osparty/sounds/readycheck.wav");
+				playResourceSound(SOUND_READY_CHECK);
 			}
 		});
 		liveParty.setOnAllReady(() -> {
 			Activity activity = Activity.fromId(liveParty.currentActivityId());
 			String name = activity != null ? activity.getDisplayName() : "the activity";
-			gameMessage("Everyone is ready for " + name + "!");
+			chat("Everyone is ready for " + name + "!", true);
 			desktopNotify("Everyone is ready for " + name + "!");
 			playReadySound();
 		});
-		liveParty.setOnReadyExpired(() -> gameMessage("Ready check expired."));
+		liveParty.setOnReadyExpired(() -> chat("Ready check expired.", true));
+		liveParty.setOnKicked(() -> {
+			if (config.kickSound())
+			{
+				playResourceSound(SOUND_KICKED);
+			}
+		});
 
-		// Stand up the live P2P party layer; the API only advertises the room.
+		// Stand up the live party layer; the advertisement only makes the room findable.
 		liveParty.register();
 
 		// Pull the scammer watchlist now; it refreshes periodically (see schedule).
@@ -383,12 +416,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// A player can't block themselves.
 		blockListService.setSelf(this::getAccountHash, this::getSelfName);
 
-		panel = new OSPartyPanel(partyService, config, this::getPlayerName, this,
+		panel = new OSPartyPanel(boardService, config, this::getPlayerName, this,
 			this::getFriendsChatOwner, this::getCurrentWorld, itemManager, liveParty, runeWatchService,
 			this::getAccountType, killcountService, skillIconManager, this::getMapRegions,
 			this::regionForWorld, this::getCoxLayout, configManager, gson,
 			worldPinger, this::worldAddressForNum, this::getFriendNames, favoritesService, blockListService,
-			this::getAccountHash, spriteManager, partyHistoryService, this::gameMessage);
+			this::getAccountHash, spriteManager, partyHistoryService, message -> chat(message, true));
 
 		navIcon = ImageUtil.loadImageResource(getClass(), "panel_icon.png");
 		buildNavButtons();
@@ -398,7 +431,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		panel.setOnDeactivated(this::onPanelDeactivated);
 		panel.setInviteHandlers(invite -> resolveInvite(invite, true), invite -> resolveInvite(invite, false));
 		apiClient.setInviteListener(this::onPartyInvite);
-		log.info("OSParty started (API {})", PartyApiClient.apiBaseUrl());
+		log.info("OSParty started (API {})", BoardApiClient.apiBaseUrl());
 	}
 
 	@Override
@@ -406,6 +439,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	{
 		liveParty.leave();
 		liveParty.unregister();
+		// These live on singletons that outlast the plugin, so a restart would otherwise stack callbacks
+		// onto a dead instance. Every setter tolerates null.
+		apiClient.setInviteListener(null);
+		liveParty.setOnReadyCheckStarted(null);
+		liveParty.setOnAllReady(null);
+		liveParty.setOnReadyExpired(null);
+		liveParty.setOnKicked(null);
 		keyManager.unregisterKeyListener(pingHotkeyListener);
 		mouseManager.unregisterMouseListener(pingMouseListener);
 		pingHotkeyDown = false;
@@ -413,7 +453,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			panel.dispose();
 		}
-		partySocket.stop();
+		socket.stop();
 		if (navBlinkTimer != null)
 		{
 			navBlinkTimer.stop();
@@ -425,7 +465,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			clientToolbar.removeNavigation(navButtonAlert);
 		}
 		overlayManager.remove(applicantOverlay);
-		overlayManager.remove(fcRequestOverlay);
+		overlayManager.remove(joinPromptOverlay);
 		overlayManager.remove(readyCheckOverlay);
 		overlayManager.remove(tilePingOverlay);
 		overlayManager.remove(pingArrowOverlay);
@@ -444,7 +484,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			worldPinger = null;
 		}
 		applicantOverlay = null;
-		fcRequestOverlay = null;
+		joinPromptOverlay = null;
 		readyCheckOverlay = null;
 		tilePingOverlay = null;
 		pingArrowOverlay = null;
@@ -456,30 +496,51 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		navIcon = null;
 		// startUp always registers the normal button, so the alert flag must not survive a restart.
 		navAlertShown = false;
+		panelActive = false;
 		playerName = null;
 		accountHash = -1L;
+		// A prompt left open would keep both drain loops short-circuited for the rest of the session,
+		// and rejoinChecked would eat the once-per-login rejoin offer.
+		promptOpen = false;
+		openPromptMemberId = 0;
+		openInviteId = null;
+		rejoinChecked = false;
+		promptQueue.clear();
+		invitePromptQueue.clear();
+		activeInvites.clear();
+		lastInviteAt.clear();
+		friendNames = Collections.emptySet();
+		friendsSignature = 0;
 		partyStore.close();
 	}
 
 	@Subscribe
-	public void onConfigChanged(net.runelite.client.events.ConfigChanged event)
+	public void onConfigChanged(ConfigChanged event)
 	{
-		if (OSPartyConfig.GROUP.equals(event.getGroup())
-			&& "showDiscordBadges".equals(event.getKey()) && panel != null)
+		if (!OSPartyConfig.GROUP.equals(event.getGroup()))
+		{
+			return;
+		}
+		String key = event.getKey();
+		if (OSPartyConfig.SHOW_DISCORD_BADGES.equals(key) && panel != null)
 		{
 			SwingUtilities.invokeLater(panel::refreshDiscordBadgeViews);
 		}
 		// Re-broadcast our snapshot right away so hiding/unhiding inventory or gear takes effect
 		// for the party without waiting for the periodic re-announce.
-		if (OSPartyConfig.GROUP.equals(event.getGroup())
-			&& ("hideInventory".equals(event.getKey()) || "hideGear".equals(event.getKey())))
+		if (OSPartyConfig.HIDE_INVENTORY.equals(key) || OSPartyConfig.HIDE_GEAR.equals(key))
 		{
 			liveParty.markLocalDirty();
 		}
-		if (OSPartyConfig.GROUP.equals(event.getGroup())
-			&& OSPartyConfig.SIDE_PANEL_PRIORITY.equals(event.getKey()))
+		if (OSPartyConfig.SIDE_PANEL_PRIORITY.equals(key))
 		{
 			SwingUtilities.invokeLater(this::rebuildNavButtons);
+		}
+		// The watchlist is only fetched on startup and every 15 minutes, so without this the setting
+		// looks broken for a quarter of an hour after it's switched on.
+		if (OSPartyConfig.RUNE_WATCH.equals(key) && config.runeWatch())
+		{
+			runeWatchService.refresh();
 		}
 	}
 
@@ -487,9 +548,15 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	public void onVarbitChanged(VarbitChanged event)
 	{
 		// CoX stairs reload flicks IN_RAID 1->0->1 within one tick; only the event stream catches it.
-		if (event.getVarbitId() == net.runelite.api.Varbits.IN_RAID)
+		if (event.getVarbitId() == VarbitID.RAIDS_CLIENT_INDUNGEON)
 		{
 			coxRaidScanner.onInRaidChanged(event.getValue());
+		}
+		// The rune pouch has no item container of its own, so runes moving in or out of it only ever show up
+		// here. Without this the pouch keeps whatever it held when the inventory last changed.
+		if (LocalPlayerSnapshot.isRunePouchVarbit(event.getVarbitId()))
+		{
+			liveParty.markItemsDirty();
 		}
 		specTracker.onVarbitChanged(event);
 	}
@@ -499,7 +566,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	{
 		// On a real logout (not a hop), tell the party we're offline so our dot clears now.
 		if (event.getGameState() == GameState.LOGIN_SCREEN && playerName != null
-			&& liveParty.isConnected())
+			&& liveParty.isInParty())
 		{
 			liveParty.broadcastOffline(playerName);
 		}
@@ -549,20 +616,17 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		FriendsChatManager fcm = client.getFriendsChatManager();
 		friendsChatOwner = fcm != null ? fcm.getOwner() : null;
 
-		// Capture the full friends list for friends-first sorting in the Search panel.
-		net.runelite.api.NameableContainer<net.runelite.api.Friend> friendContainer = client.getFriendContainer();
+		// Capture the full friends list for friends-first sorting in the Search panel. Walking the raw
+		// names is cheap; normalising them into a fresh set every tick is not, so only do it on a change.
+		NameableContainer<Friend> friendContainer = client.getFriendContainer();
 		if (friendContainer != null)
 		{
-			java.util.Set<String> names = new java.util.HashSet<>(friendContainer.getCount() * 2);
-			for (int i = 0; i < friendContainer.getCount(); i++)
+			int signature = friendsSignature(friendContainer);
+			if (signature != friendsSignature)
 			{
-				net.runelite.api.Friend f = friendContainer.getMembers()[i];
-				if (f != null && f.getName() != null)
-				{
-					names.add(f.getName().replace('\u00A0', ' ').trim().toLowerCase());
-				}
+				friendsSignature = signature;
+				friendNames = Collections.unmodifiableSet(normalizedFriendNames(friendContainer));
 			}
-			friendNames = java.util.Collections.unmodifiableSet(names);
 		}
 
 		// Accumulate the CoX layout each tick; a single scan can't see the whole raid.
@@ -583,6 +647,32 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		specTracker.onGameTick();
 		defenceTracker.onGameTick();
 		updateDefenceInfoBox();
+	}
+
+	/** Cheap fingerprint of the friends list, so the normalised set is only rebuilt when it really changed. */
+	private static int friendsSignature(NameableContainer<Friend> container)
+	{
+		Friend[] members = container.getMembers();
+		int signature = container.getCount();
+		for (Friend friend : members)
+		{
+			signature = signature * 31 + (friend == null || friend.getName() == null
+				? 0 : friend.getName().hashCode());
+		}
+		return signature;
+	}
+
+	private static Set<String> normalizedFriendNames(NameableContainer<Friend> container)
+	{
+		Set<String> names = new HashSet<>(container.getCount() * 2);
+		for (Friend friend : container.getMembers())
+		{
+			if (friend != null && friend.getName() != null)
+			{
+				names.add(PlayerFlagService.normalize(friend.getName()));
+			}
+		}
+		return names;
 	}
 
 	private void updateDefenceInfoBox()
@@ -620,7 +710,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	}
 
 	@Subscribe
-	public void onSpecDrainMessage(SpecDrainMessage event)
+	public void onSpecDrainEvent(SpecDrainEvent event)
 	{
 		specTracker.onSpecDrain(event);
 	}
@@ -628,10 +718,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Subscribe
 	public void onItemContainerChanged(ItemContainerChanged event)
 	{
-		// V2: only the two containers a snapshot actually carries. This fires for the bank, the GE and every
+		// Only the two containers a snapshot actually carries. This fires for the bank, the GE and every
 		// other container too, so without the filter a banking trip re-sent the whole snapshot continuously.
 		int id = event.getContainerId();
-		if (id == InventoryID.INVENTORY.getId() || id == InventoryID.EQUIPMENT.getId())
+		if (id == InventoryID.INV || id == InventoryID.WORN)
 		{
 			liveParty.markItemsDirty();
 		}
@@ -640,55 +730,15 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Subscribe
 	public void onStatChanged(StatChanged event)
 	{
-		// V2: the backend decides whether this is a real level-up or just a boost; boosts arrive constantly.
+		// The backend decides whether this is a real level-up or just a boost; boosts arrive constantly.
 		liveParty.markStatsDirty(event.getSkill(), event.getLevel());
 		specTracker.onStatChanged(event);
 	}
 
 	@Subscribe
-	public void onPlayerUpdate(PlayerUpdate event)
+	public void onHostTransferEvent(HostTransferEvent event)
 	{
-		liveParty.onPlayerUpdate(event);
-	}
-
-	@Subscribe
-	public void onPartyStateMessage(PartyStateMessage event)
-	{
-		liveParty.onPartyState(event);
-	}
-
-	@Subscribe
-	public void onMemberCommand(MemberCommand event)
-	{
-		// Check before handling: onMemberCommand makes us leave the party.
-		boolean kickedUs = event.getAction() == MemberCommand.Action.KICK
-			&& liveParty.isForLocalMember(event.getTargetMemberId());
-		liveParty.onMemberCommand(event);
-		if (kickedUs && config.kickSound())
-		{
-			playResourceSound("/net/osparty/sounds/kicked.wav");
-		}
-	}
-
-	@Subscribe
-	public void onHostTransferMessage(HostTransferMessage event)
-	{
-		panel.onHostTransferMessage(event);
-	}
-
-	@Subscribe
-	public void onPingMessage(PingMessage event)
-	{
-		if (liveParty.onPing(event) && config.pingSound())
-		{
-			playPingSound();
-		}
-	}
-
-	/** Play the RuneScape-native tile-ping "tink", matching RuneLite's own party plugin. */
-	private void playPingSound()
-	{
-		clientThread.invoke(() -> client.playSoundEffect(SoundEffectID.SMITH_ANVIL_TINK));
+		panel.onHostTransferEvent(event);
 	}
 
 	/** Broadcast a ping at the tile under the cursor (client thread). Called from the mouse listener. */
@@ -709,13 +759,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	}
 
 	@Subscribe
-	public void onReadyCheckMessage(ReadyCheckMessage event)
-	{
-		liveParty.onReadyCheck(event);
-	}
-
-	@Subscribe
-	public void onFcRequestMessage(FcRequestMessage event)
+	public void onJoinPromptEvent(JoinPromptEvent event)
 	{
 		// Only show the popup if this request is aimed at us, and we accept them.
 		if (!config.receiveFriendsChatRequests())
@@ -749,28 +793,16 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 				title = "Friends chat request";
 				detail = "Join the friends chat: " + fc;
 		}
-		if (fcRequestOverlay != null)
+		if (joinPromptOverlay != null)
 		{
-			fcRequestOverlay.show(host, title, detail, config.fcRequestDurationSecs() * 1000L);
-			gameMessage(host + " - " + detail);
+			joinPromptOverlay.show(host, title, detail, config.fcRequestDurationSecs() * 1000L);
+			chat(host + " - " + detail, true);
 			desktopNotify(host + " — " + detail);
 			if (config.friendsChatRequestSound())
 			{
-				playResourceSound("/net/osparty/sounds/friendschatsound.wav");
+				playResourceSound(SOUND_FRIENDS_CHAT);
 			}
 		}
-	}
-
-	@Subscribe
-	public void onUserJoin(UserJoin event)
-	{
-		liveParty.onPeerJoined(event.getMemberId());
-	}
-
-	@Subscribe
-	public void onUserPart(UserPart event)
-	{
-		liveParty.onPeerLeft(event.getMemberId());
 	}
 
 	@Schedule(period = 15, unit = ChronoUnit.MINUTES, asynchronous = true)
@@ -782,25 +814,25 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	/** Look up an ad still hosted by us (survives a crash/restart for ~the ad TTL). */
 	private void attemptRejoin(String rsn)
 	{
-		if (liveParty.isConnected())
+		if (liveParty.isInParty())
 		{
 			return; // already in a party
 		}
-		apiClient.getPartyByHost(rsn,
-			party -> SwingUtilities.invokeLater(() -> onRejoinFound(party)),
+		apiClient.fetchAdByHost(rsn,
+			ad -> SwingUtilities.invokeLater(() -> onRejoinFound(ad)),
 			error -> { /* no party for this host - normal, nothing to do */ });
 	}
 
-	private void onRejoinFound(Party party)
+	private void onRejoinFound(Advertisement ad)
 	{
-		if (panel == null || party == null)
+		if (panel == null || ad == null)
 		{
 			return;
 		}
-		panel.resumeHostedParty(party);
-		Activity activity = Activity.fromId(party.getActivity());
-		String name = activity != null ? activity.getDisplayName() : party.getActivity();
-		gameMessage("Rejoined your " + name + " party - disband it from the OSParty panel if you're done.");
+		panel.resumeHostedParty(ad);
+		Activity activity = Activity.fromId(ad.getActivity());
+		String name = activity != null ? activity.getDisplayName() : ad.getActivity();
+		chat("Rejoined your " + name + " party - disband it from the OSParty panel if you're done.", true);
 	}
 
 	public String getPlayerName()
@@ -844,7 +876,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			return null;
 		}
-		net.runelite.http.api.worlds.World world = worlds.findWorld(worldNum);
+		World world = worlds.findWorld(worldNum);
 		return world != null ? world.getRegion() : null;
 	}
 
@@ -860,7 +892,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			return null;
 		}
-		net.runelite.http.api.worlds.World world = worlds.findWorld(worldNum);
+		World world = worlds.findWorld(worldNum);
 		return world != null ? world.getAddress() : null;
 	}
 
@@ -881,7 +913,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 
 	@Override
-	public void setPendingApplicants(java.util.List<Applicant> applicants, Activity activity)
+	public void setPendingApplicants(List<Applicant> applicants, Activity activity)
 	{
 		applicantOverlay.setApplicants(applicants, activity);
 		// Badge the sidebar button while applications are waiting, not only for invites: the chat line
@@ -915,8 +947,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			desktopNotify(applicant.getName() + " applied to your " + activity.getDisplayName() + " party.");
 		}
 
-		gameMessage(applicant.getName() + " applied to your " + activity.getDisplayName()
-			+ " party - " + applicantSummary(applicant, activity) + ". Accept or decline in the side panel.");
+		chat(applicant.getName() + " applied to your " + activity.getDisplayName()
+			+ " party - " + applicantSummary(applicant, activity) + ". Accept or decline in the side panel.", true);
 
 		// Also offer an in-game chatbox Accept/Decline (driven on the game tick).
 		if (config.inGamePrompts() && applicant.getMemberId() != 0)
@@ -930,14 +962,14 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	{
 		notifier.notify("Auto-declined " + applicant.getName() + " — on your block list ("
 			+ activity.getDisplayName() + ").");
-		gameMessage("Auto-declined " + applicant.getName() + " - on your block list.");
+		chat("Auto-declined " + applicant.getName() + " - on your block list.", true);
 	}
 
 	@Override
 	public void announceInvitedAdmitted(Applicant applicant, Activity activity)
 	{
-		gameMessage(applicant.getName() + " accepted your invite and joined your "
-			+ activity.getDisplayName() + " party.");
+		chat(applicant.getName() + " accepted your invite and joined your "
+			+ activity.getDisplayName() + " party.", true);
 	}
 
 	/** A compact one-liner about an applicant (cb, KC, PB, total, account type, RuneWatch). */
@@ -949,7 +981,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			return "on your block list";
 		}
 
-		java.util.List<String> parts = new java.util.ArrayList<>();
+		List<String> parts = new ArrayList<>();
 		parts.add("cb " + applicant.getCombatLevel());
 
 		if (applicant.getKillCount() >= 0)
@@ -974,8 +1006,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			parts.add("total " + total);
 		}
 
-		String tag = net.osparty.model.AccountTypes.tag(
-			net.osparty.model.AccountTypes.fromName(applicant.getAccountType()));
+		String tag = AccountTypes.tag(AccountTypes.fromName(applicant.getAccountType()));
 		if (tag != null)
 		{
 			parts.add(tag);
@@ -1055,7 +1086,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 				}
 				else
 				{
-					gameMessage("Party is full - couldn't accept " + applicant.getName() + ".");
+					chat("Party is full - couldn't accept " + applicant.getName() + ".", true);
 				}
 			})
 			.option("Decline", () -> {
@@ -1080,8 +1111,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	{
 		// If resolved elsewhere while the prompt is open, close it so it can't be actioned twice.
 		dismissPromptFor(applicant.getMemberId());
-		gameMessage((accepted ? "Accepted " : "Declined ") + applicant.getName()
-			+ " for your " + activity.getDisplayName() + " party.");
+		chat((accepted ? "Accepted " : "Declined ") + applicant.getName()
+			+ " for your " + activity.getDisplayName() + " party.", true);
 	}
 
 	/** Close the open chatbox applicant prompt if it's the one for {@code memberId}. */
@@ -1103,7 +1134,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	{
 		if (config.readyCheckSound())
 		{
-			playResourceSound("/net/osparty/sounds/ready.wav");
+			playResourceSound(SOUND_ALL_READY);
 		}
 	}
 
@@ -1137,14 +1168,14 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			return;
 		}
-		Party party = currentPanel.currentBackendParty();
-		if (party == null || party.getId() == null)
+		Advertisement ad = currentPanel.currentAd();
+		if (ad == null || ad.getId() == null)
 		{
 			return; // not hosting or in a party — nothing to invite to
 		}
 		String friend = Text.removeTags(event.getTarget());
-		String normalized = normalizeName(friend);
-		if (normalized.isEmpty() || normalized.equals(normalizeName(playerName)))
+		String normalized = PlayerNames.normalize(friend);
+		if (normalized.isEmpty() || normalized.equals(PlayerNames.normalize(playerName)))
 		{
 			return; // unresolved name, or it's us
 		}
@@ -1153,47 +1184,47 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			return; // offline friends can't receive an invite
 		}
 		// Don't offer to invite someone already in the party.
-		for (net.osparty.model.Member member : liveParty.currentMembers())
+		for (Member member : liveParty.currentMembers())
 		{
-			if (normalized.equals(normalizeName(member.getName())))
+			if (normalized.equals(PlayerNames.normalize(member.getName())))
 			{
 				return;
 			}
 		}
-		String partyId = party.getId();
+		String adId = ad.getId();
 		client.createMenuEntry(-1)
 			.setOption("Invite to party")
 			.setTarget(event.getTarget())
 			.setType(MenuAction.RUNELITE)
-			.onClick(e -> sendInvite(partyId, friend));
+			.onClick(e -> sendInvite(adId, friend));
 	}
 
 	/** Send a party invite to {@code friend} and report the outcome in the chatbox. Rate-limited per friend. */
-	private void sendInvite(String partyId, String friend)
+	private void sendInvite(String adId, String friend)
 	{
-		String normalized = normalizeName(friend);
+		String normalized = PlayerNames.normalize(friend);
 		long now = System.currentTimeMillis();
 		Long last = lastInviteAt.get(normalized);
 		if (last != null && now - last < INVITE_COOLDOWN_MS)
 		{
 			long seconds = (INVITE_COOLDOWN_MS - (now - last) + 999) / 1000;
-			postChat("You can invite " + friend + " again in " + seconds + "s.");
+			chat("You can invite " + friend + " again in " + seconds + "s.", false);
 			return;
 		}
 		lastInviteAt.put(normalized, now);
 		String myName = playerName;
 		long myHash = accountHash;
-		apiClient.inviteFriend(partyId, myName, myHash, friend, delivered ->
+		apiClient.inviteFriend(adId, myName, myHash, friend, delivered ->
 		{
 			if (delivered)
 			{
-				postChat("Invited " + friend + " to the party.");
+				chat("Invited " + friend + " to the party.", false);
 			}
 			else
 			{
 				// Not delivered — drop the cooldown so they can retry the moment the friend is back.
 				lastInviteAt.remove(normalized);
-				postChat(friend + " isn't online in OSParty.");
+				chat(friend + " isn't online in OSParty.", false);
 			}
 		});
 	}
@@ -1201,15 +1232,15 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	/** @return whether the OSRS friend named {@code normalizedName} is currently online (world &gt; 0). */
 	private boolean isFriendOnline(String normalizedName)
 	{
-		net.runelite.api.NameableContainer<net.runelite.api.Friend> friends = client.getFriendContainer();
+		NameableContainer<Friend> friends = client.getFriendContainer();
 		if (friends == null)
 		{
 			return false;
 		}
-		for (net.runelite.api.Friend friend : friends.getMembers())
+		for (Friend friend : friends.getMembers())
 		{
 			if (friend != null && friend.getName() != null
-				&& normalizedName.equals(normalizeName(friend.getName())))
+				&& normalizedName.equals(PlayerNames.normalize(friend.getName())))
 			{
 				return friend.getWorld() > 0;
 			}
@@ -1239,12 +1270,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private void onPartyInvite(PartyInvite invite)
 	{
 		InviteDisplay mode = config.inviteDisplay();
-		Party party = invite.getParty();
-		if (mode == null || mode == InviteDisplay.DISABLED || party == null)
+		Advertisement ad = invite.getAd();
+		if (mode == null || mode == InviteDisplay.DISABLED || ad == null)
 		{
 			return;
 		}
-		activeInvites.put(party.getId(), invite);
+		activeInvites.put(ad.getId(), invite);
 		desktopNotify(inviterName(invite) + " invited you to their party.");
 		if (mode.showsInGame())
 		{
@@ -1268,8 +1299,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	/** Resolve an invite (Accept or Decline) from either surface; dismisses both and joins on accept. */
 	private void resolveInvite(PartyInvite invite, boolean accept)
 	{
-		Party party = invite.getParty();
-		String key = party == null ? null : party.getId();
+		Advertisement ad = invite.getAd();
+		String key = ad == null ? null : ad.getId();
 		boolean firstResolution = key != null && activeInvites.remove(key) != null;
 		// Dismiss both surfaces regardless of which one the player used (idempotent).
 		SwingUtilities.invokeLater(() ->
@@ -1291,7 +1322,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 		else
 		{
-			postChat("Declined " + inviterName(invite) + "'s party invite.");
+			chat("Declined " + inviterName(invite) + "'s party invite.", false);
 		}
 	}
 
@@ -1313,7 +1344,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 	private static String inviterName(PartyInvite invite)
 	{
-		String from = invite.getFromName() != null ? invite.getFromName() : invite.getParty().getHost();
+		String from = invite.getFromName() != null ? invite.getFromName() : invite.getAd().getHost();
 		return from != null ? from : "A friend";
 	}
 
@@ -1334,13 +1365,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	/** Open the chatbox Accept/Decline prompt for a received invite; Accept joins via the invite code. */
 	private void openInvitePrompt(PartyInvite invite)
 	{
-		Party party = invite.getParty();
-		String key = party.getId();
+		Advertisement ad = invite.getAd();
+		String key = ad.getId();
 		if (key == null || !activeInvites.containsKey(key))
 		{
 			return; // resolved via the sidebar banner before we got to it
 		}
-		Activity activity = Activity.fromId(party.getActivity());
+		Activity activity = Activity.fromId(ad.getActivity());
 		String label = activity != null ? activity.getDisplayName() + " party" : "their party";
 
 		promptOpen = true;
@@ -1369,15 +1400,15 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	/** Accept an invite: join the party by its invite code, reusing the standard join flow. */
 	private void acceptInvite(PartyInvite invite)
 	{
-		Party party = invite.getParty();
-		String code = party.getInviteCode();
+		Advertisement ad = invite.getAd();
+		String code = ad.getInviteCode();
 		OSPartyPanel currentPanel = panel;
 		if (code == null || code.isEmpty() || currentPanel == null)
 		{
-			postChat("Couldn't join that party - the invite is missing its code.");
+			chat("Couldn't join that party - the invite is missing its code.", false);
 			return;
 		}
-		SwingUtilities.invokeLater(() -> currentPanel.joinByInviteCode(code, this::postChat));
+		SwingUtilities.invokeLater(() -> currentPanel.joinByInviteCode(code, message -> chat(message, false)));
 	}
 
 	/** Flash the OSParty sidebar button until the panel is opened. No-op if the panel is already open. EDT only. */
@@ -1387,7 +1418,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			return;
 		}
-		navBlinkTimer = new javax.swing.Timer(600, e ->
+		navBlinkTimer = new Timer(600, e ->
 		{
 			// Never swap while our panel is open — removing the selected button would force it closed.
 			if (!panelActive)
@@ -1499,11 +1530,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		return badged;
 	}
 
-	/** Normalise an OSRS name for identity matching: strip the nbsp Jagex uses, trim, lowercase. */
-	private static String normalizeName(String name)
-	{
-		return name == null ? "" : name.replace('\u00A0', ' ').trim().toLowerCase();
-	}
 
 	/** Send a desktop notification for an OSParty event, when the user has opted in. */
 	private void desktopNotify(String message)
@@ -1514,21 +1540,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 	}
 
-	/** Post an OSParty chat line regardless of the general chatbox-notifications toggle. Client thread. */
-	private void postChat(String message)
+	/**
+	 * Post an OSParty chat line (client thread). No-op when not logged in. {@code optional} lines are
+	 * event chatter the chatbox-notifications toggle suppresses; the rest answer something the player did.
+	 */
+	private void chat(String message, boolean optional)
 	{
-		if (client.getGameState() != GameState.LOGGED_IN)
-		{
-			return;
-		}
-		String formatted = ColorUtil.wrapWithColorTag("[OSParty]", Color.ORANGE) + " " + message;
-		clientThread.invoke(() -> client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", formatted, null));
-	}
-
-	/** Post a game message to the chatbox (client thread). No-op when not logged in. */
-	private void gameMessage(String message)
-	{
-		if (!config.chatboxNotifications())
+		if (optional && !config.chatboxNotifications())
 		{
 			return;
 		}
@@ -1546,24 +1564,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		return configManager.getConfig(OSPartyConfig.class);
 	}
 
-	/**
-	 * Selects the live-party implementation behind the {@link LivePartyBackend} seam: OSParty's own V2 live
-	 * party when {@code -Dosparty.partyV2=true}, otherwise the RuneLite relay (the default).
-	 * See PARTY_V2_MIGRATION.md §9.1/§12.
-	 */
 	@Provides
-	@javax.inject.Singleton
-	LivePartyBackend provideLivePartyBackend(RuneLiteLivePartyBackend runeLite,
-		net.osparty.party.v2.LivePartyV2 v2,
-		net.osparty.api.ServerCapabilities capabilities)
+	@Singleton
+	LivePartyBackend provideLivePartyBackend(LiveParty liveParty)
 	{
-		// Ask the server before choosing, so one plugin release works against a deployment that serves the
-		// live party and against one that does not. -Dosparty.partyV2=true forces the answer rather than
-		// this choice, so the socket and the backend cannot disagree about which world they are in.
-		capabilities.probe();
-		boolean useV2 = capabilities.partyV2() && capabilities.mergedSocket();
-		// Once, at startup, and never again: this seam is injected across the UI, and swapping it under a
-		// party in progress would leave half the plugin talking to a backend the other half had left.
-		return useV2 ? v2 : runeLite;
+		return liveParty;
 	}
 }

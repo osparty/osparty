@@ -4,7 +4,7 @@ import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import javax.inject.Inject;
 import javax.inject.Singleton;
-import net.osparty.model.Party;
+import net.osparty.model.Advertisement;
 import net.osparty.store.FlagKind;
 import net.osparty.store.PartyStore;
 import net.osparty.store.PlayerFlag;
@@ -18,8 +18,8 @@ import net.osparty.store.PlayerFlag;
 @Singleton
 public class BlockListService extends PlayerFlagService
 {
-	private volatile LongSupplier selfHash;
-	private volatile Supplier<String> selfName;
+	private volatile LongSupplier selfHashSupplier;
+	private volatile Supplier<String> selfNameSupplier;
 
 	@Inject
     public BlockListService(PartyStore store)
@@ -28,10 +28,10 @@ public class BlockListService extends PlayerFlagService
 	}
 
 	/** Register the local player's identity so we never let them block themselves. */
-	public void setSelf(LongSupplier selfHash, Supplier<String> selfName)
+	public void setSelf(LongSupplier selfHashSupplier, Supplier<String> selfNameSupplier)
 	{
-		this.selfHash = selfHash;
-		this.selfName = selfName;
+		this.selfHashSupplier = selfHashSupplier;
+		this.selfNameSupplier = selfNameSupplier;
 	}
 
 	public boolean isBlocked(long accountHash, String name)
@@ -44,9 +44,9 @@ public class BlockListService extends PlayerFlagService
 		return isFlagged(name);
 	}
 
-	public boolean hasAnyBlocked(Party party)
+	public boolean hasAnyBlocked(Advertisement ad)
 	{
-		return hasAnyFlagged(party);
+		return hasAnyFlagged(ad);
 	}
 
 	/**
@@ -55,12 +55,12 @@ public class BlockListService extends PlayerFlagService
 	 */
 	public boolean isSelf(long accountHash, String name)
 	{
-		long myHash = selfHash != null ? selfHash.getAsLong() : PlayerFlag.UNKNOWN_HASH;
+		long myHash = selfHashSupplier != null ? selfHashSupplier.getAsLong() : PlayerFlag.UNKNOWN_HASH;
 		if (PlayerFlag.isKnown(accountHash) && PlayerFlag.isKnown(myHash) && accountHash == myHash)
 		{
 			return true;
 		}
-		String myName = selfName != null ? selfName.get() : null;
+		String myName = selfNameSupplier != null ? selfNameSupplier.get() : null;
 		return myName != null && name != null && normalize(myName).equals(normalize(name));
 	}
 

@@ -1,4 +1,4 @@
-package net.osparty.party.v2;
+package net.osparty.party;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
@@ -11,31 +11,27 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
-import net.osparty.api.PartySocket;
+import net.osparty.api.OSPartySocket;
 
 /**
- * The plugin's live-party channel. Frame semantics live in {@link LivePartyV2}; what this class owns is the
- * live half of the protocol that is not about a party — announcing on (re)connect, following the server to
- * the node that holds the room, and waiting out a handover.
+ * The plugin's live-party channel. Frame semantics live in {@link LiveParty}; what this class owns is the
+ * live half of the protocol that is not about a party: announcing on (re)connect, following the server to the
+ * node that holds the room, and waiting out a handover.
  *
- * <p>It no longer owns a connection. The live party used to open a second WebSocket for the duration of a
- * party, which meant every user actually in one cost the gateway twice what a browsing user did; it now rides
- * on {@link PartySocket}'s session-long connection as a tagged channel. Starting and stopping are therefore
- * about attaching to that connection, not about opening anything — the socket is up either way.
+ * <p>It rides on {@link OSPartySocket}'s session-long connection as a tagged channel, so attaching and
+ * detaching are about that connection rather than about opening anything.
  *
- * <p>What did not change is that the server holds no durable live state: on every (re)connect this fires
- * {@link #setOnOpen}, so the caller re-announces itself and re-sends its state, and the room is rebuilt
- * (PARTY_V2_MIGRATION.md recovery).
+ * <p>The server holds no durable live state. On every (re)connect this fires {@link #setOnOpen}, so the
+ * caller re-announces itself and re-sends its state, and the room is rebuilt from that.
  *
- * <p>P2 node-hint routing still applies, and now moves the whole connection: a {@code redirect} frame pins
- * {@link PartySocket} to the owning pod, and leaving the party releases the pin without moving again — the
- * board is served identically everywhere, so there is nothing to go back for. P4 {@code ownerPending}: a room
- * whose owner drained answers with a retry delay rather than an error, and this re-announces after it rather
- * than treating the party as gone — a member reconnects faster than its host re-hosts, and without this it
- * would arrive to "no room" and silently fall out of the party.
+ * <p>Node-hint routing moves the whole connection: a {@code redirect} frame pins {@link OSPartySocket} to the
+ * owning pod, and leaving the party releases the pin without moving again, the board being served identically
+ * everywhere. An {@code ownerPending} answer carries a retry delay rather than an error, and this
+ * re-announces after it rather than treating the party as gone: a member reconnects faster than its host
+ * re-hosts, and without this it would arrive to "no room" and silently fall out of the party.
  */
 @Slf4j
-public class PartyV2Socket implements PartySocket.LiveChannel {
+public class LivePartyChannel implements OSPartySocket.LiveChannel {
 	/** Retry delay used when an {@code ownerPending} frame does not name one. */
 	private static final long DEFAULT_RETRY_MS = 1_000;
 	/**
@@ -45,7 +41,7 @@ public class PartyV2Socket implements PartySocket.LiveChannel {
 	 */
 	private static final int MAX_PENDING_RETRIES = 20;
 
-	private final PartySocket connection;
+	private final OSPartySocket connection;
 	private final Gson gson;
 
 	private volatile ScheduledExecutorService retries;
@@ -54,11 +50,13 @@ public class PartyV2Socket implements PartySocket.LiveChannel {
 
 	/** Whether a party is in progress, and so whether we are attached to the connection at all. */
 	private volatile boolean started;
+	/** Bumped on every announce, so {@link #attach} can tell whether registering fired one straight away. */
+	private volatile long announces;
 	/** Consecutive {@code ownerPending} deferrals; reset whenever the server actually seats us. */
 	private volatile int pendingRetries;
 
 	@javax.inject.Inject
-	public PartyV2Socket(PartySocket connection, Gson gson) {
+	public LivePartyChannel(OSPartySocket connection, Gson gson) {
 		this.connection = connection;
 		this.gson = gson;
 	}
@@ -73,26 +71,28 @@ public class PartyV2Socket implements PartySocket.LiveChannel {
 	}
 
 	/**
-	 * Attach the live channel: from here the shared connection carries this party's frames.
+	 * Attach the live channel: from here the shared connection carries this party's frames. Nothing is
+	 * opened; if the connection is already up, {@link OSPartySocket#setLiveChannel} fires the announce
+	 * callback straight away.
 	 *
-	 * <p>Nothing is opened. If the connection is already up — which it is, unless the network is down —
-	 * {@link PartySocket#setLiveChannel} fires the announce callback straight away, so the caller sees the
-	 * same "we are connected, say who we are" moment a fresh socket used to give it.
+	 * @return whether that announce fired, and so whether the caller's host/join frame has already gone out
 	 */
-	public synchronized void start() {
+	public synchronized boolean attach() {
 		if (started) {
-			return;
+			return false;
 		}
 		started = true;
 		pendingRetries = 0;
 		if (retries == null || retries.isShutdown()) {
 			retries = Executors.newSingleThreadScheduledExecutor(r -> {
-				Thread t = new Thread(r, "osparty-v2-retry");
+				Thread t = new Thread(r, "osparty-live-retry");
 				t.setDaemon(true);
 				return t;
 			});
 		}
+		long before = announces;
 		connection.setLiveChannel(this);
+		return announces != before;
 	}
 
 	/**
@@ -103,7 +103,7 @@ public class PartyV2Socket implements PartySocket.LiveChannel {
 	 * ends up owning them all. Reconnecting to drop it would be pure cost, though: any node serves the board,
 	 * and the next party will move us wherever it lives.
 	 */
-	public synchronized void stop() {
+	public synchronized void detach() {
 		started = false;
 		connection.setLiveChannel(null);
 		connection.clearNodeHint(false);
@@ -187,7 +187,7 @@ public class PartyV2Socket implements PartySocket.LiveChannel {
 			listener.accept(frame);
 		}
 		catch (Exception e) {
-			log.debug("Party V2 frame handling failed: {}", e.toString());
+			log.debug("Live party frame handling failed: {}", e.toString());
 		}
 	}
 
@@ -209,7 +209,7 @@ public class PartyV2Socket implements PartySocket.LiveChannel {
 			executor.schedule(this::reannounce, delay + jitter, TimeUnit.MILLISECONDS);
 		}
 		catch (RejectedExecutionException ignored) {
-			// executor shut down by stop()
+			// executor shut down by detach()
 		}
 	}
 
@@ -221,11 +221,12 @@ public class PartyV2Socket implements PartySocket.LiveChannel {
 
 	/** Re-send {@code hello} and {@code host}/{@code join}, exactly as a fresh connection would. */
 	private void announce() {
+		announces++;
 		try {
 			onOpen.run();
 		}
 		catch (Exception e) {
-			log.debug("Party V2 announce failed: {}", e.toString());
+			log.debug("Live party announce failed: {}", e.toString());
 		}
 	}
 
@@ -242,12 +243,9 @@ public class PartyV2Socket implements PartySocket.LiveChannel {
 		public Boolean closed;
 		public String discordUrl;
 		public List<RosterEntry> members;
-		/** Every peer's live update from one aggregation window, on a {@code memberUpdates} frame. */
+		/** Every peer's live update from one aggregation window, on an {@code mu} frame. */
 		@SerializedName("u")
 		public List<MemberUpdate> updates;
-		/** Opaque live snapshot (a serialised PlayerUpdate); the caller converts it with its own Gson. */
-		@SerializedName("s")
-		public JsonObject state;
 		/** Opaque host ad settings (a serialised PartyMeta), on a {@code meta} frame. */
 		public JsonObject meta;
 		public Integer x;
@@ -276,8 +274,9 @@ public class PartyV2Socket implements PartySocket.LiveChannel {
 		public Boolean hostStays;
 	}
 
-	/** One member's live update inside a {@code memberUpdates} frame. */
+	/** One member's live update inside an {@code mu} frame. */
 	public static final class MemberUpdate {
+		@SerializedName("m")
 		public long memberId;
 		@SerializedName("s")
 		public JsonObject state;

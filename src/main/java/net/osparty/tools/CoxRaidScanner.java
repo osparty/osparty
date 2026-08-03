@@ -16,7 +16,7 @@ import net.runelite.api.InstanceTemplates;
 import net.runelite.api.NullObjectID;
 import net.runelite.api.Point;
 import net.runelite.api.Tile;
-import net.runelite.api.Varbits;
+import net.runelite.api.gameval.VarbitID;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.plugins.raids.RaidRoom;
 import net.runelite.client.plugins.raids.RoomType;
@@ -109,6 +109,10 @@ public class CoxRaidScanner
 	private int lobbyBaseY;
 	private int baseX;
 	private int baseY;
+	/** Scene base of the last full sweep that found no lobby; static objects can't appear mid-load. */
+	private int emptySweepBaseX = Integer.MIN_VALUE;
+	private int emptySweepBaseY = Integer.MIN_VALUE;
+	private boolean roomsDirty;
 	private CoxLayout solvedLayout;
 	private String cachedLayout;
 
@@ -130,7 +134,7 @@ public class CoxRaidScanner
 		{
 			return;
 		}
-		if (client.getVarbitValue(Varbits.IN_RAID) != 1)
+		if (client.getVarbitValue(VarbitID.RAIDS_CLIENT_INDUNGEON) != 1)
 		{
 			reset();
 			return;
@@ -143,9 +147,8 @@ public class CoxRaidScanner
 		// against the stale anchor. onInRaidChanged() catches the same re-roll via
 		// the IN_RAID varbit event, but in practice that event arrives after this
 		// tick's poll, so this check is what stops a garbage scan (both were observed
-		// firing on every reload). findLobbyBase() returns null when the lobby isn't
-		// in the scene, so this only runs near the start/stairs - exactly where a
-		// reload happens.
+		// firing on every reload). findLobbyBase() is a single tile lookup while the
+		// anchor still holds, so running it every tick is cheap.
 		if (haveBase)
 		{
 			Point lobby = findLobbyBase();
@@ -173,8 +176,15 @@ public class CoxRaidScanner
 			}
 			solvedLayout = layout;
 			fillUnsolvedRooms(layout);
+			roomsDirty = true;
 		}
 
+		// Nothing new was scanned, so the rotation and the layout string would come out identical.
+		if (!roomsDirty)
+		{
+			return;
+		}
+		roomsDirty = false;
 		RaidRoom[] combat = combatRooms(solvedLayout);
 		solveRotation(combat);
 		setCombatRooms(solvedLayout, combat);
@@ -217,6 +227,7 @@ public class CoxRaidScanner
 		haveBase = false;
 		solvedLayout = null;
 		cachedLayout = null;
+		roomsDirty = false;
 		Arrays.fill(rooms, null);
 	}
 
@@ -277,6 +288,7 @@ public class CoxRaidScanner
 			// Don't let a stray EMPTY clobber a room we already know.
 			if (rooms[i] == null || scanned != RaidRoom.EMPTY)
 			{
+				roomsDirty |= rooms[i] != scanned;
 				rooms[i] = scanned;
 			}
 		}
@@ -285,21 +297,46 @@ public class CoxRaidScanner
 	private Point findLobbyBase()
 	{
 		Tile[][] tiles = client.getScene().getTiles()[LOBBY_PLANE];
+
+		// The anchor we already hold projects to exactly one tile, so confirming the lobby hasn't
+		// moved costs one lookup instead of sweeping all 104x104 of them. It only misses when the
+		// lobby has left the scene or the raid re-rolled, which is what the sweep below is for.
+		if (haveBase)
+		{
+			int x = lobbyBaseX - client.getBaseX();
+			int y = lobbyBaseY - client.getBaseY();
+			if (x >= 0 && x < SCENE_SIZE && y >= 0 && y < SCENE_SIZE && isLobbyWall(tiles[x][y]))
+			{
+				return tiles[x][y].getSceneLocation();
+			}
+		}
+
+		// A scene's static objects don't change within one load, so once a sweep has come up empty
+		// there is nothing to find until the scene reloads - which is also what a re-roll does.
+		if (client.getBaseX() == emptySweepBaseX && client.getBaseY() == emptySweepBaseY)
+		{
+			return null;
+		}
+
 		for (int x = 0; x < SCENE_SIZE; x++)
 		{
 			for (int y = 0; y < SCENE_SIZE; y++)
 			{
-				if (tiles[x][y] == null || tiles[x][y].getWallObject() == null)
-				{
-					continue;
-				}
-				if (tiles[x][y].getWallObject().getId() == NullObjectID.NULL_12231)
+				if (isLobbyWall(tiles[x][y]))
 				{
 					return tiles[x][y].getSceneLocation();
 				}
 			}
 		}
+		emptySweepBaseX = client.getBaseX();
+		emptySweepBaseY = client.getBaseY();
 		return null;
+	}
+
+	private static boolean isLobbyWall(Tile tile)
+	{
+		return tile != null && tile.getWallObject() != null
+			&& tile.getWallObject().getId() == NullObjectID.NULL_12231;
 	}
 
 	private Integer findLobbyIndex(Point base)
