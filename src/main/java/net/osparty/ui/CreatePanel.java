@@ -933,7 +933,7 @@ class CreatePanel extends ScrollableColumn
 		int capacity = (Integer) capacitySpinner.getValue();
 		// The role split depends on the difficulty (CoX normal vs CM, ToB vs HMT).
 		boolean hardMode = hardModeCheck.isSelected();
-		List<Role> roles = activity.roles(hardMode);
+		List<Role> roles = activity.roles(hardMode, capacity);
 		Role fillRole = activity.fillRole(hardMode);
 
 		Role previousMine = (Role) myRoleDropdown.getSelectedItem();
@@ -963,9 +963,9 @@ class CreatePanel extends ScrollableColumn
 			roleTotalLabel.setText("Team of " + capacity + ": one of each role, plus 1 extra (max 2 of a role).");
 			roleTotalLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		}
-		else if (activity.hasFixedComposition(hardMode))
+		else if (activity.hasFixedComposition())
 		{
-			// Normal ToB: no spinners - the team make-up is determined by party size.
+			// ToB/HMT: no spinners - the team make-up is determined by party size.
 			rebuildingRoles = true;
 			roleCountSpinners.clear();
 			roleCountsPanel.removeAll();
@@ -975,7 +975,7 @@ class CreatePanel extends ScrollableColumn
 		}
 		else
 		{
-			// CoX (and HMT): a count per role, summing to the party size.
+			// CoX: a count per role, summing to the party size.
 			Map<String, Integer> previous = new HashMap<>();
 			for (Map.Entry<String, JSpinner> entry : roleCountSpinners.entrySet())
 			{
@@ -1016,7 +1016,7 @@ class CreatePanel extends ScrollableColumn
 		JSpinner fill = fillId == null ? null : roleCountSpinners.get(fillId);
 		if (fill == null)
 		{
-			return; // no Fill slot for this activity/mode (e.g. HMT) - nothing to absorb
+			return; // no Fill slot for this activity (e.g. ToB) - nothing to absorb
 		}
 		int others = 0;
 		for (Map.Entry<String, JSpinner> entry : roleCountSpinners.entrySet())
@@ -1107,10 +1107,10 @@ class CreatePanel extends ScrollableColumn
 			}
 			return roles;
 		}
-		if (activity.hasFixedComposition(hardModeCheck.isSelected()))
+		if (activity.hasFixedComposition())
 		{
 			List<String> roles = new ArrayList<>();
-			for (Role role : activity.fixedComposition(capacity))
+			for (Role role : activity.fixedComposition(capacity, hardModeCheck.isSelected()))
 			{
 				roles.add(role.getId());
 			}
@@ -1824,8 +1824,32 @@ class CreatePanel extends ScrollableColumn
 		Role hostRole = Role.fromId(preset.getHostRole());
 		if (hostRole != null)
 		{
-			myRoleDropdown.setSelectedItem(hostRole);
+			myRoleDropdown.setSelectedItem(nearestOffered(hostRole));
 		}
+	}
+
+	/**
+	 * The dropdown entry closest to {@code wanted}: itself when offered, else a role it
+	 * can fill (a saved North freeze still lands on Freeze in a three-man ToB team).
+	 */
+	private Role nearestOffered(Role wanted)
+	{
+		for (int i = 0; i < myRoleDropdown.getItemCount(); i++)
+		{
+			if (myRoleDropdown.getItemAt(i) == wanted)
+			{
+				return wanted;
+			}
+		}
+		for (int i = 0; i < myRoleDropdown.getItemCount(); i++)
+		{
+			Role offered = myRoleDropdown.getItemAt(i);
+			if (wanted.canFill(offered.getId()))
+			{
+				return offered;
+			}
+		}
+		return wanted;
 	}
 
 	private void saveLastPreset(AdvertisementPreset preset)

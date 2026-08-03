@@ -133,6 +133,16 @@ abstract class PartyCardPanel extends JPanel
 	/** Called by apply/cancel to surface a message to the user. */
 	protected abstract void setStatus(String text);
 
+	/**
+	 * Why this party is in the list, shown under the host name — a tab that only lists some parties has
+	 * to say what put each one there, since the card itself gives no hint. Null (the default) omits the
+	 * line, which is right for the Search tab: everything is listed, so there is nothing to explain.
+	 */
+	protected String cardNote(Advertisement ad)
+	{
+		return null;
+	}
+
 	/** Rebuild per-card Apply buttons after party state changes. */
 	protected void updateAllButtons()
 	{
@@ -344,8 +354,8 @@ abstract class PartyCardPanel extends JPanel
 				}
 			}
 		}
-		// Fixed-composition activities (ToB): constrain picks to the size's exact role make-up.
-		List<Role> composition = activity.fixedComposition(ad.getCapacity());
+		// Fixed-composition activities (ToB/HMT): constrain picks to the size's exact role make-up.
+		List<Role> composition = activity.fixedComposition(ad.getCapacity(), ad.isHardMode());
 		if (composition != null && !composition.isEmpty())
 		{
 			options.retainAll(composition);
@@ -706,6 +716,13 @@ abstract class PartyCardPanel extends JPanel
 		meta.setAlignmentX(Component.LEFT_ALIGNMENT);
 
 		info.add(hostRow);
+
+		String note = cardNote(ad);
+		if (note != null)
+		{
+			info.add(wrappedLabel(note, ColorScheme.PROGRESS_COMPLETE_COLOR));
+		}
+
 		JLabel worldLabel = buildWorldLabel(ad);
 		if (worldLabel != null)
 		{

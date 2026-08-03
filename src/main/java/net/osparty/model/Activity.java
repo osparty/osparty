@@ -91,9 +91,9 @@ public enum Activity
 	}
 
 	/**
-	 * The roles a player can <em>be</em> in this activity at a given difficulty (the
-	 * "my role" dropdown and the apply prompt), in display order. Empty for activities
-	 * without roles.
+	 * Every role a player can <em>be</em> in this activity at a given difficulty, in
+	 * display order. Empty for activities without roles. Theatre of Blood's set spans
+	 * all party sizes; {@link #roles(boolean, int)} narrows it to one team's make-up.
 	 */
 	public List<Role> roles(boolean hardMode)
 	{
@@ -101,8 +101,10 @@ public enum Activity
 		{
 			case THEATRE_OF_BLOOD:
 				return hardMode
-					? Arrays.asList(Role.TOB_HM_MELEE, Role.TOB_HM_RANGED, Role.TOB_HM_NFRZ, Role.TOB_HM_SFRZ)
-					: Arrays.asList(Role.TOB_MELEE, Role.TOB_RANGED, Role.TOB_NFRZ, Role.TOB_SFRZ);
+					? Arrays.asList(Role.TOB_HM_MELEE, Role.TOB_HM_RANGED, Role.TOB_HM_FRZ,
+						Role.TOB_HM_NFRZ, Role.TOB_HM_SFRZ)
+					: Arrays.asList(Role.TOB_MELEE, Role.TOB_RANGED, Role.TOB_FRZ,
+						Role.TOB_NFRZ, Role.TOB_SFRZ);
 			case CHAMBERS_OF_XERIC:
 				return hardMode
 					? Arrays.asList(Role.COX_CM_VENG, Role.COX_CM_ANCIENT, Role.COX_CM_NORMAL, Role.COX_CM_FILL)
@@ -112,6 +114,30 @@ public enum Activity
 			default:
 				return Collections.emptyList();
 		}
+	}
+
+	/**
+	 * The roles a player can <em>be</em> in a team of {@code partySize} (the "my role"
+	 * dropdown and the apply prompt), in display order. For a fixed-composition activity
+	 * that's the distinct roles of the size's team make-up — a three-man Theatre of Blood
+	 * has one combined Freeze slot, larger teams split it north/south.
+	 */
+	public List<Role> roles(boolean hardMode, int partySize)
+	{
+		List<Role> composition = fixedComposition(partySize, hardMode);
+		if (composition == null)
+		{
+			return roles(hardMode);
+		}
+		List<Role> distinct = new ArrayList<>();
+		for (Role role : composition)
+		{
+			if (!distinct.contains(role))
+			{
+				distinct.add(role);
+			}
+		}
+		return distinct;
 	}
 
 	/**
@@ -125,9 +151,10 @@ public enum Activity
 		{
 			case THEATRE_OF_BLOOD:
 				return hardMode
-					? Arrays.asList(Role.TOB_HM_MELEE, Role.TOB_HM_RANGED, Role.TOB_HM_NFRZ,
-						Role.TOB_HM_SFRZ, Role.TOB_HM_FILL)
-					: Arrays.asList(Role.TOB_MELEE, Role.TOB_RANGED, Role.TOB_NFRZ, Role.TOB_SFRZ, Role.TOB_FILL);
+					? Arrays.asList(Role.TOB_HM_MELEE, Role.TOB_HM_RANGED, Role.TOB_HM_FRZ,
+						Role.TOB_HM_NFRZ, Role.TOB_HM_SFRZ, Role.TOB_HM_FILL)
+					: Arrays.asList(Role.TOB_MELEE, Role.TOB_RANGED, Role.TOB_FRZ,
+						Role.TOB_NFRZ, Role.TOB_SFRZ, Role.TOB_FILL);
 			case CHAMBERS_OF_XERIC:
 				return roles(hardMode); // the mode's Fill already doubles as the "any" option
 			case BARBARIAN_ASSAULT:
@@ -184,11 +211,13 @@ public enum Activity
 	}
 
 	/**
-	 * Theatre of Blood's fixed team composition (a role multiset) for a given party
-	 * size. Freezer slots fill north-first, then south. Returns null for activities
-	 * whose composition the host configures by hand (e.g. Chambers of Xeric).
+	 * Theatre of Blood's fixed team composition (a role multiset) for a given party size
+	 * and difficulty — HMT teams are laid out exactly like normal ones. A lone freezer
+	 * covers both sides, so a three-man gets the combined Freeze role rather than a
+	 * north/south split. Returns null for activities whose composition the host
+	 * configures by hand (e.g. Chambers of Xeric).
 	 */
-	public List<Role> fixedComposition(int partySize)
+	public List<Role> fixedComposition(int partySize, boolean hardMode)
 	{
 		if (this != THEATRE_OF_BLOOD)
 		{
@@ -198,35 +227,37 @@ public enum Activity
 		int melee = partySize >= 5 ? 2 : (partySize >= 2 ? 1 : 0);
 		int ranged = partySize >= 3 ? 1 : 0;
 		int freezers = Math.max(0, partySize - melee - ranged);
-		// Distribute freezers north-first, then south (so a lone freezer is North).
-		int north = (freezers + 1) / 2;
-		int south = freezers / 2;
 		for (int i = 0; i < melee; i++)
 		{
-			comp.add(Role.TOB_MELEE);
+			comp.add(hardMode ? Role.TOB_HM_MELEE : Role.TOB_MELEE);
 		}
 		for (int i = 0; i < ranged; i++)
 		{
-			comp.add(Role.TOB_RANGED);
+			comp.add(hardMode ? Role.TOB_HM_RANGED : Role.TOB_RANGED);
 		}
+		if (freezers == 1)
+		{
+			comp.add(hardMode ? Role.TOB_HM_FRZ : Role.TOB_FRZ);
+			return comp;
+		}
+		// Distribute freezers north-first, then south.
+		int north = (freezers + 1) / 2;
+		int south = freezers / 2;
 		for (int i = 0; i < north; i++)
 		{
-			comp.add(Role.TOB_NFRZ);
+			comp.add(hardMode ? Role.TOB_HM_NFRZ : Role.TOB_NFRZ);
 		}
 		for (int i = 0; i < south; i++)
 		{
-			comp.add(Role.TOB_SFRZ);
+			comp.add(hardMode ? Role.TOB_HM_SFRZ : Role.TOB_SFRZ);
 		}
 		return comp;
 	}
 
-	/**
-	 * True when this activity's composition is fixed by party size: normal Theatre of
-	 * Blood only. HMT comps vary by team, so the host configures it by hand.
-	 */
-	public boolean hasFixedComposition(boolean hardMode)
+	/** True when this activity's composition is fixed by party size: Theatre of Blood (both modes). */
+	public boolean hasFixedComposition()
 	{
-		return this == THEATRE_OF_BLOOD && !hardMode;
+		return this == THEATRE_OF_BLOOD;
 	}
 
 	public boolean hasRoles()

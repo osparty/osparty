@@ -1,5 +1,7 @@
 package net.osparty.model;
 
+import java.util.EnumSet;
+import java.util.Set;
 import lombok.Getter;
 
 /**
@@ -20,6 +22,7 @@ public enum Role
 	// Theatre of Blood (normal).
 	TOB_MELEE("tobmelee", "Melee"),
 	TOB_RANGED("tobranged", "Ranged"),
+	TOB_FRZ("tobfrz", "Freeze"),
 	TOB_NFRZ("tobnfrz", "North freeze"),
 	TOB_SFRZ("tobsfrz", "South freeze"),
 	TOB_FILL("tobfill", "Fill / Any"),
@@ -27,6 +30,7 @@ public enum Role
 	// Theatre of Blood Hard Mode (HMT).
 	TOB_HM_MELEE("tobhmmelee", "Melee"),
 	TOB_HM_RANGED("tobhmranged", "Ranged"),
+	TOB_HM_FRZ("tobhmfrz", "Freeze"),
 	TOB_HM_NFRZ("tobhmnfrz", "North freeze"),
 	TOB_HM_SFRZ("tobhmsfrz", "South freeze"),
 	TOB_HM_FILL("tobhmfill", "Fill / Any"),
@@ -50,6 +54,14 @@ public enum Role
 	BA_HEALER("bahealer", "Healer"),
 	BA_FILL("bafill", "Fill / Any"),
 	;
+
+	/**
+	 * The freeze roles of one mode. A three-man team has a single combined Freeze slot
+	 * instead of a north/south pair, so the three are interchangeable when matching a
+	 * player's pick against a slot a party still needs.
+	 */
+	private static final Set<Role> TOB_FREEZE = EnumSet.of(TOB_FRZ, TOB_NFRZ, TOB_SFRZ);
+	private static final Set<Role> TOB_HM_FREEZE = EnumSet.of(TOB_HM_FRZ, TOB_HM_NFRZ, TOB_HM_SFRZ);
 
 	private final String id;
 	private final String displayName;
@@ -80,6 +92,26 @@ public enum Role
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * True when a player who picked this role can take a slot advertised as
+	 * {@code neededId}: the same role, or the other freeze slots of the same mode (a
+	 * north freezer can take a three-man's combined Freeze slot, and vice versa).
+	 */
+	public boolean canFill(String neededId)
+	{
+		if (id.equals(neededId))
+		{
+			return true;
+		}
+		Role needed = fromId(neededId);
+		if (needed == null)
+		{
+			return false;
+		}
+		return (TOB_FREEZE.contains(this) && TOB_FREEZE.contains(needed))
+			|| (TOB_HM_FREEZE.contains(this) && TOB_HM_FREEZE.contains(needed));
 	}
 
 	/** The display name for a role id, falling back to the raw id when unknown. */

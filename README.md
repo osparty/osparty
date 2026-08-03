@@ -85,19 +85,22 @@ mode can't be matched against a party in another:
 
 | Mode | Roles |
 |------|-------|
-| **ToB** | Melee · Ranged · North freeze · South freeze |
-| **HMT** (ToB hard mode) | Melee · Ranged · North freeze · South freeze |
+| **ToB** | Melee · Ranged · Freeze · North freeze · South freeze |
+| **HMT** (ToB hard mode) | Melee · Ranged · Freeze · North freeze · South freeze |
 | **CoX** | Melee · Mage · Runner · Fill |
 | **CM** (CoX challenge mode) | Veng · Ancient · Normal spells · Fill |
 | **BA** (Barbarian Assault) | Attacker · Defender · Collector · Healer |
 
-- Hosting: pick your own role and the team composition. ToB's composition is
-  fixed by party size; CoX, HMT and BA use a count per role, with CoX's Fill
-  absorbing the remainder. The composition has to fill the party and include the
-  host's role.
+- Hosting: pick your own role and the team composition. ToB and HMT share one
+  composition, fixed by party size: a three-man is Melee · Ranged · Freeze (a
+  lone freezer covers both sides), four and five split the freezers north/south.
+  CoX and BA use a count per role, with CoX's Fill absorbing the remainder. The
+  composition has to fill the party and include the host's role.
 - Searching: the Roles filter has a tab per mode. Tick the roles you're willing
   to fill (Fill / Any means "any role"). A party matches if it still needs one of
   your ticked roles, and applying prompts you to commit to one of its open roles.
+  The freeze roles are interchangeable when matching, so a north freezer still
+  finds three-man teams looking for a Freeze.
 - The host keeps the still-open roles up to date as members join and leave, so
   search cards and the apply prompt always show what's left.
 

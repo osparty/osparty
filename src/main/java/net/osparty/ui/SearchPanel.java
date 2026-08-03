@@ -643,9 +643,12 @@ class SearchPanel extends PartyCardPanel
 		}
 		for (Role role : picked)
 		{
-			if (needed.contains(role.getId()))
+			for (String neededId : needed)
 			{
-				return true;
+				if (role.canFill(neededId))
+				{
+					return true;
+				}
 			}
 		}
 		return false;
