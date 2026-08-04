@@ -31,6 +31,9 @@ public enum Activity
 	GENERAL_GRAARDOR("graardor", "General Graardor", 1, 8, null, 11347),
 	KRIL_TSUTSAROTH("kril", "K'ril Tsutsaroth", 1, 8, null, 11603),
 	COMMANDER_ZILYANA("zilyana", "Commander Zilyana", 1, 8, null, 11602),
+	CASTLE_WARS("castlewars", "Castle Wars", 1, 50, null, 9520, 9620, 9776),
+	GUARDIANS_OF_THE_RIFT("gotr", "Guardians of the Rift", 1, 30, null, 14484),
+	WINTERTODT("wintertodt", "Wintertodt", 1, 30, null, 6462),
 	;
 
 	private final String id;
@@ -58,12 +61,13 @@ public enum Activity
 
 	/**
 	 * True when this activity has a hiscore killcount a host can set a minimum for.
-	 * Barbarian Assault and Volcanic Mine are minigames with no boss killcount, so
-	 * their ads carry no KC bar.
+	 * Barbarian Assault, Volcanic Mine and Castle Wars are minigames the hiscores keep
+	 * no score for, so their ads carry no KC bar. Guardians of the Rift (rifts closed)
+	 * and Wintertodt do have one.
 	 */
 	public boolean hasKillcount()
 	{
-		return this != BARBARIAN_ASSAULT && this != VOLCANIC_MINE;
+		return this != BARBARIAN_ASSAULT && this != VOLCANIC_MINE && this != CASTLE_WARS;
 	}
 
 	public boolean isRaid()

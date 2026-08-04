@@ -109,7 +109,8 @@ class SearchPanel extends PartyCardPanel
 		new ActivityGroup("Other",
 			Activity.NIGHTMARE, Activity.CORPOREAL_BEAST, Activity.BARBARIAN_ASSAULT,
 			Activity.ZALCANO, Activity.HUEYCOATL, Activity.YAMA, Activity.ROYAL_TITANS,
-			Activity.VOLCANIC_MINE),
+			Activity.VOLCANIC_MINE, Activity.CASTLE_WARS, Activity.GUARDIANS_OF_THE_RIFT,
+			Activity.WINTERTODT),
 	};
 
 	private static final String SORT_NEWEST = "Newest first";

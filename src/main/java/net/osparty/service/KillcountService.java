@@ -252,8 +252,14 @@ public class KillcountService
 				return HiscoreSkill.KRIL_TSUTSAROTH;
 			case COMMANDER_ZILYANA:
 				return HiscoreSkill.COMMANDER_ZILYANA;
+			case WINTERTODT:
+				return HiscoreSkill.WINTERTODT;
+			case GUARDIANS_OF_THE_RIFT:
+				// Scored as rifts closed rather than kills; the hiscores carry it as an activity, whose
+				// score lands in the same field a boss killcount does.
+				return HiscoreSkill.RIFTS_CLOSED;
 			default:
-				return null; // BA and Volcanic Mine have no boss killcount
+				return null; // BA, Volcanic Mine and Castle Wars have no killcount
 		}
 	}
 

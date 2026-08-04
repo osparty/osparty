@@ -1890,8 +1890,14 @@ class PartyPanel extends JPanel
 			readyCheckTicker.stop();
 			JButton start = new JButton("Start ready check");
 			start.setFocusPainted(false);
+			// Nobody in a raid is answering one, ourselves included: the check belongs to the lobby.
+			if (liveParty.insideRaid())
+			{
+				start.setEnabled(false);
+				start.setToolTipText("Ready checks are off while you're inside the raid.");
+			}
 			// Starting counts you as ready, so it's world-gated exactly like readying up.
-			if (liveParty.onDifferentWorldThanHost())
+			else if (liveParty.onDifferentWorldThanHost())
 			{
 				start.setEnabled(false);
 				int hostWorld = liveParty.hostWorld();
