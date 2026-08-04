@@ -37,6 +37,11 @@ public class Advertisement
 	private int invocation;
 	/** Chambers of Xeric team-size scaling as the host advertises it (e.g. "3+4"); null/empty when unset. */
 	private String coxScale;
+	/**
+	 * When this party started looking for people: when it was advertised, and again whenever a full one
+	 * loses someone. Named for the advertisement it was minted with, but it is the searching clock — which
+	 * is what reads it, in the "searching 20m" line, the stale marker and the by-age sorts.
+	 */
 	private long createdAt;
 
 	/**
