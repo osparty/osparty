@@ -70,6 +70,16 @@ public class LiveParty implements LivePartyBackend {
 	 */
 	private static final long HEARTBEAT_MS = 5_000;
 
+	/**
+	 * How long a member may go quiet before the room drops it (the server's own member timeout).
+	 *
+	 * <p>Ours to know because nothing announces it: the room simply stops carrying us, and everything we
+	 * send afterwards goes nowhere. Logging out with the client running is exactly that silence — the game
+	 * tick this runs on stops — so anyone who takes a break longer than this comes back to a party that has
+	 * forgotten them. See {@link #tick()}.
+	 */
+	private static final long SWEPT_AFTER_MS = 90_000;
+
 	private final Client client;
 	private final ConfigManager configManager;
 	private final OSPartyConfig config;
@@ -334,6 +344,9 @@ public class LiveParty implements LivePartyBackend {
 		clearReadyCheck();
 		announcedName = null;
 		announcedAccountHash = 0;
+		// The next party starts its silence from here: its join frame is sent once the socket opens, which
+		// is after the first tick, and until then there is nothing sent to measure from.
+		lastSentAt = System.currentTimeMillis();
 	}
 
 	@Override
@@ -598,6 +611,15 @@ public class LiveParty implements LivePartyBackend {
 		localWorld = client.getWorld();
 		announceIdentityIfResolved();
 		expireReadyCheck();
+
+		// Ask for our seat back after a silence long enough to have cost us it — a logout the room was never
+		// told about, since the connection outlives the login. The host is answered by its advertisement
+		// instead: a room that loses its host is disbanded rather than waiting for one.
+		if (mode == Mode.MEMBER && System.currentTimeMillis() - lastSentAt >= SWEPT_AFTER_MS) {
+			sendJoin();
+			// Seated afresh, the room holds no state for us; nothing else would re-send what has not changed.
+			markAllDirty();
+		}
 
 		if (localWorld != lastSentWorld) {
 			profileDirty = true;

@@ -811,16 +811,29 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		runeWatchService.refresh();
 	}
 
-	/** Look up an ad still hosted by us (survives a crash/restart for ~the ad TTL). */
+	/**
+	 * Go back into the party we were in before a crash/restart, host or member; both survive for about the
+	 * advertisement's TTL. The membership is asked about first because it is the one we can answer locally:
+	 * a player is in one party at a time, so a party we were a member of is not one we also hosted.
+	 */
 	private void attemptRejoin(String rsn)
 	{
 		if (liveParty.isInParty())
 		{
 			return; // already in a party
 		}
-		apiClient.fetchAdByHost(rsn,
-			ad -> SwingUtilities.invokeLater(() -> onRejoinFound(ad)),
-			error -> { /* no party for this host - normal, nothing to do */ });
+		long hash = accountHash;
+		SwingUtilities.invokeLater(() ->
+		{
+			OSPartyPanel currentPanel = panel;
+			if (currentPanel == null || currentPanel.resumeJoinedParty(hash))
+			{
+				return;
+			}
+			apiClient.fetchAdByHost(rsn,
+				ad -> SwingUtilities.invokeLater(() -> onRejoinFound(ad)),
+				error -> { /* no party for this host - normal, nothing to do */ });
+		});
 	}
 
 	private void onRejoinFound(Advertisement ad)
