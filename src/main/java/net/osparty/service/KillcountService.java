@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import javax.swing.SwingUtilities;
@@ -33,6 +34,12 @@ public class KillcountService
 	private static final long SUCCESS_TTL_MS = 30 * 60_000L;
 	/** Browsing the board touches a new (player, activity) every card, so the cache is capped. */
 	private static final int MAX_ENTRIES = 250;
+	/**
+	 * A hiscore lookup that never answers would strand every caller on "Checking KC…" forever: the
+	 * client's callback leaves its future uncompleted when the hiscores reply with anything other than
+	 * 200 or 404 (a 429 or 5xx, say), so we cap the wait ourselves and treat silence as unavailable.
+	 */
+	private static final long LOOKUP_TIMEOUT_MS = 15_000L;
 
 	/** {@code -1} = unknown / unranked. */
 	public static final class Killcount
@@ -147,33 +154,35 @@ public class KillcountService
 
 		try
 		{
-			hiscoreClient.lookupAsync(rsn, HiscoreEndpoint.NORMAL).whenComplete((result, ex) -> {
-				int kc = -1;
-				int hard = -1;
-				boolean unavailable = ex != null || result == null;
-				try
-				{
-					if (!unavailable)
+			hiscoreClient.lookupAsync(rsn, HiscoreEndpoint.NORMAL)
+				.orTimeout(LOOKUP_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+				.whenComplete((result, ex) -> {
+					int kc = -1;
+					int hard = -1;
+					boolean unavailable = ex != null || result == null;
+					try
 					{
-						kc = count(result, skill);
-						HiscoreSkill hardSkill = hardSkillFor(activity);
-						if (hardSkill != null)
+						if (!unavailable)
 						{
-							hard = count(result, hardSkill);
+							kc = count(result, skill);
+							HiscoreSkill hardSkill = hardSkillFor(activity);
+							if (hardSkill != null)
+							{
+								hard = count(result, hardSkill);
+							}
+						}
+						else
+						{
+							log.debug("Hiscore lookup failed for {}", rsn, ex);
 						}
 					}
-					else
+					catch (RuntimeException e)
 					{
-						log.debug("Hiscore lookup failed for {}", rsn, ex);
+						log.debug("Hiscore result unreadable for {}", rsn, e);
+						unavailable = true;
 					}
-				}
-				catch (RuntimeException e)
-				{
-					log.debug("Hiscore result unreadable for {}", rsn, e);
-					unavailable = true;
-				}
-				complete(key, new Killcount(kc, hard, unavailable));
-			});
+					complete(key, new Killcount(kc, hard, unavailable));
+				});
 		}
 		catch (RuntimeException e)
 		{

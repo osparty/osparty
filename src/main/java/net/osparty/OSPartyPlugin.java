@@ -18,11 +18,13 @@ import net.osparty.party.LiveParty;
 import net.osparty.party.LocalPlayerSnapshot;
 import net.osparty.party.LivePartyBackend;
 import net.osparty.party.SpecDrainEvent;
+import net.osparty.ui.HiscoreLookup;
 import net.osparty.ui.OSPartyPanel;
 import net.osparty.ui.ApplicantOverlay;
 import net.osparty.ui.JoinPromptOverlay;
 import net.osparty.ui.DefenceInfoBox;
 import net.osparty.ui.NpcDefenceOverlay;
+import net.osparty.ui.PartyNameOverlay;
 import net.osparty.ui.PlayerMarkerOverlay;
 import net.osparty.ui.ReadyCheckOverlay;
 import net.osparty.ui.PingArrowOverlay;
@@ -97,8 +99,10 @@ import net.runelite.client.game.WorldService;
 import net.runelite.http.api.worlds.World;
 import net.runelite.http.api.worlds.WorldRegion;
 import net.runelite.http.api.worlds.WorldResult;
+import net.runelite.client.party.PartyService;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.plugins.PluginManager;
 import net.runelite.client.task.Schedule;
 import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
@@ -175,6 +179,14 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Inject
 	private InfoBoxManager infoBoxManager;
 
+	// Reaches RuneLite's own plugins: the Hiscore panel for card menus, and Player Indicators so our
+	// overhead party names don't print through the names it already draws.
+	@Inject
+	private PluginManager pluginManager;
+
+	@Inject
+	private PartyService partyService;
+
 	@Inject
 	private ConfigManager configManager;
 
@@ -227,6 +239,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private PingArrowOverlay pingArrowOverlay;
 	private NpcDefenceOverlay defenceOverlay;
 	private PlayerMarkerOverlay playerMarkerOverlay;
+
+	private PartyNameOverlay partyNameOverlay;
 	private DefenceInfoBox defenceBox;
 	private volatile boolean pingHotkeyDown;
 	private volatile String playerName;
@@ -378,6 +392,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			ImageUtil.resizeImage(ImageUtil.loadImageResource(getClass(), "/net/osparty/icons/teacher.png"), 12, 12));
 		overlayManager.add(playerMarkerOverlay);
 
+		partyNameOverlay = new PartyNameOverlay(client, liveParty, config, pluginManager, configManager,
+			partyService);
+		overlayManager.add(partyNameOverlay);
+
 		keyManager.registerKeyListener(pingHotkeyListener);
 		mouseManager.registerMouseListener(pingMouseListener);
 
@@ -415,6 +433,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		// A player can't block themselves.
 		blockListService.setSelf(this::getAccountHash, this::getSelfName);
+
+		HiscoreLookup.init(pluginManager);
 
 		panel = new OSPartyPanel(boardService, config, this::getPlayerName, this,
 			this::getFriendsChatOwner, this::getCurrentWorld, itemManager, liveParty, runeWatchService,
@@ -471,6 +491,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		overlayManager.remove(pingArrowOverlay);
 		overlayManager.remove(defenceOverlay);
 		overlayManager.remove(playerMarkerOverlay);
+		overlayManager.remove(partyNameOverlay);
 		if (defenceBox != null)
 		{
 			infoBoxManager.removeInfoBox(defenceBox);
@@ -490,6 +511,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		pingArrowOverlay = null;
 		defenceOverlay = null;
 		playerMarkerOverlay = null;
+		partyNameOverlay = null;
 		panel = null;
 		navButton = null;
 		navButtonAlert = null;
