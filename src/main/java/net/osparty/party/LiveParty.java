@@ -1087,7 +1087,10 @@ public class LiveParty implements LivePartyBackend {
 			PlayerUpdate data = playerData.get(entry.memberId);
 			String name = data != null && data.getName() != null ? data.getName() : entry.name;
 			boolean local = entry.memberId == localMemberId;
-			boolean online = local || (isRecent(now, entry.memberId) && data != null && data.getWorld() > 0);
+			// The room's word that a member's connection is gone settles it at once. Everything else is our
+			// own reading of their silence, which cannot mean anything until it has lasted a while.
+			boolean online = local
+				|| (!entry.offline && isRecent(now, entry.memberId) && data != null && data.getWorld() > 0);
 			out.add(new RosterMember(entry.memberId, name, status, data, local, online));
 		}
 		out.sort(Comparator.comparingInt((RosterMember m) -> m.getStatus().ordinal())
