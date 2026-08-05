@@ -35,7 +35,6 @@ import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.event.KeyEvent;
-import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -59,6 +58,7 @@ import net.runelite.api.Friend;
 import net.runelite.api.FriendsChatManager;
 import net.runelite.api.GameState;
 import net.runelite.api.MenuAction;
+import net.runelite.api.MenuEntry;
 import net.runelite.api.NameableContainer;
 import net.runelite.api.Player;
 import net.runelite.api.Skill;
@@ -66,13 +66,16 @@ import net.runelite.api.SoundEffectID;
 import net.runelite.api.Tile;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.FakeXpDrop;
+import net.runelite.api.events.FocusChanged;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.HitsplatApplied;
 import net.runelite.api.events.NpcDespawned;
 import net.runelite.api.events.MenuEntryAdded;
+import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
+import net.runelite.api.gameval.VarClientID;
 import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.widgets.WidgetUtil;
@@ -86,11 +89,7 @@ import net.runelite.client.config.ConfigManager;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.audio.AudioPlayer;
 import net.runelite.client.eventbus.Subscribe;
-import net.runelite.client.config.Keybind;
-import net.runelite.client.input.KeyListener;
 import net.runelite.client.input.KeyManager;
-import net.runelite.client.input.MouseAdapter;
-import net.runelite.client.input.MouseManager;
 import net.runelite.client.util.*;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.SkillIconManager;
@@ -164,9 +163,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 	@Inject
 	private KeyManager keyManager;
-
-	@Inject
-	private MouseManager mouseManager;
 
 	@Inject
 	private DefenceTracker defenceTracker;
@@ -263,89 +259,43 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private long openPromptMemberId;
 
 	/**
-	 * The OS-dependent twin of the backtick key: the same physical key is reported as
-	 * Back Quote on some platforms/layouts and as Dead Grave on others (e.g. Windows),
-	 * so a binding to either must accept both.
+	 * Whether a printable key would land in a text field rather than reach us. There is no such thing
+	 * as "typing" in default chat mode - the chat line always takes keys - so the closest we can get is
+	 * "they have already started composing something", plus the interfaces that genuinely capture input.
 	 */
-	private static int graveTwin(int keyCode)
+	private boolean textEntryActive()
 	{
-		if (keyCode == KeyEvent.VK_BACK_QUOTE)
+		if (chatboxPanelManager.getCurrentInput() != null || client.getFocusedInputFieldWidget() != null)
 		{
-			return KeyEvent.VK_DEAD_GRAVE;
+			return true;
 		}
-		if (keyCode == KeyEvent.VK_DEAD_GRAVE)
-		{
-			return KeyEvent.VK_BACK_QUOTE;
-		}
-		return KeyEvent.VK_UNDEFINED;
+		String chatInput = client.getVarcStrValue(VarClientID.CHATINPUT);
+		return chatInput != null && !chatInput.isEmpty();
 	}
 
-	private boolean pingHotkeyMatches(KeyEvent e, boolean release)
+	private final HotkeyListener pingHotkeyListener = new HotkeyListener(() -> config.pingHotkey())
 	{
-		Keybind bind = config.pingHotkey();
-		int twin = graveTwin(bind.getKeyCode());
-		if (release)
-		{
-			// A modifier-only bind (Shift, Ctrl, ...) is normalised to VK_UNDEFINED with the
-			// modifier in the mask, so there is no key code to compare; Keybind knows how to
-			// match its release.
-			if (bind.getKeyCode() == KeyEvent.VK_UNDEFINED)
-			{
-				return bind.matches(e);
-			}
-			// Match the key alone so releasing a modifier first can't leave the hotkey stuck down.
-			return e.getKeyCode() == bind.getKeyCode()
-				|| (twin != KeyEvent.VK_UNDEFINED && e.getKeyCode() == twin);
-		}
-		return bind.matches(e)
-			|| (twin != KeyEvent.VK_UNDEFINED && new Keybind(twin, bind.getModifiers()).matches(e));
-	}
-
-	private final KeyListener pingHotkeyListener = new KeyListener()
-	{
-		@Override
-		public void keyTyped(KeyEvent e)
-		{
-		}
-
 		@Override
 		public void keyPressed(KeyEvent e)
 		{
-			if (pingHotkeyMatches(e, false))
+			// Skipping the press leaves isConsumingTyped false, so the character still reaches the game.
+			if (textEntryActive())
 			{
-				pingHotkeyDown = true;
+				return;
 			}
+			super.keyPressed(e);
 		}
 
 		@Override
-		public void keyReleased(KeyEvent e)
+		public void hotkeyPressed()
 		{
-			if (pingHotkeyMatches(e, true))
-			{
-				pingHotkeyDown = false;
-			}
+			pingHotkeyDown = true;
 		}
 
 		@Override
-		public void focusLost()
+		public void hotkeyReleased()
 		{
-			// A key released while the client is unfocused delivers no keyReleased.
 			pingHotkeyDown = false;
-		}
-	};
-
-	private final MouseAdapter pingMouseListener = new MouseAdapter()
-	{
-		@Override
-		public MouseEvent mousePressed(MouseEvent event)
-		{
-			if (pingHotkeyDown && config.pings() && SwingUtilities.isLeftMouseButton(event)
-					&& liveParty.isInParty())
-			{
-				pingHoveredTile();
-				event.consume();
-			}
-			return event;
 		}
 	};
 
@@ -398,7 +348,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		overlayManager.add(partyNameOverlay);
 
 		keyManager.registerKeyListener(pingHotkeyListener);
-		mouseManager.registerMouseListener(pingMouseListener);
 
 		// Ready-check notifications: chat pings and an optional all-ready sound.
 		liveParty.setOnReadyCheckStarted(starter -> {
@@ -422,6 +371,20 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			{
 				playResourceSound(SOUND_KICKED);
 			}
+		});
+		// A ping we can't see isn't worth a sound, so skip anything off-plane or outside the scene.
+		liveParty.setOnPingReceived(point -> {
+			if (!config.pings() || !config.pingSound() || point == null)
+			{
+				return;
+			}
+			clientThread.invoke(() -> {
+				if (point.getPlane() == client.getPlane()
+					&& WorldPoint.isInScene(client, point.getX(), point.getY()))
+				{
+					client.playSoundEffect(SoundEffectID.SMITH_ANVIL_TINK);
+				}
+			});
 		});
 
 		// Stand up the live party layer; the advertisement only makes the room findable.
@@ -467,8 +430,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		liveParty.setOnAllReady(null);
 		liveParty.setOnReadyExpired(null);
 		liveParty.setOnKicked(null);
+		liveParty.setOnPingReceived(null);
 		keyManager.unregisterKeyListener(pingHotkeyListener);
-		mouseManager.unregisterMouseListener(pingMouseListener);
 		pingHotkeyDown = false;
 		if (panel != null)
 		{
@@ -769,21 +732,51 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		panel.onHostTransferEvent(event);
 	}
 
-	/** Broadcast a ping at the tile under the cursor (client thread). Called from the mouse listener. */
-	private void pingHoveredTile()
+	@Subscribe
+	public void onFocusChanged(FocusChanged focusChanged)
 	{
-		clientThread.invoke(() -> {
-			Tile tile = client.getSelectedSceneTile();
-			if (tile == null)
+		if (!focusChanged.isFocused())
+		{
+			pingHotkeyDown = false;
+		}
+	}
+
+	@Subscribe
+	public void onMenuOptionClicked(MenuOptionClicked event)
+	{
+		if (!pingHotkeyDown || client.isMenuOpen() || !liveParty.isInParty() || !config.pings())
+		{
+			return;
+		}
+
+		Tile selectedSceneTile = client.getSelectedSceneTile();
+		if (selectedSceneTile == null)
+		{
+			return;
+		}
+
+		// Only bare ground pings, so holding the hotkey doesn't swallow clicks on NPCs, items or widgets.
+		boolean isOnCanvas = false;
+		for (MenuEntry menuEntry : client.getMenuEntries())
+		{
+			if (menuEntry != null && "walk here".equalsIgnoreCase(menuEntry.getOption()))
 			{
-				return;
+				isOnCanvas = true;
 			}
-			WorldPoint point = tile.getWorldLocation();
-			if (point != null && liveParty.sendPing(point, config.pingColor()) && config.pingSound())
-			{
-				client.playSoundEffect(SoundEffectID.SMITH_ANVIL_TINK);
-			}
-		});
+		}
+
+		if (!isOnCanvas)
+		{
+			return;
+		}
+
+		event.consume();
+
+		WorldPoint point = selectedSceneTile.getWorldLocation();
+		if (point != null && liveParty.sendPing(point, config.pingColor()) && config.pingSound())
+		{
+			client.playSoundEffect(SoundEffectID.SMITH_ANVIL_TINK);
+		}
 	}
 
 	@Subscribe

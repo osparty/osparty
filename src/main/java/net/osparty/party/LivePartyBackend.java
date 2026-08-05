@@ -34,6 +34,12 @@ public interface LivePartyBackend
 
 	void setOnReadyCheckStarted(Consumer<String> onReadyCheckStarted);
 
+	/**
+	 * Another member dropped a map ping. Only their pings fire this — our own is already
+	 * handled where it is sent, so the sound isn't doubled up.
+	 */
+	void setOnPingReceived(Consumer<WorldPoint> onPingReceived);
+
 	void setOnAllReady(Runnable onAllReady);
 
 	void setOnReadyExpired(Runnable onReadyExpired);
