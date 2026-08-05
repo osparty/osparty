@@ -97,6 +97,17 @@ public class CoxRaidScanner
 
 	/** Accumulated rooms by grid index (null = not yet scanned). */
 	private final RaidRoom[] rooms = new RaidRoom[ROOM_COUNT];
+	/**
+	 * Which grid slots the scanner has actually read a room out of, as opposed to filled in.
+	 *
+	 * <p>{@link #setCombatRooms} writes the rotation's answer for every combat slot back into
+	 * {@code rooms}, which leaves a guess sitting there looking exactly like an observation. Counted as
+	 * one, it makes {@link #solveRotation} believe the raid is fully known, and a solver that believes
+	 * that never looks again — so a single wrong room stays wrong for the rest of the raid, and shows up
+	 * as the same boss twice. Keeping the evidence separate lets the rotation be re-derived from scratch
+	 * every tick, which is what lets a later scan correct an earlier guess.
+	 */
+	private final boolean[] observed = new boolean[ROOM_COUNT];
 	private boolean haveBase;
 	/**
 	 * Lobby south-west tile in world coordinates, captured once. CoX is instanced, so
@@ -115,6 +126,8 @@ public class CoxRaidScanner
 	private boolean roomsDirty;
 	private CoxLayout solvedLayout;
 	private String cachedLayout;
+	/** Last seen raid party id; -1 until the client reports one. See {@link #onRaidPartyChanged}. */
+	private int raidPartyId = -1;
 
 	@Inject
 	private CoxRaidScanner(Client client)
@@ -166,7 +179,17 @@ public class CoxRaidScanner
 			return;
 		}
 		scanRooms();
+		resolve();
+	}
 
+	/**
+	 * Match the layout if it isn't matched yet, then re-derive the rotation from what has been observed.
+	 *
+	 * <p>Package-private so the solve can be driven from a known set of room readings, without standing up
+	 * a scene to read them out of.
+	 */
+	void resolve()
+	{
 		if (solvedLayout == null)
 		{
 			CoxLayout layout = findLayout(toCode());
@@ -186,9 +209,33 @@ public class CoxRaidScanner
 		}
 		roomsDirty = false;
 		RaidRoom[] combat = combatRooms(solvedLayout);
-		solveRotation(combat);
+		if (!solveRotation(combat))
+		{
+			// The rooms in hand fit no rotation, so they did not all come from the raid we are standing in
+			// — a re-roll the resets missed, or a scan taken against a stale anchor. Nothing here is worth
+			// keeping: drop it and scout again from the lobby, as RuneLite's Raids plugin does when its
+			// own scan stops matching a layout.
+			log.debug("CoX rooms fit no rotation; discarding the scout and rescouting");
+			reset();
+			return;
+		}
 		setCombatRooms(solvedLayout, combat);
 		cachedLayout = orderedRooms(solvedLayout);
+	}
+
+	/**
+	 * Record a room reading as {@link #scanRooms()} would have made it. Visible for testing, which is the
+	 * only thing that has a raid to describe but no scene to scan.
+	 */
+	void observe(int position, RaidRoom room)
+	{
+		if (position < 0 || position >= ROOM_COUNT)
+		{
+			return;
+		}
+		roomsDirty |= rooms[position] != room || !observed[position];
+		rooms[position] = room;
+		observed[position] = true;
 	}
 
 	/** @return the solved raid rotation (combat + puzzle rooms in order), or null. */
@@ -218,6 +265,24 @@ public class CoxRaidScanner
 		}
 	}
 
+	/**
+	 * Reset when the raid party changes hands under us. Fed from the plugin's VarbitChanged subscription,
+	 * as RuneLite's Raids plugin does it: a re-roll is a new party id, and that is a fact about the raid
+	 * rather than an inference from where its lobby happens to sit. The lobby-moved check in
+	 * {@link #update()} cannot see a re-roll whose lobby lands back on the tile we were already anchored
+	 * to; this can.
+	 */
+	public void onRaidPartyChanged(int partyId)
+	{
+		int previous = raidPartyId;
+		raidPartyId = partyId;
+		if (previous != -1 && partyId != -1 && previous != partyId)
+		{
+			log.debug("CoX raid party changed ({} -> {}); rescouting layout", previous, partyId);
+			reset();
+		}
+	}
+
 	private void reset()
 	{
 		if (!haveBase && cachedLayout == null && solvedLayout == null)
@@ -229,6 +294,12 @@ public class CoxRaidScanner
 		cachedLayout = null;
 		roomsDirty = false;
 		Arrays.fill(rooms, null);
+		Arrays.fill(observed, false);
+		// A reset exists to make the next scout happen. Keeping the memo of a sweep that found no lobby
+		// would let it answer for a scene we are now deliberately re-reading, and one stale "nothing here"
+		// is enough to keep the scanner from ever locating the lobby again.
+		emptySweepBaseX = Integer.MIN_VALUE;
+		emptySweepBaseY = Integer.MIN_VALUE;
 	}
 
 	// ---- scanning (adapted from RaidsPlugin) ---------------------------------
@@ -284,12 +355,20 @@ public class CoxRaidScanner
 			{
 				continue;
 			}
-			RaidRoom scanned = determineRoom(tile);
+			RaidRoom seen = determineRoom(tile);
 			// Don't let a stray EMPTY clobber a room we already know.
-			if (rooms[i] == null || scanned != RaidRoom.EMPTY)
+			if (rooms[i] != null && seen == RaidRoom.EMPTY)
 			{
-				roomsDirty |= rooms[i] != scanned;
-				rooms[i] = scanned;
+				continue;
+			}
+			roomsDirty |= rooms[i] != seen;
+			rooms[i] = seen;
+			if (seen != RaidRoom.EMPTY && !observed[i])
+			{
+				// The first real reading of this slot. Worth re-solving for even when it agrees with what
+				// was already guessed there, because the rotation now rests on one more fact than it did.
+				observed[i] = true;
+				roomsDirty = true;
 			}
 		}
 	}
@@ -474,31 +553,51 @@ public class CoxRaidScanner
 		}
 	}
 
-	private RaidRoom[] combatRooms(CoxLayout layout)
+	/**
+	 * The layout's combat slots in raid order.
+	 *
+	 * <p>Taken from the matched layout rather than from what {@code rooms} currently holds, so the two
+	 * halves of the solve cannot disagree about which slots they are talking about. A slot dropped from
+	 * one half but not the other shifts every combat room after it onto its neighbour's place in the
+	 * rotation, which is how a raid ends up advertising the same boss twice.
+	 */
+	private static List<Integer> combatPositions(CoxLayout layout)
 	{
-		List<RaidRoom> combat = new ArrayList<>();
+		List<Integer> positions = new ArrayList<>();
 		for (int[] entry : layout.ordered)
 		{
-			RaidRoom room = roomAt(entry[0]);
-			if (room != null && room.getType() == RoomType.COMBAT)
+			if ((char) entry[1] == 'C' && entry[0] >= 0 && entry[0] < ROOM_COUNT)
 			{
-				combat.add(room);
+				positions.add(entry[0]);
 			}
 		}
-		return combat.toArray(new RaidRoom[0]);
+		return positions;
+	}
+
+	/**
+	 * The combat rooms as evidence rather than as belief: a slot the scanner has not read yet reads
+	 * UNKNOWN_COMBAT even while it holds a perfectly plausible guess from an earlier rotation solve.
+	 * That is what keeps {@link #solveRotation} honest about how much it actually knows.
+	 */
+	private RaidRoom[] combatRooms(CoxLayout layout)
+	{
+		List<Integer> positions = combatPositions(layout);
+		RaidRoom[] combat = new RaidRoom[positions.size()];
+		for (int i = 0; i < combat.length; i++)
+		{
+			int position = positions.get(i);
+			RaidRoom room = observed[position] ? rooms[position] : null;
+			combat[i] = room == null ? RaidRoom.UNKNOWN_COMBAT : room;
+		}
+		return combat;
 	}
 
 	private void setCombatRooms(CoxLayout layout, RaidRoom[] combat)
 	{
-		int index = 0;
-		for (int[] entry : layout.ordered)
+		List<Integer> positions = combatPositions(layout);
+		for (int i = 0; i < positions.size() && i < combat.length; i++)
 		{
-			int position = entry[0];
-			RaidRoom room = roomAt(position);
-			if (room != null && room.getType() == RoomType.COMBAT && index < combat.length)
-			{
-				rooms[position] = combat[index++];
-			}
+			rooms[positions.get(i)] = combat[i];
 		}
 	}
 
@@ -546,12 +645,18 @@ public class CoxRaidScanner
 		}
 	}
 
-	/** Fill unknown combat rooms by matching the known ones against the four rotations. */
-	private static void solveRotation(RaidRoom[] combat)
+	/**
+	 * Fill unknown combat rooms by matching the known ones against the four rotations.
+	 *
+	 * @return false when the rooms actually seen fit no rotation at all. They cannot all have come from
+	 *     one raid, so the scan is holding rooms from a raid we are no longer in — the caller's cue to
+	 *     throw the scout away rather than render a raid that never existed.
+	 */
+	private static boolean solveRotation(RaidRoom[] combat)
 	{
 		if (combat == null)
 		{
-			return;
+			return true;
 		}
 		Integer start = null;
 		int known = 0;
@@ -569,7 +674,7 @@ public class CoxRaidScanner
 		}
 		if (known < 2 || known == combat.length)
 		{
-			return;
+			return true; // too little to work from, or nothing left to fill in
 		}
 
 		List<RaidRoom> match = null;
@@ -594,7 +699,7 @@ public class CoxRaidScanner
 					}
 					if (match != null && match != rotation)
 					{
-						return; // ambiguous
+						return true; // ambiguous: consistent with the raid, just not yet decisive
 					}
 					index = i - start;
 					match = rotation;
@@ -603,7 +708,7 @@ public class CoxRaidScanner
 		}
 		if (match == null)
 		{
-			return;
+			return false; // two rooms that no single raid puts where we saw them
 		}
 		for (int i = 0; i < combat.length; i++)
 		{
@@ -616,6 +721,7 @@ public class CoxRaidScanner
 				combat[i] = match.get(Math.floorMod(index + i, match.size()));
 			}
 		}
+		return true;
 	}
 
 	// ---- layout database (WooxSolo raids-layout algorithm) -------------------

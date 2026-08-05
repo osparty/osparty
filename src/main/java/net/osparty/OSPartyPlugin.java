@@ -73,6 +73,7 @@ import net.runelite.api.events.NpcDespawned;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
+import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.widgets.WidgetUtil;
 import net.runelite.api.events.VarbitChanged;
@@ -573,6 +574,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		if (event.getVarbitId() == VarbitID.RAIDS_CLIENT_INDUNGEON)
 		{
 			coxRaidScanner.onInRaidChanged(event.getValue());
+		}
+		// A re-rolled raid is a new party id. The scanner's own lobby check can miss the re-roll; this can't.
+		if (event.getVarpId() == VarPlayerID.RAIDS_PARTY_GROUPHOLDER)
+		{
+			coxRaidScanner.onRaidPartyChanged(event.getValue());
 		}
 		// The rune pouch has no item container of its own, so runes moving in or out of it only ever show up
 		// here. Without this the pouch keeps whatever it held when the inventory last changed.
