@@ -58,7 +58,12 @@ public final class LocalPlayerSnapshot
 
 		PlayerUpdate update = new PlayerUpdate();
 		update.setName(local.getName());
-		update.setAccountHash(client.getAccountHash());
+		// The account hash is deliberately not here. This snapshot is relayed verbatim to everyone attached
+		// to the party, applicants included, and the server treats it as opaque -- so putting the hash in it
+		// handed every account in the room to anyone who knew the room key, which is published on the board.
+		// The hash is the thing a client asserts to claim an identity, which makes a harvested one a
+		// squattable account. It reaches the members who need it on the server-built roster instead, which
+		// is withheld from applicants; see LiveParty.accountHashForMember.
 		update.setCombatLevel(local.getCombatLevel());
 		update.setEquipment(equipment(client));
 		update.setInventory(inventory(client));

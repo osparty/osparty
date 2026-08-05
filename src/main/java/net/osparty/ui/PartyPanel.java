@@ -1790,7 +1790,10 @@ class PartyPanel extends JPanel
 		Applicant applicant = new Applicant();
 		applicant.setMemberId(update.getMemberId());
 		applicant.setName(update.getName());
-		applicant.setAccountHash(update.getAccountHash());
+		// From the roster, not the snapshot: the snapshot stopped carrying an account hash because it is
+		// relayed to everyone attached to the party. The host still sees the whole roster, so the applicant
+		// it is deciding about can still be matched against the block list by account rather than by name.
+		applicant.setAccountHash(liveParty.accountHashForMember(update.getMemberId()));
 		applicant.setCombatLevel(update.getCombatLevel());
 		applicant.setStats(update.getStats());
 		applicant.setEquipment(update.getEquipment());

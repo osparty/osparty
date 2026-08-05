@@ -1151,7 +1151,9 @@ public class LiveParty implements LivePartyBackend {
 			if (m.getStatus() == PartyStatus.PENDING || m.getData() == null || isUnresolvedName(m.getName())) {
 				continue;
 			}
-			out.add(new Member(m.getName(), m.getData().getAccountHash()));
+			// Through the roster fallback rather than off the live snapshot: the snapshot no longer carries
+			// an account hash, and the server-built roster is where it comes from now.
+			out.add(new Member(m.getName(), accountHashForMember(m.getMemberId())));
 		}
 		return out;
 	}
