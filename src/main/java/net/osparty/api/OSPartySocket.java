@@ -908,10 +908,22 @@ public class OSPartySocket extends WebSocketListener
 			case "inviteAck":
 				completeInviteAck(frame.id, frame.delivered);
 				break;
-			case "authIssued":
-				handleAuthIssued(frame.token);
-				break;
-			default:
+		case "authIssued":
+			handleAuthIssued(frame.token);
+			break;
+		case "couplingRequired":
+			handleCouplingRequired(frame.accountHash, frame.code);
+			break;
+		case "couplingCode":
+			handleCouplingCode(frame.accountHash, frame.code);
+			break;
+		case "couplingResult":
+			handleCouplingResult(frame.accountHash, frame.success);
+			break;
+		case "couplingRevoked":
+			handleCouplingRevoked(frame.accountHash);
+			break;
+		default:
 				break;
 		}
 	}
@@ -1144,6 +1156,76 @@ public class OSPartySocket extends WebSocketListener
 		}
 		credentials.put(account, token);
 		log.debug("Party socket: stored an OSParty credential for this character");
+	}
+
+	private volatile Consumer<CouplingRequiredEvent> onCouplingRequired;
+	private volatile Consumer<CouplingCodeEvent> onCouplingCode;
+	private volatile Consumer<CouplingResultEvent> onCouplingResult;
+	private volatile Consumer<Long> onCouplingRevoked;
+
+	public void setOnCouplingRequired(Consumer<CouplingRequiredEvent> callback)
+	{
+		this.onCouplingRequired = callback;
+	}
+
+	public void setOnCouplingCode(Consumer<CouplingCodeEvent> callback)
+	{
+		this.onCouplingCode = callback;
+	}
+
+	public void setOnCouplingResult(Consumer<CouplingResultEvent> callback)
+	{
+		this.onCouplingResult = callback;
+	}
+
+	public void setOnCouplingRevoked(Consumer<Long> callback)
+	{
+		this.onCouplingRevoked = callback;
+	}
+
+	private void handleCouplingRequired(Long accountHash, String code)
+	{
+		Consumer<CouplingRequiredEvent> cb = onCouplingRequired;
+		if (cb != null)
+		{
+			cb.accept(new CouplingRequiredEvent(accountHash, code));
+		}
+	}
+
+	private void handleCouplingCode(Long accountHash, String code)
+	{
+		Consumer<CouplingCodeEvent> cb = onCouplingCode;
+		if (cb != null)
+		{
+			cb.accept(new CouplingCodeEvent(accountHash, code));
+		}
+	}
+
+	private void handleCouplingResult(Long accountHash, Boolean success)
+	{
+		Consumer<CouplingResultEvent> cb = onCouplingResult;
+		if (cb != null)
+		{
+			cb.accept(new CouplingResultEvent(accountHash, success));
+		}
+	}
+
+	private void handleCouplingRevoked(Long accountHash)
+	{
+		Consumer<Long> cb = onCouplingRevoked;
+		if (cb != null)
+		{
+			cb.accept(accountHash);
+		}
+	}
+
+	public void couplingConfirm(long accountHash, String code)
+	{
+		if (!connected)
+		{
+			return;
+		}
+		send(gson.toJson(new CouplingConfirmFrame(accountHash, code)));
 	}
 
 	private void handleError(String id, String detail)
@@ -1472,6 +1554,10 @@ public class OSPartySocket extends WebSocketListener
 		String token;
 		// "authIssued" frame: the public id this character is shown to other players under.
 		String playerId;
+		// "couplingRequired"/"couplingCode" frame: the six-digit code.
+		String code;
+		// "couplingResult" frame: whether the coupling succeeded.
+		Boolean success;
 	}
 
 	// Outbound frame shapes (Gson omits null fields, so a patch carries only what's set).
@@ -1686,6 +1772,59 @@ public class OSPartySocket extends WebSocketListener
 		{
 			this.onUrl = onUrl;
 			this.onError = onError;
+		}
+	}
+
+	/** Outbound coupling code confirmation. */
+	private static final class CouplingConfirmFrame
+	{
+		final String type = "couplingConfirm";
+		final long accountHash;
+		final String code;
+
+		CouplingConfirmFrame(long accountHash, String code)
+		{
+			this.accountHash = accountHash;
+			this.code = code;
+		}
+	}
+
+	/** Delivered when the server says a coupling code is needed. */
+	public static final class CouplingRequiredEvent
+	{
+		public final long accountHash;
+		public final String code;
+
+		public CouplingRequiredEvent(long accountHash, String code)
+		{
+			this.accountHash = accountHash;
+			this.code = code;
+		}
+	}
+
+	/** Delivered to the incumbent when a challenger requests coupling. */
+	public static final class CouplingCodeEvent
+	{
+		public final long accountHash;
+		public final String code;
+
+		public CouplingCodeEvent(long accountHash, String code)
+		{
+			this.accountHash = accountHash;
+			this.code = code;
+		}
+	}
+
+	/** Delivered after the challenger submits a coupling code. */
+	public static final class CouplingResultEvent
+	{
+		public final long accountHash;
+		public final boolean success;
+
+		public CouplingResultEvent(long accountHash, boolean success)
+		{
+			this.accountHash = accountHash;
+			this.success = success;
 		}
 	}
 }
