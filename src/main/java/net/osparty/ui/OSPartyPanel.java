@@ -62,7 +62,10 @@ import net.runelite.client.util.LinkBrowser;
 public class OSPartyPanel extends PluginPanel
 {
 	// PluginHub's build omits runelite-plugin.properties; keep in step with it each release.
-	private static final String VERSION = "1.0.52";
+	// Also sent on every socket connect as X-OSParty-Client, so the service can see which versions are
+	// actually deployed rather than infer it: released plugins update on their own schedule and there is
+	// no way to ask them.
+	public static final String VERSION = "1.0.52";
 	private static final String GITHUB_URL = "https://github.com/osparty/osparty";
 	private static final String DISCORD_URL = "https://discord.gg/EtMRxTHXWJ";
 	/** How long an unanswered invite banner stays on the panel, and how often we sweep for expired ones. */

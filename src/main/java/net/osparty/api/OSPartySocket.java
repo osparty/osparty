@@ -50,6 +50,15 @@ public class OSPartySocket extends WebSocketListener
 	private final OkHttpClient client;
 	private final Gson gson;
 	private final HttpUrl base;
+	/** Credentials this machine holds, one per character. Read on every connect, written on enrolment. */
+	private final net.osparty.store.CredentialStore credentials;
+	/**
+	 * The character whose credential this connection presents. Zero until the plugin reports one, which is
+	 * the ordinary state on a client that has not logged in yet.
+	 */
+	private volatile long accountHash;
+	/** Sent as {@code X-OSParty-Client} so the service can see the deployed spread instead of guessing. */
+	private static final String VERSION = net.osparty.ui.OSPartyPanel.VERSION;
 
 	/**
 	 * The pod the live party wants this connection on, or null for "anywhere".
@@ -137,8 +146,9 @@ public class OSPartySocket extends WebSocketListener
 	private volatile String publishedNode;
 
 	@Inject
-	OSPartySocket(OkHttpClient httpClient, Gson gson)
+	OSPartySocket(OkHttpClient httpClient, Gson gson, net.osparty.store.CredentialStore credentials)
 	{
+		this.credentials = credentials;
 		// A WebSocket must not inherit the REST read timeout; the ping keeps it alive.
 		this.client = httpClient.newBuilder()
 			.pingInterval(Duration.ofSeconds(20))
@@ -241,7 +251,29 @@ public class OSPartySocket extends WebSocketListener
 		{
 			return;
 		}
-		webSocket = client.newWebSocket(new Request.Builder().url(currentUrl()).build(), this);
+		Request.Builder request = new Request.Builder().url(currentUrl());
+		// The version rides every connection so the service can see what is actually deployed rather than
+		// guess. Released plugins update on their own schedule and there is no way to ask them.
+		request.header("X-OSParty-Client", VERSION);
+		// The credential for whoever is logged in, when this machine has one. Sent on the upgrade rather
+		// than in a frame so identity is settled before the connection carries anything, and as a header
+		// rather than a query parameter so it stays out of proxy logs. Every reconnect path funnels through
+		// here, so this re-presents itself for free.
+		String token = credentials.get(accountHash);
+		if (token != null)
+		{
+			request.header("X-OSParty-Auth", token);
+		}
+		webSocket = client.newWebSocket(request.build(), this);
+	}
+
+	/**
+	 * The account this connection should present a credential for. Set by the plugin as the logged-in
+	 * character changes; a reconnect after a switch therefore carries the new character's credential.
+	 */
+	public synchronized void setAccountHash(long accountHash)
+	{
+		this.accountHash = accountHash;
 	}
 
 	// --- Live-party channel ---
@@ -876,6 +908,9 @@ public class OSPartySocket extends WebSocketListener
 			case "inviteAck":
 				completeInviteAck(frame.id, frame.delivered);
 				break;
+			case "authIssued":
+				handleAuthIssued(frame.token);
+				break;
 			default:
 				break;
 		}
@@ -1090,6 +1125,25 @@ public class OSPartySocket extends WebSocketListener
 			publishedNode = null;
 			notifyHostedGone(id);
 		}
+	}
+
+	/**
+	 * Keep the credential the server just issued for the logged-in character.
+	 *
+	 * <p>Sent once and never again -- the server keeps only a digest of it -- so losing this write means
+	 * enrolling afresh on the next connection rather than being locked out. It is not applied to the live
+	 * connection: this one already carries the identity that earned the credential, and the next connect
+	 * picks it up from the store.
+	 */
+	private void handleAuthIssued(String token)
+	{
+		long account = accountHash;
+		if (token == null || token.isEmpty() || !net.osparty.store.PlayerFlag.isKnown(account))
+		{
+			return;
+		}
+		credentials.put(account, token);
+		log.debug("Party socket: stored an OSParty credential for this character");
 	}
 
 	private void handleError(String id, String detail)
@@ -1413,6 +1467,11 @@ public class OSPartySocket extends WebSocketListener
 		String from;
 		// "inviteAck" frame: whether the invite reached the target's client.
 		Boolean delivered;
+		// "authIssued" frame: the credential minted for this character on this machine. Delivered exactly
+		// once -- the server keeps only its digest -- so it is stored on arrival or lost.
+		String token;
+		// "authIssued" frame: the public id this character is shown to other players under.
+		String playerId;
 	}
 
 	// Outbound frame shapes (Gson omits null fields, so a patch carries only what's set).

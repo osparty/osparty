@@ -630,6 +630,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		mapRegions = client.getMapRegions();
 		accountType = client.getAccountType();
 		accountHash = client.getAccountHash();
+		// Tell the socket which character it should present a credential for. Read on connect, so a switch
+		// takes effect on the next reconnect rather than mid-connection -- which is right: the credential
+		// settles identity for a whole connection, and one connection is one character.
+		socket.setAccountHash(accountHash);
 
 		// Register our identity so friends can route party invites to us (only re-sent on change).
 		maybeIdentify();
