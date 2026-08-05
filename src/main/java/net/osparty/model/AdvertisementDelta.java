@@ -51,6 +51,13 @@ public class AdvertisementDelta
 	 */
 	private String node;
 
+	/**
+	 * The searching clock, restarted by the server because a full party stopped being full. Arrives only
+	 * when it moves, so a card that has been on screen since before the seat opened stops claiming the
+	 * party has been searching all that time.
+	 */
+	private Long createdAt;
+
 	public String getId()
 	{
 		return id;
@@ -150,6 +157,10 @@ public class AdvertisementDelta
 		if (node != null)
 		{
 			p.setNode(node);
+		}
+		if (createdAt != null)
+		{
+			p.setCreatedAt(createdAt);
 		}
 	}
 }

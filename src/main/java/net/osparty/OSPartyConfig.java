@@ -68,8 +68,8 @@ public interface OSPartyConfig extends Config
 	String MAP_PINGS = "mapPings";
 
 	@ConfigSection(
-		name = "Learner & teacher markers",
-		description = "Name icons and tile markers for party members tagged as a learner or teacher.",
+		name = "Player markers",
+		description = "Names above party members, plus the icons and tile markers for learners and teachers.",
 		position = 7,
 		closedByDefault = true
 	)
@@ -502,6 +502,31 @@ public interface OSPartyConfig extends Config
 	default Color learnerColor()
 	{
 		return new Color(80, 200, 255);
+	}
+
+	@ConfigItem(
+		keyName = "partyNameIndicators",
+		name = "Party member names",
+		description = "Draw the name of every party member above their head in the scene.",
+		position = 6,
+		section = MARKERS
+	)
+	default boolean partyNameIndicators()
+	{
+		return true;
+	}
+
+	@Alpha
+	@ConfigItem(
+		keyName = "partyNameColor",
+		name = "Party name colour",
+		description = "Colour of the name drawn above party members.",
+		position = 7,
+		section = MARKERS
+	)
+	default Color partyNameColor()
+	{
+		return new Color(255, 152, 31);
 	}
 
 	// ---- Defence tracker ----

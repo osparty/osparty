@@ -110,10 +110,18 @@ public class OSPartyPanel extends PluginPanel
 	private Consumer<net.osparty.api.PartyInvite> onInviteDecline;
 	private final HostTransferHandler hostTransferHandler;
 	private final LongSupplier accountHashSupplier;
+	/** Writes a line to the game chatbox (the plugin's own notifier). */
+	private final Consumer<String> gameMessage;
 	private final JLabel activeUsersLabel = new JLabel();
 	private final JButton discordLinkButton = new JButton();
 	private Timer presenceTimer;
 	private Timer linkPollTimer;
+	/**
+	 * Keeps the resume marker for a joined party fresh. A timer rather than the live-party listener: a
+	 * quiet party can go minutes without a roster or state change, and the marker would age as though we
+	 * had left it.
+	 */
+	private final Timer membershipTimer = new Timer(5000, e -> rememberMembership());
 	/** Last accountHash we queried link status for, so we only re-query when the logged-in account changes. */
 	private long lastLinkQueryHash = Long.MIN_VALUE;
 	/** Epoch millis before which a failed link query isn't retried. */
@@ -163,6 +171,7 @@ public class OSPartyPanel extends PluginPanel
 		this.liveParty = liveParty;
 		this.boardService = boardService;
 		this.accountHashSupplier = accountHashSupplier;
+		this.gameMessage = gameMessage;
 		this.historyService = historyService;
 		this.partyState = new PartyState(configManager);
 		this.hostTransferHandler = new HostTransferHandler(liveParty, boardService, partyState,
@@ -280,6 +289,7 @@ public class OSPartyPanel extends PluginPanel
 		partyState.addListener(this::onPartyStateChanged);
 		// Live joins/leaves arrive off-EDT; marshal back before touching history/Swing.
 		liveParty.addListener(() -> SwingUtilities.invokeLater(this::syncHistoryRoster));
+		membershipTimer.start();
 	}
 
 
@@ -578,6 +588,7 @@ public class OSPartyPanel extends PluginPanel
 		{
 			inviteSweepTimer.stop();
 		}
+		membershipTimer.stop();
 		inviteBanners.clear();
 		inviteExpiry.clear();
 		invitePanel.removeAll();
@@ -780,6 +791,53 @@ public class OSPartyPanel extends PluginPanel
 		partyState.resumeHosting(ad);
 	}
 
+	/**
+	 * Put us back into the party we were a member of before the client went away, as the host's own
+	 * advertisement puts it back into its party. Only a membership this account held moments ago, and only
+	 * a party that is still advertised — which is what says the party outlived us rather than ended with us.
+	 *
+	 * @return whether this answered the question of which party we were in, so the caller knows not to go
+	 *     looking for a hosted one: a player is in one party at a time, and this was it.
+	 */
+	public boolean resumeJoinedParty(long accountHash)
+	{
+		if (partyState.isInParty())
+		{
+			return true;
+		}
+		PartyState.Membership saved = partyState.savedMembership(accountHash);
+		if (saved == null)
+		{
+			return false;
+		}
+		boardService.fetchAdByCode(saved.getInviteCode(),
+			ad -> SwingUtilities.invokeLater(() -> resumeJoinedParty(saved, ad)),
+			error -> { /* the party ended while we were away, or we're offline - nothing to go back to */ });
+		return true;
+	}
+
+	private void resumeJoinedParty(PartyState.Membership saved, Advertisement ad)
+	{
+		// An invite code outlives nothing: it goes with its party, so a code that now answers for a
+		// different one is answering about a party we were never in.
+		if (ad == null || partyState.isInParty() || !saved.getPartyId().equals(ad.getId())
+			|| ad.getPassphrase() == null || ad.getPassphrase().isEmpty())
+		{
+			return;
+		}
+		liveParty.hintLiveNode(ad.getNode());
+		// As an invited joiner, so the room seats us back as the member we were instead of queueing us
+		// behind our own application. It claims nothing a reconnecting member does not already claim: the
+		// room re-seats everyone from scratch on a handover, and each member asserts its own admission.
+		liveParty.joinParty(ad.getPassphrase(), ad.getActivity(), ad.getCapacity(), saved.getRole(),
+			saved.isLearner(), true);
+		partyState.setMember(ad);
+		net.osparty.model.Activity activity = net.osparty.model.Activity.fromId(ad.getActivity());
+		String name = activity != null ? activity.getDisplayName() : ad.getActivity();
+		gameMessage.accept("Rejoined " + ad.getHost() + "'s " + name
+			+ " party - leave it from the OSParty panel if you're done.");
+	}
+
 	/** Route an inbound host-transfer handshake message (from the plugin's party-bus subscription). */
 	public void onHostTransferEvent(HostTransferEvent message)
 	{
@@ -873,6 +931,20 @@ public class OSPartyPanel extends PluginPanel
 		if (historyService.updateRoster(ad.getId(), liveParty.currentMembers()))
 		{
 			historyPanel.refresh();
+		}
+	}
+
+	/**
+	 * Note that we are still in the party we joined, so a client that dies mid-party comes back into it
+	 * (see {@link #resumeJoinedParty}). Members only, and only once admitted: a host has its advertisement
+	 * to come back to, and an applicant has nothing yet to come back to.
+	 */
+	private void rememberMembership()
+	{
+		if (partyState.isInParty() && !partyState.isHost() && liveParty.isLocalAdmitted())
+		{
+			partyState.rememberMembership(partyState.getCurrentAd(), liveParty.getLocalRole(),
+				liveParty.isLocalLearner(), accountHashSupplier.getAsLong());
 		}
 	}
 

@@ -70,6 +70,16 @@ public class LiveParty implements LivePartyBackend {
 	 */
 	private static final long HEARTBEAT_MS = 5_000;
 
+	/**
+	 * How long a member may go quiet before the room drops it (the server's own member timeout).
+	 *
+	 * <p>Ours to know because nothing announces it: the room simply stops carrying us, and everything we
+	 * send afterwards goes nowhere. Logging out with the client running is exactly that silence — the game
+	 * tick this runs on stops — so anyone who takes a break longer than this comes back to a party that has
+	 * forgotten them. See {@link #tick()}.
+	 */
+	private static final long SWEPT_AFTER_MS = 90_000;
+
 	private final Client client;
 	private final ConfigManager configManager;
 	private final OSPartyConfig config;
@@ -109,6 +119,8 @@ public class LiveParty implements LivePartyBackend {
 
 	private volatile long localMemberId;
 	private volatile PartyStatus localStatus;
+	/** Read on the client thread in {@link #tick()}; the ready check consults it from the socket thread. */
+	private volatile boolean insideRaid;
 
 	// Local self-report.
 	private volatile String localRole;
@@ -334,6 +346,9 @@ public class LiveParty implements LivePartyBackend {
 		clearReadyCheck();
 		announcedName = null;
 		announcedAccountHash = 0;
+		// The next party starts its silence from here: its join frame is sent once the socket opens, which
+		// is after the first tick, and until then there is nothing sent to measure from.
+		lastSentAt = System.currentTimeMillis();
 	}
 
 	@Override
@@ -356,7 +371,14 @@ public class LiveParty implements LivePartyBackend {
 	private void onFrame(LivePartyChannel.Frame frame) {
 		switch (frame.type) {
 			case "welcome":
-				localMemberId = frame.memberId == null ? 0 : frame.memberId;
+				long seat = frame.memberId == null ? 0 : frame.memberId;
+				if (seat != localMemberId) {
+					localMemberId = seat;
+					// Our own row is keyed by this id, and the announce that asked for it went out before the
+					// server named it: anything sent in between was echoed nowhere, and with the dirty flags
+					// cleared by that send nothing would build the row again until a vital happened to move.
+					markAllDirty();
+				}
 				localStatus = parseStatus(frame.status);
 				// Where our room ended up. A host puts it on its advertisement so joiners reach this pod
 				// directly instead of landing anywhere and being redirected off it.
@@ -587,6 +609,9 @@ public class LiveParty implements LivePartyBackend {
 
 	@Override
 	public void tick() {
+		// Ahead of the party check: joining one from inside a raid must not be answered out of a reading
+		// taken before we went in.
+		insideRaid = readInsideRaid();
 		if (mode == Mode.NONE) {
 			return;
 		}
@@ -598,6 +623,20 @@ public class LiveParty implements LivePartyBackend {
 		localWorld = client.getWorld();
 		announceIdentityIfResolved();
 		expireReadyCheck();
+		// Walking into a raid ends any check we were part of, so nothing is left on screen to answer.
+		if (insideRaid && readyCheckId != 0) {
+			clearReadyCheck();
+			fire();
+		}
+
+		// Ask for our seat back after a silence long enough to have cost us it — a logout the room was never
+		// told about, since the connection outlives the login. The host is answered by its advertisement
+		// instead: a room that loses its host is disbanded rather than waiting for one.
+		if (mode == Mode.MEMBER && System.currentTimeMillis() - lastSentAt >= SWEPT_AFTER_MS) {
+			sendJoin();
+			// Seated afresh, the room holds no state for us; nothing else would re-send what has not changed.
+			markAllDirty();
+		}
 
 		if (localWorld != lastSentWorld) {
 			profileDirty = true;
@@ -1065,7 +1104,10 @@ public class LiveParty implements LivePartyBackend {
 			PlayerUpdate data = playerData.get(entry.memberId);
 			String name = data != null && data.getName() != null ? data.getName() : entry.name;
 			boolean local = entry.memberId == localMemberId;
-			boolean online = local || (isRecent(now, entry.memberId) && data != null && data.getWorld() > 0);
+			// The room's word that a member's connection is gone settles it at once. Everything else is our
+			// own reading of their silence, which cannot mean anything until it has lasted a while.
+			boolean online = local
+				|| (!entry.offline && isRecent(now, entry.memberId) && data != null && data.getWorld() > 0);
 			out.add(new RosterMember(entry.memberId, name, status, data, local, online));
 		}
 		out.sort(Comparator.comparingInt((RosterMember m) -> m.getStatus().ordinal())
@@ -1184,6 +1226,33 @@ public class LiveParty implements LivePartyBackend {
 	}
 
 	@Override
+	public boolean insideRaid() {
+		return insideRaid;
+	}
+
+	/**
+	 * Whether we are inside one of the three raids — the raid proper, not its lobby, which is exactly where
+	 * a ready check belongs. Client thread only.
+	 *
+	 * <p>Each raid has to be asked in its own terms. Chambers says so outright, and the Theatre's party
+	 * status distinguishes waiting outside (1) from being in there (2, or 3 once dead and spectating). The
+	 * Tombs publish no such varbit, so it is read as a raid level having been set and the scene being an
+	 * instance: the invocations belong to a raid that has started, and its rooms are instanced where the
+	 * lobby you set them in is not.
+	 */
+	private boolean readInsideRaid() {
+		if (client.getVarbitValue(net.runelite.api.gameval.VarbitID.RAIDS_CLIENT_INDUNGEON) == 1
+			|| client.getVarbitValue(net.runelite.api.gameval.VarbitID.TOB_CLIENT_PARTYSTATUS) >= 2) {
+			return true;
+		}
+		if (client.getVarbitValue(net.runelite.api.gameval.VarbitID.TOA_CLIENT_RAID_LEVEL) <= 0) {
+			return false;
+		}
+		net.runelite.api.WorldView view = client.getTopLevelWorldView();
+		return view != null && view.isInstance();
+	}
+
+	@Override
 	public List<String> neededRoles(List<String> requiredRoles) {
 		net.osparty.model.Activity activity = net.osparty.model.Activity.fromId(currentActivityId);
 		boolean flexible = activity != null && activity.hasFlexibleRoles();
@@ -1289,7 +1358,7 @@ public class LiveParty implements LivePartyBackend {
 	/** Start a ready check (anyone in the party may). The starter counts as ready. */
 	@Override
 	public void startReadyCheck() {
-		if (!isInParty() || localMemberId == 0 || onDifferentWorldThanHost()) {
+		if (!isInParty() || localMemberId == 0 || onDifferentWorldThanHost() || insideRaid) {
 			return;
 		}
 		long id = (localMemberId << 16) | (++readyCheckSeq & 0xFFFF);
@@ -1317,6 +1386,11 @@ public class LiveParty implements LivePartyBackend {
 
 	private void applyReadyStart(LivePartyChannel.Frame frame) {
 		if (frame.checkId == null || frame.memberId == null) {
+			return;
+		}
+		// Dropped rather than deferred: a check that reaches us mid-raid is one we were never going to be
+		// asked to answer, and surfacing it late would only interrupt the raid it was meant to precede.
+		if (insideRaid) {
 			return;
 		}
 		beginReadyCheck(frame.checkId, frame.starter, frame.memberId);

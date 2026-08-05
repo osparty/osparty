@@ -893,22 +893,38 @@ class PartyPanel extends JPanel
 	}
 
 	/**
-	 * Right-click actions for a roster member: favourite and block toggles, and (host only, on an
-	 * admitted member) kick / kick-and-block. {@code null} for yourself or when nothing applies.
+	 * Right-click actions for a roster member: favourite and block toggles, (host only, on an admitted
+	 * member) kick / kick-and-block, and a hiscore lookup. {@code null} when nothing applies.
 	 */
 	private JPopupMenu memberMenu(Activity activity, RosterMember member, boolean host)
 	{
-		if (member.isLocal() || member.getName() == null)
+		if (member.getName() == null)
 		{
-			return null; // no actions on yourself
+			return null;
 		}
 		final String rsn = member.getName();
 		final long hash = memberHash(member);
+		// Your own row keeps the hiscore lookup; favouriting/blocking/kicking yourself makes no sense.
+		final boolean self = member.isLocal();
 		JPopupMenu menu = new JPopupMenu();
 		boolean any = false;
 
-		if (favoritesService != null)
+		JMenuItem hiscores = HiscoreLookup.menuItem(rsn);
+		if (hiscores != null)
 		{
+			menu.add(hiscores);
+			any = true;
+		}
+		// Divider between the lookup and the first of the member actions, whichever that turns out to be.
+		boolean divide = any;
+
+		if (!self && favoritesService != null)
+		{
+			if (divide)
+			{
+				menu.addSeparator();
+				divide = false;
+			}
 			boolean fav = favoritesService.isFavorite(hash, rsn);
 			JMenuItem favItem = new JMenuItem(fav ? "Remove from Favorites" : "Add to Favorites");
 			favItem.addActionListener(e -> {
@@ -919,8 +935,13 @@ class PartyPanel extends JPanel
 			any = true;
 		}
 
-		if (blockListService != null)
+		if (!self && blockListService != null)
 		{
+			if (divide)
+			{
+				menu.addSeparator();
+				divide = false;
+			}
 			boolean blocked = blockListService.isBlocked(hash, rsn);
 			JMenuItem blockItem = new JMenuItem(blocked ? "Remove from blocklist" : "Add to blocklist");
 			blockItem.addActionListener(e -> {
@@ -933,7 +954,7 @@ class PartyPanel extends JPanel
 			any = true;
 		}
 
-		if (host && member.getStatus() == PartyStatus.MEMBER)
+		if (!self && host && member.getStatus() == PartyStatus.MEMBER)
 		{
 			menu.addSeparator();
 			JMenuItem kickItem = new JMenuItem("Kick player");
@@ -1869,8 +1890,14 @@ class PartyPanel extends JPanel
 			readyCheckTicker.stop();
 			JButton start = new JButton("Start ready check");
 			start.setFocusPainted(false);
+			// Nobody in a raid is answering one, ourselves included: the check belongs to the lobby.
+			if (liveParty.insideRaid())
+			{
+				start.setEnabled(false);
+				start.setToolTipText("Ready checks are off while you're inside the raid.");
+			}
 			// Starting counts you as ready, so it's world-gated exactly like readying up.
-			if (liveParty.onDifferentWorldThanHost())
+			else if (liveParty.onDifferentWorldThanHost())
 			{
 				start.setEnabled(false);
 				int hostWorld = liveParty.hostWorld();

@@ -292,5 +292,10 @@ public class LivePartyChannel implements OSPartySocket.LiveChannel {
 		public String role;
 		public boolean learner;
 		public boolean teacher;
+		/**
+		 * The room holding this member's seat with no connection behind it. False from a server that does not
+		 * report it, which leaves presence to the silence timeout it was always judged by.
+		 */
+		public boolean offline;
 	}
 }

@@ -187,5 +187,8 @@ public interface LivePartyBackend
 
 	boolean onDifferentWorldThanHost();
 
+	/** Whether we are inside one of the three raids, where ready checks are neither sent nor received. */
+	boolean insideRaid();
+
 	List<String> neededRoles(List<String> requiredRoles);
 }

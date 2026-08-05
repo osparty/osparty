@@ -31,8 +31,10 @@ import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
+import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JTextField;
 import javax.swing.SwingConstants;
@@ -434,6 +436,16 @@ class HistoryPanel extends JPanel
 		right.add(timeLabel);
 
 		line.add(right, BorderLayout.EAST);
+
+		JMenuItem hiscores = isNamed(m) ? HiscoreLookup.menuItem(m.getName()) : null;
+		if (hiscores != null)
+		{
+			JPopupMenu menu = new JPopupMenu();
+			menu.add(hiscores);
+			line.setComponentPopupMenu(menu);
+			PanelWidgets.inheritPopupMenu(line);
+		}
+
 		return line;
 	}
 
