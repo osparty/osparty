@@ -1,9 +1,12 @@
 package net.osparty.tools;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.Value;
+import lombok.extern.slf4j.Slf4j;
 import net.osparty.OSPartyConfig;
 import net.osparty.enums.BossDefence;
 import net.osparty.enums.SpecWeapon;
@@ -29,6 +32,7 @@ import net.runelite.api.gameval.VarbitID;
  * the Magic-defence <em>bonus</em>. A few monsters ({@link BossDefence.Flag#MAGIC_USES_DEFENCE})
  * roll magic defence off their Defence level, so their physical drains lower it too.
  */
+@Slf4j
 @Singleton
 public class DefenceTracker
 {
@@ -82,6 +86,15 @@ public class DefenceTracker
 
 	/** Filled from the socket reader thread, drained on the client thread. */
 	private final ConcurrentLinkedDeque<Drain> pending = new ConcurrentLinkedDeque<>();
+
+	/**
+	 * Drains that landed on an NPC this client could not identify yet. A party member's spec can
+	 * reach us before the monster is in our scene — most easily when two people spec the same tick
+	 * — and dropping it would leave every client on a different defence. Held against the index
+	 * that is waiting to be identified, and replayed the moment it is.
+	 */
+	private int queuedIndex = -1;
+	private final List<Drain> queuedDrains = new ArrayList<>();
 
 	@Value
 	public static class DefenceState
@@ -203,22 +216,66 @@ public class DefenceTracker
 		NPC npc = npcByIndex(index);
 		if (npc == null || npc.getName() == null)
 		{
+			log.debug("{} hit {} held: npc {} not in our scene yet", drain.getWeapon(), drain.getHit(), index);
+			hold(drain);
 			return;
 		}
 		String name = npc.getName();
 		if (BossDefence.matchingNpcName(name) == null && bossIndex != index)
 		{
-			return; // not a tracked monster
+			log.debug("{} hit {} dropped: '{}' (npc {}) is not a tracked monster",
+				drain.getWeapon(), drain.getHit(), name, index);
+			return;
 		}
 		if (bossIndex != index)
 		{
 			setBoss(name, index);
+			replayHeld(index);
 		}
-		if (drain.getWorld() == client.getWorld())
+		apply(drain);
+	}
+
+	private void apply(Drain drain)
+	{
+		if (drain.getWorld() != client.getWorld())
 		{
-			drained = true;
-			calculateDefence(drain.getWeapon(), drain.getHit());
+			log.debug("{} hit {} dropped: world {} != ours {}",
+				drain.getWeapon(), drain.getHit(), drain.getWorld(), client.getWorld());
+			return;
 		}
+		drained = true;
+		long before = bossDef;
+		calculateDefence(drain.getWeapon(), drain.getHit());
+		log.debug("{} hit {} on {}: def {} -> {} (base {}, floor {})",
+			drain.getWeapon(), drain.getHit(), bossName, before, bossDef, bossStartDef, minDef);
+	}
+
+	/** Keep a drain whose monster we can't see yet. Only one index is ever worth waiting on. */
+	private void hold(Drain drain)
+	{
+		if (queuedIndex != drain.getNpcIndex())
+		{
+			queuedIndex = drain.getNpcIndex();
+			queuedDrains.clear();
+		}
+		queuedDrains.add(drain);
+	}
+
+	/**
+	 * Apply everything held for a monster that has just been identified. Order is preserved from
+	 * {@link #queue}, so an elder maul still lands before the specs it was queued ahead of.
+	 */
+	private void replayHeld(int index)
+	{
+		if (queuedIndex == index)
+		{
+			for (Drain held : queuedDrains)
+			{
+				apply(held);
+			}
+		}
+		queuedIndex = -1;
+		queuedDrains.clear();
 	}
 
 	private void setBoss(String name, int index)
@@ -450,5 +507,7 @@ public class DefenceTracker
 		accursedApplied = false;
 		drained = false;
 		pending.clear();
+		queuedIndex = -1;
+		queuedDrains.clear();
 	}
 }
