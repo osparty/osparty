@@ -11,6 +11,7 @@ import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
@@ -122,15 +123,35 @@ public final class DeviceManagerDialog extends JDialog
 
 		row.add(text, BorderLayout.CENTER);
 
+		JButton rename = new JButton("Rename");
+		rename.setFont(FontManager.getRunescapeSmallFont());
+		rename.addActionListener(e -> onRenameClicked(device));
 		JButton revoke = new JButton("Revoke");
 		revoke.setFont(FontManager.getRunescapeSmallFont());
 		revoke.addActionListener(e -> onRevokeClicked(device, row));
-		JPanel actionWrap = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+		JPanel actionWrap = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
 		actionWrap.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		actionWrap.add(rename);
 		actionWrap.add(revoke);
 		row.add(actionWrap, BorderLayout.EAST);
 
 		return row;
+	}
+
+	private void onRenameClicked(OSPartySocket.DeviceInfo device)
+	{
+		String current = device.label != null ? device.label : "";
+		String label = JOptionPane.showInputDialog(this, "Name for this device:", current);
+		// Cancelled, or unchanged -- either way there is nothing to send.
+		if (label == null || label.equals(current))
+		{
+			return;
+		}
+		// Re-fetch either way rather than patching this one row: on success the row holds a stale DeviceInfo,
+		// and on failure (almost always the device having been revoked from elsewhere since the dialog
+		// opened) this folds it into "the list was stale" instead of a failure needing its own explanation.
+		socket.renameDevice(device.id, label, success ->
+			socket.listDevices(devices -> SwingUtilities.invokeLater(() -> render(devices))));
 	}
 
 	private void onRevokeClicked(OSPartySocket.DeviceInfo device, JPanel row)
