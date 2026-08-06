@@ -160,6 +160,7 @@ public class LiveParty implements LivePartyBackend {
 	private volatile Runnable onEnded;
 	private volatile Runnable onKicked;
 	private final List<TilePing> pings = new CopyOnWriteArrayList<>();
+	private volatile Consumer<WorldPoint> onPingReceived;
 
 	// ---- ready check (one active per party) ---------------------------------
 	private static final long READY_CHECK_TIMEOUT_MS = 30_000;
@@ -591,6 +592,10 @@ public class LiveParty implements LivePartyBackend {
 		WorldPoint point = new WorldPoint(frame.x, frame.y, frame.plane == null ? 0 : frame.plane);
 		Color color = new Color(frame.color == null ? Color.CYAN.getRGB() : frame.color, true);
 		addPing(new TilePing(point, frame.name, color, System.currentTimeMillis()));
+		Consumer<WorldPoint> cb = onPingReceived;
+		if (cb != null) {
+			cb.accept(point);
+		}
 		fire();
 	}
 
@@ -1361,6 +1366,11 @@ public class LiveParty implements LivePartyBackend {
 	@Override
 	public void setOnReadyCheckStarted(Consumer<String> onReadyCheckStarted) {
 		this.onReadyCheckStarted = onReadyCheckStarted;
+	}
+
+	@Override
+	public void setOnPingReceived(Consumer<WorldPoint> onPingReceived) {
+		this.onPingReceived = onPingReceived;
 	}
 
 	@Override

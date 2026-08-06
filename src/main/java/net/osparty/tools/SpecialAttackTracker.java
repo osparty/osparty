@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import javax.inject.Inject;
 import javax.inject.Singleton;
+import lombok.extern.slf4j.Slf4j;
 import net.osparty.OSPartyConfig;
 import net.osparty.enums.SpecWeapon;
 import net.osparty.party.LivePartyBackend;
@@ -38,6 +39,7 @@ import net.runelite.client.callback.ClientThread;
  * <p>The event methods are driven from the plugin's {@code @Subscribe} handlers,
  * matching how {@link DefenceTracker} is wired.
  */
+@Slf4j
 @Singleton
 public class SpecialAttackTracker
 {
@@ -204,12 +206,16 @@ public class SpecialAttackTracker
 	{
 		if (message.getWorld() != client.getWorld())
 		{
+			log.debug("spec drain from member {} dropped: world {} != ours {}",
+				message.getMemberId(), message.getWorld(), client.getWorld());
 			return;
 		}
 		if (liveParty.isForLocalMember(message.getMemberId()))
 		{
 			return; // our own broadcast echoed back to us; queuing it would double-count our spec
 		}
+		log.debug("spec drain from member {}: {} hit {} on npc {}", message.getMemberId(),
+			message.getWeapon(), message.getHit(), message.getNpcIndex());
 		defenceTracker.queue(message.getWeapon(), message.getNpcIndex(), message.getHit(), message.getWorld());
 	}
 
@@ -217,8 +223,10 @@ public class SpecialAttackTracker
 	{
 		if (!liveParty.isInParty() && !config.defenceOutsideParty())
 		{
+			log.debug("own {} hit {} not recorded: not in a party", weapon, hit);
 			return;
 		}
+		log.debug("own {} hit {} on npc {}", weapon, hit, target.getIndex());
 
 		int world = client.getWorld();
 		int npcIndex = target.getIndex();
