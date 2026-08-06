@@ -57,8 +57,57 @@ public class OSPartySocket extends WebSocketListener
 	 * the ordinary state on a client that has not logged in yet.
 	 */
 	private volatile long accountHash;
+	/**
+	 * The last real character {@link #setAccountHash} reconnected for. Separate from {@link #accountHash}
+	 * because that field also passes through the logged-out sentinel on every world hop (see
+	 * {@code OSPartyPlugin#onGameStateChanged}), and comparing against it directly would reconnect twice per
+	 * hop for no reason -- once dropping to the sentinel, once coming back to the same character.
+	 */
+	private volatile long lastReconnectedAccountHash;
 	/** Sent as {@code X-OSParty-Client} so the service can see the deployed spread instead of guessing. */
 	private static final String VERSION = net.osparty.ui.OSPartyPanel.VERSION;
+
+	/**
+	 * Sent as {@code X-OSParty-Device} so a freshly enrolled credential starts with a real name instead of a
+	 * bare timestamp -- see {@link net.osparty.ui.DeviceManagerDialog}. Best-effort and unverified, same
+	 * footing as {@link #VERSION}: nothing here is ever used to decide anything, only to display.
+	 */
+	private static String deviceLabel()
+	{
+		String hostname;
+		try
+		{
+			hostname = java.net.InetAddress.getLocalHost().getHostName();
+		}
+		catch (java.net.UnknownHostException e)
+		{
+			hostname = null;
+		}
+		return deviceLabel(hostname, System.getenv("COMPUTERNAME"), System.getenv("HOSTNAME"));
+	}
+
+	/**
+	 * The fallback chain on its own, apart from the system calls that feed it, so it can be exercised without
+	 * a real network stack: the local hostname lookup can fail depending on DNS/network config, Windows names
+	 * the machine via {@code COMPUTERNAME} rather than a resolvable hostname, and other platforms sometimes
+	 * only set {@code HOSTNAME}.
+	 */
+	static String deviceLabel(String hostname, String computerNameEnv, String hostnameEnv)
+	{
+		if (hostname != null && !hostname.isBlank())
+		{
+			return hostname;
+		}
+		if (computerNameEnv != null && !computerNameEnv.isBlank())
+		{
+			return computerNameEnv;
+		}
+		if (hostnameEnv != null && !hostnameEnv.isBlank())
+		{
+			return hostnameEnv;
+		}
+		return null;
+	}
 
 	/**
 	 * The pod the live party wants this connection on, or null for "anywhere".
@@ -255,6 +304,13 @@ public class OSPartySocket extends WebSocketListener
 		// The version rides every connection so the service can see what is actually deployed rather than
 		// guess. Released plugins update on their own schedule and there is no way to ask them.
 		request.header("X-OSParty-Client", VERSION);
+		// A best-effort device name, used only as a fresh enrolment's starting label -- see deviceLabel().
+		// Absent rather than sent blank when nothing could be determined.
+		String label = deviceLabel();
+		if (label != null)
+		{
+			request.header("X-OSParty-Device", label);
+		}
 		// The credential for whoever is logged in, when this machine has one. Sent on the upgrade rather
 		// than in a frame so identity is settled before the connection carries anything, and as a header
 		// rather than a query parameter so it stays out of proxy logs. Every reconnect path funnels through
@@ -268,12 +324,25 @@ public class OSPartySocket extends WebSocketListener
 	}
 
 	/**
-	 * The account this connection should present a credential for. Set by the plugin as the logged-in
-	 * character changes; a reconnect after a switch therefore carries the new character's credential.
+	 * The account this connection should present a credential for. Set by the plugin every tick as the
+	 * logged-in character changes.
+	 *
+	 * <p>A credential can only be presented at the handshake, not mid-connection, so this reconnects whenever
+	 * it is told about a real character it has not already reconnected for -- otherwise a connection opened
+	 * before login (or before this character's credential existed) would go on identifying unauthenticated
+	 * forever, since nothing else about the connection ever prompts it to try again. Skipped for the
+	 * logged-out sentinel: there is no credential to present for it, and it would otherwise cost two
+	 * reconnects per world hop for a character that never actually changed.
 	 */
 	public synchronized void setAccountHash(long accountHash)
 	{
 		this.accountHash = accountHash;
+		boolean known = accountHash != 0 && accountHash != -1;
+		if (known && accountHash != lastReconnectedAccountHash)
+		{
+			lastReconnectedAccountHash = accountHash;
+			reconnectForMove("account changed");
+		}
 	}
 
 	// --- Live-party channel ---
@@ -934,6 +1003,9 @@ public class OSPartySocket extends WebSocketListener
 		case "deviceRevoked":
 			handleDeviceRevoked(frame.deviceId, Boolean.TRUE.equals(frame.success));
 			break;
+		case "deviceRenamed":
+			handleDeviceRenamed(frame.deviceId, Boolean.TRUE.equals(frame.success));
+			break;
 		default:
 				break;
 		}
@@ -1266,6 +1338,7 @@ public class OSPartySocket extends WebSocketListener
 
 	private volatile Consumer<List<DeviceInfo>> pendingDeviceList;
 	private final Map<String, Consumer<Boolean>> pendingRevokes = new ConcurrentHashMap<>();
+	private final Map<String, Consumer<Boolean>> pendingRenames = new ConcurrentHashMap<>();
 
 	/**
 	 * List the machines currently entitled to speak for the local account. {@code onDevices} gets the list,
@@ -1298,6 +1371,22 @@ public class OSPartySocket extends WebSocketListener
 		send(gson.toJson(new RevokeDeviceFrame(deviceId)));
 	}
 
+	/**
+	 * Rename one device by the id {@link #listDevices} reported for it. Purely cosmetic -- it changes what
+	 * {@link DeviceInfo#label} reads next time, nothing about what the device can do. {@code onResult} gets
+	 * whether it actually happened, for the same reasons as {@link #revokeDevice}.
+	 */
+	public void renameDevice(String deviceId, String label, Consumer<Boolean> onResult)
+	{
+		if (deviceId == null || !connected)
+		{
+			onResult.accept(false);
+			return;
+		}
+		pendingRenames.put(deviceId, onResult);
+		send(gson.toJson(new RenameDeviceFrame(deviceId, label)));
+	}
+
 	private void handleDevices(List<DeviceFrameEntry> devices)
 	{
 		Consumer<List<DeviceInfo>> cb = pendingDeviceList;
@@ -1320,6 +1409,15 @@ public class OSPartySocket extends WebSocketListener
 	private void handleDeviceRevoked(String deviceId, boolean success)
 	{
 		Consumer<Boolean> cb = deviceId == null ? null : pendingRevokes.remove(deviceId);
+		if (cb != null)
+		{
+			cb.accept(success);
+		}
+	}
+
+	private void handleDeviceRenamed(String deviceId, boolean success)
+	{
+		Consumer<Boolean> cb = deviceId == null ? null : pendingRenames.remove(deviceId);
 		if (cb != null)
 		{
 			cb.accept(success);
@@ -1897,6 +1995,19 @@ public class OSPartySocket extends WebSocketListener
 		RevokeDeviceFrame(String deviceId)
 		{
 			this.deviceId = deviceId;
+		}
+	}
+
+	private static final class RenameDeviceFrame
+	{
+		final String type = "renameDevice";
+		final String deviceId;
+		final String label;
+
+		RenameDeviceFrame(String deviceId, String label)
+		{
+			this.deviceId = deviceId;
+			this.label = label;
 		}
 	}
 
