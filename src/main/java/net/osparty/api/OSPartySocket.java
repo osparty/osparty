@@ -920,8 +920,13 @@ public class OSPartySocket extends WebSocketListener
 		case "couplingResult":
 			handleCouplingResult(frame.accountHash, frame.success);
 			break;
-		case "couplingRevoked":
-			handleCouplingRevoked(frame.accountHash);
+		case "couplingUnavailable":
+			// Asked to couple, but no machine of ours was online to display a code. Reported as a failure
+			// rather than left silent, or the panel waits forever on a number nothing ever showed.
+			handleCouplingResult(frame.accountHash, Boolean.FALSE);
+			break;
+		case "couplingAccepted":
+			handleCouplingAccepted(frame.accountHash);
 			break;
 		default:
 				break;
@@ -1161,7 +1166,7 @@ public class OSPartySocket extends WebSocketListener
 	private volatile Consumer<CouplingRequiredEvent> onCouplingRequired;
 	private volatile Consumer<CouplingCodeEvent> onCouplingCode;
 	private volatile Consumer<CouplingResultEvent> onCouplingResult;
-	private volatile Consumer<Long> onCouplingRevoked;
+	private volatile Consumer<Long> onCouplingAccepted;
 
 	public void setOnCouplingRequired(Consumer<CouplingRequiredEvent> callback)
 	{
@@ -1178,9 +1183,9 @@ public class OSPartySocket extends WebSocketListener
 		this.onCouplingResult = callback;
 	}
 
-	public void setOnCouplingRevoked(Consumer<Long> callback)
+	public void setOnCouplingAccepted(Consumer<Long> callback)
 	{
-		this.onCouplingRevoked = callback;
+		this.onCouplingAccepted = callback;
 	}
 
 	private void handleCouplingRequired(Long accountHash, String code)
@@ -1210,9 +1215,14 @@ public class OSPartySocket extends WebSocketListener
 		}
 	}
 
-	private void handleCouplingRevoked(Long accountHash)
+	/**
+	 * Another machine has just joined this account. A notice, not a loss: coupling adds a machine and this
+	 * one keeps its credential. Surfaced anyway, because the screen the code was read off is the one place
+	 * somebody who did not expect it would notice.
+	 */
+	private void handleCouplingAccepted(Long accountHash)
 	{
-		Consumer<Long> cb = onCouplingRevoked;
+		Consumer<Long> cb = onCouplingAccepted;
 		if (cb != null)
 		{
 			cb.accept(accountHash);
