@@ -175,7 +175,7 @@ public class PartyHistoryService
 			int idx = indexOfMember(stored, matched, lm);
 			if (idx < 0)
 			{
-				stored.add(new HistoryMember(lm.getName(), lm.getAccountHash(), now, 0));
+				stored.add(new HistoryMember(lm.getName(), 0L, now, 0, lm.getPlayerId()));
 				matched.set(stored.size() - 1); // a joiner appended this pass is present, not a leaver
 				changed = true;
 				continue;
@@ -187,9 +187,9 @@ public class PartyHistoryService
 				hm.setLeftAt(0);
 				changed = true;
 			}
-			if (hm.getAccountHash() == 0 && lm.getAccountHash() != 0) // hash finally synced
+			if (isBlank(hm.getPlayerId()) && !isBlank(lm.getPlayerId())) // id finally synced
 			{
-				hm.setAccountHash(lm.getAccountHash());
+				hm.setPlayerId(lm.getPlayerId());
 				changed = true;
 			}
 			if (!lm.getName().equals(hm.getName())) // e.g. a display-name change
@@ -226,14 +226,14 @@ public class PartyHistoryService
 		return changed;
 	}
 
-	/** Index of the stored member matching {@code lm} (by hash, else name); {@code -1} if newly seen. */
+	/** Index of the stored member matching {@code lm} (by player id, else name); {@code -1} if newly seen. */
 	private static int indexOfMember(List<HistoryMember> stored, BitSet matched, Member lm)
 	{
-		if (lm.getAccountHash() != 0)
+		if (!isBlank(lm.getPlayerId()))
 		{
 			for (int i = 0; i < stored.size(); i++)
 			{
-				if (!matched.get(i) && stored.get(i).getAccountHash() == lm.getAccountHash())
+				if (!matched.get(i) && lm.getPlayerId().equals(stored.get(i).getPlayerId()))
 				{
 					return i;
 				}
@@ -242,8 +242,9 @@ public class PartyHistoryService
 		for (int i = 0; i < stored.size(); i++)
 		{
 			HistoryMember hm = stored.get(i);
-			// Only match by name where the hash can't contradict it (one side unknown).
-			if (!matched.get(i) && (hm.getAccountHash() == 0 || lm.getAccountHash() == 0)
+			// Only match by name where the id can't contradict it (one side unknown) -- otherwise two
+			// different accounts that happen to share a name would be folded into one row.
+			if (!matched.get(i) && (isBlank(hm.getPlayerId()) || isBlank(lm.getPlayerId()))
 				&& sameName(hm.getName(), lm.getName()))
 			{
 				return i;
@@ -255,6 +256,11 @@ public class PartyHistoryService
 	private static boolean sameName(String a, String b)
 	{
 		return a != null && b != null && a.trim().equalsIgnoreCase(b.trim());
+	}
+
+	private static boolean isBlank(String s)
+	{
+		return s == null || s.trim().isEmpty();
 	}
 
 	/** The party's initial roster as present members joined at {@code now}; empty when the ad had none. */
@@ -270,7 +276,11 @@ public class PartyHistoryService
 		{
 			if (m != null)
 			{
-				out.add(new HistoryMember(m.getName(), m.getAccountHash(), now, 0));
+				// The board ad's member list doesn't carry a playerId yet (only the live roster does), so
+				// this row starts with neither identifier and picks one up in mergeRoster once the live
+				// roster reports it. accountHash is deliberately not read here even though the wire form
+				// still carries it -- see HistoryMember's class doc.
+				out.add(new HistoryMember(m.getName(), 0L, now, 0, m.getPlayerId()));
 			}
 		}
 		return out;
@@ -339,6 +349,7 @@ public class PartyHistoryService
 	{
 		entries.clear();
 		Data data = store.read();
+		boolean scrubbed = false;
 		if (data != null && data.entries != null)
 		{
 			for (PartyHistoryEntry e : data.entries)
@@ -346,12 +357,20 @@ public class PartyHistoryService
 				if (e != null)
 				{
 					migrate(e);
+					scrubbed |= scrubAccountHash(e);
 					entries.add(e);
 				}
 			}
 		}
 		// Honour a limit that may have been lowered since the file was written.
 		trim();
+		if (scrubbed)
+		{
+			// Rewrite immediately rather than waiting for the next party: the whole point is that the raw
+			// hash stops sitting on disk, and a user who never parties again would otherwise keep it there
+			// forever despite this running.
+			save();
+		}
 	}
 
 	/** Bring a loaded entry up to the current shape: v1 rows get {@code joinedAt} stamped from the party start. */
@@ -369,6 +388,33 @@ public class PartyHistoryService
 				m.setJoinedAt(entry.getJoinedAt());
 			}
 		}
+	}
+
+	/**
+	 * Clear {@link HistoryMember#getAccountHash()} on every row that still has one, for a file written
+	 * before {@link HistoryMember#getPlayerId()} existed. The raw account hash of everyone in the party
+	 * never needed to sit on disk indefinitely, and this is what removes it from files that predate the
+	 * field that replaced it -- new rows never carry one in the first place.
+	 *
+	 * @return whether anything was cleared, so the caller knows to resave.
+	 */
+	private static boolean scrubAccountHash(PartyHistoryEntry entry)
+	{
+		List<HistoryMember> members = entry.getMembers();
+		if (members == null)
+		{
+			return false;
+		}
+		boolean changed = false;
+		for (HistoryMember m : members)
+		{
+			if (m != null && m.getAccountHash() != 0)
+			{
+				m.setAccountHash(0);
+				changed = true;
+			}
+		}
+		return changed;
 	}
 
 	private void save()

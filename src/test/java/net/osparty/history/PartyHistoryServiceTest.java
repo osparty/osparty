@@ -186,18 +186,44 @@ public class PartyHistoryServiceTest
 	}
 
 	@Test
-	public void updateRosterUpgradesUnknownHashByName()
+	public void updateRosterUpgradesUnknownPlayerIdByName()
 	{
 		PartyHistoryService history = open();
 		Advertisement p = ad("1", "cox", "Alice");
-		p.setMembers(Arrays.asList(new Member("Alice", 1L), new Member("Bob", 0L))); // Bob's hash not yet synced
+		// Bob's playerId not yet synced.
+		p.setMembers(Arrays.asList(new Member("Alice", 0L, null, "pid-alice"), new Member("Bob", 0L, null, null)));
 		history.record(p, true);
 
-		// Same Bob, now with a resolved hash — matched by name, not recorded as a second member.
-		history.updateRoster("1", Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L)));
+		// Same Bob, now with a resolved id — matched by name, not recorded as a second member.
+		history.updateRoster("1",
+			Arrays.asList(new Member("Alice", 0L, null, "pid-alice"), new Member("Bob", 0L, null, "pid-bob")));
 		PartyHistoryEntry entry = history.list().get(0);
 		assertEquals("no duplicate Bob", 2, entry.getMembers().size());
-		assertEquals("hash upgraded", 2L, byName(entry, "Bob").getAccountHash());
+		assertEquals("id upgraded", "pid-bob", byName(entry, "Bob").getPlayerId());
+	}
+
+	/**
+	 * A row from before {@code playerId} existed still carries {@code accountHash} on disk. Opening the
+	 * service must clear it immediately, in the same file, rather than only once something happens to
+	 * rewrite the row later.
+	 */
+	@Test
+	public void openingTheServiceScrubsAccountHashFromAnOldFile() throws Exception
+	{
+		File historyFile = new File(dir, "history.json");
+		Files.writeString(historyFile.toPath(), "{"
+			+ "\"version\":2,"
+			+ "\"entries\":[{"
+			+ "\"partyId\":\"1\",\"activity\":\"cox\",\"host\":\"Alice\",\"hosted\":true,"
+			+ "\"size\":1,\"capacity\":5,\"hardMode\":false,\"invocation\":0,\"joinedAt\":1000,"
+			+ "\"members\":[{\"name\":\"Alice\",\"accountHash\":424242,\"joinedAt\":1000,\"leftAt\":0}]"
+			+ "}]}");
+
+		PartyHistoryEntry inMemory = open().list().get(0);
+		assertEquals("cleared in memory on load", 0L, byName(inMemory, "Alice").getAccountHash());
+
+		String onDisk = Files.readString(historyFile.toPath());
+		assertFalse("cleared on disk, not just in memory", onDisk.contains("424242"));
 	}
 
 	@Test

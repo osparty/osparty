@@ -288,6 +288,8 @@ public class LivePartyChannel implements OSPartySocket.LiveChannel {
 		public long memberId;
 		public String name;
 		public long accountHash;
+		/** This member's public, non-reversible id -- stable across a rename, safe to store or show. */
+		public String playerId;
 		public String status;
 		public String role;
 		public boolean learner;
