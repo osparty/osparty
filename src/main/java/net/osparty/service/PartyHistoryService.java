@@ -276,10 +276,10 @@ public class PartyHistoryService
 		{
 			if (m != null)
 			{
-				// The board ad's member list doesn't carry a playerId yet (only the live roster does), so
-				// this row starts with neither identifier and picks one up in mergeRoster once the live
-				// roster reports it. accountHash is deliberately not read here even though the wire form
-				// still carries it -- see HistoryMember's class doc.
+				// The board ad's member list carries a playerId directly now, so this is usually already
+				// populated; mergeRoster still backfills it from the live roster for a party snapshotted
+				// from an older server, or one where it hasn't synced yet. accountHash is deliberately not
+				// read here even though the wire form still carries it -- see HistoryMember's class doc.
 				out.add(new HistoryMember(m.getName(), 0L, now, 0, m.getPlayerId()));
 			}
 		}
