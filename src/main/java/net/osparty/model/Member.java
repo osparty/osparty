@@ -13,10 +13,11 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * One party member as carried in the API party ad: the display {@code name} plus the
- * stable {@code accountHash} used to recognise the player across name changes (block /
- * favourite matching). {@code accountHash} is {@code 0} when the reporting client is an
- * older version that didn't send one.
+ * One party member: the display {@code name}, the stable {@code accountHash} (used for block /
+ * favourite matching where nothing better is available), and {@code playerId} — the account's public,
+ * non-reversible id, safe to persist or show and stable across a rename, unlike {@code accountHash}.
+ * {@code accountHash} is {@code 0} and {@code playerId} is {@code null} when the source didn't send one:
+ * an older client, or a wire shape (the board ad's member list) that doesn't yet carry it.
  *
  * <p>{@code badges} are server-asserted Discord-role badges (e.g. {@code "developer"}) the
  * API stamps onto broadcast ads for linked members; {@code null} when the member has none.
@@ -36,10 +37,16 @@ public class Member
 	private String name;
 	private long accountHash;
 	private List<String> badges;
+	private String playerId;
 
 	public Member(String name, long accountHash)
 	{
-		this(name, accountHash, null);
+		this(name, accountHash, null, null);
+	}
+
+	public Member(String name, long accountHash, List<String> badges)
+	{
+		this(name, accountHash, badges, null);
 	}
 
 	public static final class MemberAdapter extends TypeAdapter<Member>
@@ -85,6 +92,7 @@ public class Member
 			String name = null;
 			long accountHash = 0L;
 			List<String> badges = null;
+			String playerId = null;
 			in.beginObject();
 			while (in.hasNext())
 			{
@@ -110,12 +118,20 @@ public class Member
 						}
 						in.endArray();
 						break;
+					case "playerId":
+						if (in.peek() == JsonToken.NULL)
+						{
+							in.nextNull();
+							break;
+						}
+						playerId = in.nextString();
+						break;
 					default:
 						in.skipValue();
 				}
 			}
 			in.endObject();
-			return new Member(name, accountHash, badges);
+			return new Member(name, accountHash, badges, playerId);
 		}
 	}
 }

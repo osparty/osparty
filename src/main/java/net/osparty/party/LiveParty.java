@@ -1156,7 +1156,10 @@ public class LiveParty implements LivePartyBackend {
 			if (m.getStatus() == PartyStatus.PENDING || m.getData() == null || isUnresolvedName(m.getName())) {
 				continue;
 			}
-			out.add(new Member(m.getName(), m.getData().getAccountHash()));
+			// Through the roster fallback rather than off the live snapshot: the snapshot no longer carries
+			// an account hash, and the server-built roster is where it comes from now.
+			out.add(new Member(m.getName(), accountHashForMember(m.getMemberId()), null,
+				playerIdForMember(m.getMemberId())));
 		}
 		return out;
 	}
@@ -1178,6 +1181,21 @@ public class LiveParty implements LivePartyBackend {
 			}
 		}
 		return 0L;
+	}
+
+	/**
+	 * Server-derived and roster-only: unlike {@link #accountHashForMember}, this has no live-snapshot
+	 * fallback, because {@code playerId} never rode the live payload -- it changes only when the roster
+	 * does, so there was nothing to gain by duplicating it on every tick.
+	 */
+	@Override
+	public String playerIdForMember(long memberId) {
+		for (LivePartyChannel.RosterEntry entry : rosterEntries) {
+			if (entry.memberId == memberId) {
+				return entry.playerId;
+			}
+		}
+		return null;
 	}
 
 	@Override

@@ -25,7 +25,16 @@ public class PlayerUpdate
 	private long memberId;
 
 	private String name;
-	/** The member's stable accountHash; {@code 0} when unknown (older client). Used for block/favourite matching. */
+	/**
+	 * The member's stable accountHash, and no longer sent by this client -- {@code 0} on anything we
+	 * produce, non-zero only on a snapshot from a plugin old enough to still include it.
+	 *
+	 * <p>It was removed because this whole object is relayed verbatim to everyone attached to the party,
+	 * applicants included, which made every member's account hash readable by anyone who knew the room key.
+	 * The hash is what a client asserts to claim an identity, so a harvested one is a squattable account.
+	 * The field stays for the clients still sending it; account hashes now come from the server-built
+	 * roster, which is not shown to applicants (see {@code LiveParty.accountHashForMember}).
+	 */
 	private long accountHash;
 	private int combatLevel;
 

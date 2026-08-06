@@ -50,6 +50,15 @@ public class OSPartySocket extends WebSocketListener
 	private final OkHttpClient client;
 	private final Gson gson;
 	private final HttpUrl base;
+	/** Credentials this machine holds, one per character. Read on every connect, written on enrolment. */
+	private final net.osparty.store.CredentialStore credentials;
+	/**
+	 * The character whose credential this connection presents. Zero until the plugin reports one, which is
+	 * the ordinary state on a client that has not logged in yet.
+	 */
+	private volatile long accountHash;
+	/** Sent as {@code X-OSParty-Client} so the service can see the deployed spread instead of guessing. */
+	private static final String VERSION = net.osparty.ui.OSPartyPanel.VERSION;
 
 	/**
 	 * The pod the live party wants this connection on, or null for "anywhere".
@@ -137,8 +146,9 @@ public class OSPartySocket extends WebSocketListener
 	private volatile String publishedNode;
 
 	@Inject
-	OSPartySocket(OkHttpClient httpClient, Gson gson)
+	OSPartySocket(OkHttpClient httpClient, Gson gson, net.osparty.store.CredentialStore credentials)
 	{
+		this.credentials = credentials;
 		// A WebSocket must not inherit the REST read timeout; the ping keeps it alive.
 		this.client = httpClient.newBuilder()
 			.pingInterval(Duration.ofSeconds(20))
@@ -241,7 +251,29 @@ public class OSPartySocket extends WebSocketListener
 		{
 			return;
 		}
-		webSocket = client.newWebSocket(new Request.Builder().url(currentUrl()).build(), this);
+		Request.Builder request = new Request.Builder().url(currentUrl());
+		// The version rides every connection so the service can see what is actually deployed rather than
+		// guess. Released plugins update on their own schedule and there is no way to ask them.
+		request.header("X-OSParty-Client", VERSION);
+		// The credential for whoever is logged in, when this machine has one. Sent on the upgrade rather
+		// than in a frame so identity is settled before the connection carries anything, and as a header
+		// rather than a query parameter so it stays out of proxy logs. Every reconnect path funnels through
+		// here, so this re-presents itself for free.
+		String token = credentials.get(accountHash);
+		if (token != null)
+		{
+			request.header("X-OSParty-Auth", token);
+		}
+		webSocket = client.newWebSocket(request.build(), this);
+	}
+
+	/**
+	 * The account this connection should present a credential for. Set by the plugin as the logged-in
+	 * character changes; a reconnect after a switch therefore carries the new character's credential.
+	 */
+	public synchronized void setAccountHash(long accountHash)
+	{
+		this.accountHash = accountHash;
 	}
 
 	// --- Live-party channel ---
@@ -876,7 +908,33 @@ public class OSPartySocket extends WebSocketListener
 			case "inviteAck":
 				completeInviteAck(frame.id, frame.delivered);
 				break;
-			default:
+		case "authIssued":
+			handleAuthIssued(frame.token);
+			break;
+		case "couplingRequired":
+			handleCouplingRequired(frame.accountHash, frame.code);
+			break;
+		case "couplingCode":
+			handleCouplingCode(frame.accountHash, frame.code);
+			break;
+		case "couplingResult":
+			handleCouplingResult(frame.accountHash, frame.success);
+			break;
+		case "couplingUnavailable":
+			// Asked to couple, but no machine of ours was online to display a code. Reported as a failure
+			// rather than left silent, or the panel waits forever on a number nothing ever showed.
+			handleCouplingResult(frame.accountHash, Boolean.FALSE);
+			break;
+		case "couplingAccepted":
+			handleCouplingAccepted(frame.accountHash);
+			break;
+		case "devices":
+			handleDevices(frame.devices);
+			break;
+		case "deviceRevoked":
+			handleDeviceRevoked(frame.deviceId, Boolean.TRUE.equals(frame.success));
+			break;
+		default:
 				break;
 		}
 	}
@@ -1089,6 +1147,182 @@ public class OSPartySocket extends WebSocketListener
 			lastSentPatch = null;
 			publishedNode = null;
 			notifyHostedGone(id);
+		}
+	}
+
+	/**
+	 * Keep the credential the server just issued for the logged-in character.
+	 *
+	 * <p>Sent once and never again -- the server keeps only a digest of it -- so losing this write means
+	 * enrolling afresh on the next connection rather than being locked out. It is not applied to the live
+	 * connection: this one already carries the identity that earned the credential, and the next connect
+	 * picks it up from the store.
+	 */
+	private void handleAuthIssued(String token)
+	{
+		long account = accountHash;
+		if (token == null || token.isEmpty() || !net.osparty.store.PlayerFlag.isKnown(account))
+		{
+			return;
+		}
+		credentials.put(account, token);
+		log.debug("Party socket: stored an OSParty credential for this character");
+	}
+
+	private volatile Consumer<CouplingRequiredEvent> onCouplingRequired;
+	private volatile Consumer<CouplingCodeEvent> onCouplingCode;
+	private volatile Consumer<CouplingResultEvent> onCouplingResult;
+	private volatile Consumer<Long> onCouplingAccepted;
+
+	public void setOnCouplingRequired(Consumer<CouplingRequiredEvent> callback)
+	{
+		this.onCouplingRequired = callback;
+	}
+
+	public void setOnCouplingCode(Consumer<CouplingCodeEvent> callback)
+	{
+		this.onCouplingCode = callback;
+	}
+
+	public void setOnCouplingResult(Consumer<CouplingResultEvent> callback)
+	{
+		this.onCouplingResult = callback;
+	}
+
+	public void setOnCouplingAccepted(Consumer<Long> callback)
+	{
+		this.onCouplingAccepted = callback;
+	}
+
+	private void handleCouplingRequired(Long accountHash, String code)
+	{
+		Consumer<CouplingRequiredEvent> cb = onCouplingRequired;
+		if (cb != null)
+		{
+			cb.accept(new CouplingRequiredEvent(accountHash, code));
+		}
+	}
+
+	private void handleCouplingCode(Long accountHash, String code)
+	{
+		Consumer<CouplingCodeEvent> cb = onCouplingCode;
+		if (cb != null)
+		{
+			cb.accept(new CouplingCodeEvent(accountHash, code));
+		}
+	}
+
+	private void handleCouplingResult(Long accountHash, Boolean success)
+	{
+		Consumer<CouplingResultEvent> cb = onCouplingResult;
+		if (cb != null)
+		{
+			cb.accept(new CouplingResultEvent(accountHash, success));
+		}
+	}
+
+	/**
+	 * Another machine has just joined this account. A notice, not a loss: coupling adds a machine and this
+	 * one keeps its credential. Surfaced anyway, because the screen the code was read off is the one place
+	 * somebody who did not expect it would notice.
+	 */
+	private void handleCouplingAccepted(Long accountHash)
+	{
+		Consumer<Long> cb = onCouplingAccepted;
+		if (cb != null)
+		{
+			cb.accept(accountHash);
+		}
+	}
+
+	public void couplingConfirm(long accountHash, String code)
+	{
+		if (!connected)
+		{
+			return;
+		}
+		send(gson.toJson(new CouplingConfirmFrame(accountHash, code)));
+	}
+
+	// --- Device management ---
+
+	/** One machine currently entitled to speak for the local account, as reported by {@link #listDevices}. */
+	public static final class DeviceInfo
+	{
+		/** The token's stored digest. Opaque to the client; authenticates nothing on its own — see the server-side doc. */
+		public final String id;
+		public final String label;
+		public final long issuedAt;
+		public final long lastSeenAt;
+
+		DeviceInfo(String id, String label, long issuedAt, long lastSeenAt)
+		{
+			this.id = id;
+			this.label = label;
+			this.issuedAt = issuedAt;
+			this.lastSeenAt = lastSeenAt;
+		}
+	}
+
+	private volatile Consumer<List<DeviceInfo>> pendingDeviceList;
+	private final Map<String, Consumer<Boolean>> pendingRevokes = new ConcurrentHashMap<>();
+
+	/**
+	 * List the machines currently entitled to speak for the local account. {@code onDevices} gets the list,
+	 * or an empty one if the socket is down or the server refuses (not authenticated — nothing to list).
+	 */
+	public void listDevices(Consumer<List<DeviceInfo>> onDevices)
+	{
+		if (!connected)
+		{
+			onDevices.accept(java.util.List.of());
+			return;
+		}
+		pendingDeviceList = onDevices;
+		send(gson.toJson(new TypedFrame("listDevices")));
+	}
+
+	/**
+	 * Withdraw one device by the id {@link #listDevices} reported for it. {@code onResult} gets whether it
+	 * actually happened — false for an id that was never valid, already gone, or belonged to another
+	 * account (which cannot occur from this client, since ids only ever come from your own device list).
+	 */
+	public void revokeDevice(String deviceId, Consumer<Boolean> onResult)
+	{
+		if (deviceId == null || !connected)
+		{
+			onResult.accept(false);
+			return;
+		}
+		pendingRevokes.put(deviceId, onResult);
+		send(gson.toJson(new RevokeDeviceFrame(deviceId)));
+	}
+
+	private void handleDevices(List<DeviceFrameEntry> devices)
+	{
+		Consumer<List<DeviceInfo>> cb = pendingDeviceList;
+		pendingDeviceList = null;
+		if (cb == null)
+		{
+			return;
+		}
+		List<DeviceInfo> out = new ArrayList<>();
+		if (devices != null)
+		{
+			for (DeviceFrameEntry d : devices)
+			{
+				out.add(new DeviceInfo(d.id, d.label, d.issuedAt, d.lastSeenAt));
+			}
+		}
+		cb.accept(out);
+	}
+
+	private void handleDeviceRevoked(String deviceId, boolean success)
+	{
+		Consumer<Boolean> cb = deviceId == null ? null : pendingRevokes.remove(deviceId);
+		if (cb != null)
+		{
+			cb.accept(success);
 		}
 	}
 
@@ -1413,6 +1647,19 @@ public class OSPartySocket extends WebSocketListener
 		String from;
 		// "inviteAck" frame: whether the invite reached the target's client.
 		Boolean delivered;
+		// "authIssued" frame: the credential minted for this character on this machine. Delivered exactly
+		// once -- the server keeps only its digest -- so it is stored on arrival or lost.
+		String token;
+		// "authIssued" frame: the public id this character is shown to other players under.
+		String playerId;
+		// "couplingRequired"/"couplingCode" frame: the six-digit code.
+		String code;
+		// "couplingResult" frame: whether the coupling succeeded.
+		Boolean success;
+		// "devices" frame: the caller's own devices.
+		List<DeviceFrameEntry> devices;
+		// "revokeDevice"/"deviceRevoked" frame: the target device's id (a token digest, not a secret).
+		String deviceId;
 	}
 
 	// Outbound frame shapes (Gson omits null fields, so a patch carries only what's set).
@@ -1627,6 +1874,90 @@ public class OSPartySocket extends WebSocketListener
 		{
 			this.onUrl = onUrl;
 			this.onError = onError;
+		}
+	}
+
+	/** Outbound coupling code confirmation. */
+	/** Bare request carrying only its type: {@code listDevices}. */
+	private static final class TypedFrame
+	{
+		final String type;
+
+		TypedFrame(String type)
+		{
+			this.type = type;
+		}
+	}
+
+	private static final class RevokeDeviceFrame
+	{
+		final String type = "revokeDevice";
+		final String deviceId;
+
+		RevokeDeviceFrame(String deviceId)
+		{
+			this.deviceId = deviceId;
+		}
+	}
+
+	/** One row of a {@code devices} response. */
+	private static final class DeviceFrameEntry
+	{
+		String id;
+		String label;
+		long issuedAt;
+		long lastSeenAt;
+	}
+
+	private static final class CouplingConfirmFrame
+	{
+		final String type = "couplingConfirm";
+		final long accountHash;
+		final String code;
+
+		CouplingConfirmFrame(long accountHash, String code)
+		{
+			this.accountHash = accountHash;
+			this.code = code;
+		}
+	}
+
+	/** Delivered when the server says a coupling code is needed. */
+	public static final class CouplingRequiredEvent
+	{
+		public final long accountHash;
+		public final String code;
+
+		public CouplingRequiredEvent(long accountHash, String code)
+		{
+			this.accountHash = accountHash;
+			this.code = code;
+		}
+	}
+
+	/** Delivered to the incumbent when a challenger requests coupling. */
+	public static final class CouplingCodeEvent
+	{
+		public final long accountHash;
+		public final String code;
+
+		public CouplingCodeEvent(long accountHash, String code)
+		{
+			this.accountHash = accountHash;
+			this.code = code;
+		}
+	}
+
+	/** Delivered after the challenger submits a coupling code. */
+	public static final class CouplingResultEvent
+	{
+		public final long accountHash;
+		public final boolean success;
+
+		public CouplingResultEvent(long accountHash, boolean success)
+		{
+			this.accountHash = accountHash;
+			this.success = success;
 		}
 	}
 }
