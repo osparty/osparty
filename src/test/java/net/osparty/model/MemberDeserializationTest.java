@@ -57,4 +57,16 @@ public class MemberDeserializationTest
 		String without = gson.toJson(new Member("x", 1L));
 		assertFalse(without.contains("badges"));
 	}
+
+	@Test
+	public void readsPlayerIdFromMembers()
+	{
+		String json = "{\"id\":\"p4\",\"host\":\"x\","
+			+ "\"members\":[{\"name\":\"x\",\"accountHash\":1,\"playerId\":\"abc123\"},"
+			+ "{\"name\":\"y\",\"accountHash\":2}]}";
+		Advertisement ad = gson.fromJson(json, Advertisement.class);
+
+		assertEquals("abc123", ad.getMembers().get(0).getPlayerId());
+		assertNull(ad.getMembers().get(1).getPlayerId());
+	}
 }

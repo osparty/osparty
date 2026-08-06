@@ -92,6 +92,7 @@ public class Member
 			String name = null;
 			long accountHash = 0L;
 			List<String> badges = null;
+			String playerId = null;
 			in.beginObject();
 			while (in.hasNext())
 			{
@@ -117,12 +118,20 @@ public class Member
 						}
 						in.endArray();
 						break;
+					case "playerId":
+						if (in.peek() == JsonToken.NULL)
+						{
+							in.nextNull();
+							break;
+						}
+						playerId = in.nextString();
+						break;
 					default:
 						in.skipValue();
 				}
 			}
 			in.endObject();
-			return new Member(name, accountHash, badges);
+			return new Member(name, accountHash, badges, playerId);
 		}
 	}
 }
