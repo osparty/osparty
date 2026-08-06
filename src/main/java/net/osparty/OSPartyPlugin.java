@@ -501,7 +501,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			this::getAccountType, killcountService, skillIconManager, this::getMapRegions,
 			this::regionForWorld, this::getCoxLayout, configManager, gson,
 			worldPinger, this::worldAddressForNum, this::getFriendNames, favoritesService, blockListService,
-			this::getAccountHash, spriteManager, partyHistoryService, message -> chat(message, true));
+			this::getAccountHash, spriteManager, partyHistoryService, message -> chat(message, true),
+			() -> net.osparty.ui.DeviceManagerDialog.open(panel, socket));
 
 		navIcon = ImageUtil.loadImageResource(getClass(), "panel_icon.png");
 		buildNavButtons();

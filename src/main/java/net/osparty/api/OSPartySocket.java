@@ -928,6 +928,12 @@ public class OSPartySocket extends WebSocketListener
 		case "couplingAccepted":
 			handleCouplingAccepted(frame.accountHash);
 			break;
+		case "devices":
+			handleDevices(frame.devices);
+			break;
+		case "deviceRevoked":
+			handleDeviceRevoked(frame.deviceId, Boolean.TRUE.equals(frame.success));
+			break;
 		default:
 				break;
 		}
@@ -1236,6 +1242,88 @@ public class OSPartySocket extends WebSocketListener
 			return;
 		}
 		send(gson.toJson(new CouplingConfirmFrame(accountHash, code)));
+	}
+
+	// --- Device management ---
+
+	/** One machine currently entitled to speak for the local account, as reported by {@link #listDevices}. */
+	public static final class DeviceInfo
+	{
+		/** The token's stored digest. Opaque to the client; authenticates nothing on its own — see the server-side doc. */
+		public final String id;
+		public final String label;
+		public final long issuedAt;
+		public final long lastSeenAt;
+
+		DeviceInfo(String id, String label, long issuedAt, long lastSeenAt)
+		{
+			this.id = id;
+			this.label = label;
+			this.issuedAt = issuedAt;
+			this.lastSeenAt = lastSeenAt;
+		}
+	}
+
+	private volatile Consumer<List<DeviceInfo>> pendingDeviceList;
+	private final Map<String, Consumer<Boolean>> pendingRevokes = new ConcurrentHashMap<>();
+
+	/**
+	 * List the machines currently entitled to speak for the local account. {@code onDevices} gets the list,
+	 * or an empty one if the socket is down or the server refuses (not authenticated — nothing to list).
+	 */
+	public void listDevices(Consumer<List<DeviceInfo>> onDevices)
+	{
+		if (!connected)
+		{
+			onDevices.accept(java.util.List.of());
+			return;
+		}
+		pendingDeviceList = onDevices;
+		send(gson.toJson(new TypedFrame("listDevices")));
+	}
+
+	/**
+	 * Withdraw one device by the id {@link #listDevices} reported for it. {@code onResult} gets whether it
+	 * actually happened — false for an id that was never valid, already gone, or belonged to another
+	 * account (which cannot occur from this client, since ids only ever come from your own device list).
+	 */
+	public void revokeDevice(String deviceId, Consumer<Boolean> onResult)
+	{
+		if (deviceId == null || !connected)
+		{
+			onResult.accept(false);
+			return;
+		}
+		pendingRevokes.put(deviceId, onResult);
+		send(gson.toJson(new RevokeDeviceFrame(deviceId)));
+	}
+
+	private void handleDevices(List<DeviceFrameEntry> devices)
+	{
+		Consumer<List<DeviceInfo>> cb = pendingDeviceList;
+		pendingDeviceList = null;
+		if (cb == null)
+		{
+			return;
+		}
+		List<DeviceInfo> out = new ArrayList<>();
+		if (devices != null)
+		{
+			for (DeviceFrameEntry d : devices)
+			{
+				out.add(new DeviceInfo(d.id, d.label, d.issuedAt, d.lastSeenAt));
+			}
+		}
+		cb.accept(out);
+	}
+
+	private void handleDeviceRevoked(String deviceId, boolean success)
+	{
+		Consumer<Boolean> cb = deviceId == null ? null : pendingRevokes.remove(deviceId);
+		if (cb != null)
+		{
+			cb.accept(success);
+		}
 	}
 
 	private void handleError(String id, String detail)
@@ -1568,6 +1656,10 @@ public class OSPartySocket extends WebSocketListener
 		String code;
 		// "couplingResult" frame: whether the coupling succeeded.
 		Boolean success;
+		// "devices" frame: the caller's own devices.
+		List<DeviceFrameEntry> devices;
+		// "revokeDevice"/"deviceRevoked" frame: the target device's id (a token digest, not a secret).
+		String deviceId;
 	}
 
 	// Outbound frame shapes (Gson omits null fields, so a patch carries only what's set).
@@ -1786,6 +1878,37 @@ public class OSPartySocket extends WebSocketListener
 	}
 
 	/** Outbound coupling code confirmation. */
+	/** Bare request carrying only its type: {@code listDevices}. */
+	private static final class TypedFrame
+	{
+		final String type;
+
+		TypedFrame(String type)
+		{
+			this.type = type;
+		}
+	}
+
+	private static final class RevokeDeviceFrame
+	{
+		final String type = "revokeDevice";
+		final String deviceId;
+
+		RevokeDeviceFrame(String deviceId)
+		{
+			this.deviceId = deviceId;
+		}
+	}
+
+	/** One row of a {@code devices} response. */
+	private static final class DeviceFrameEntry
+	{
+		String id;
+		String label;
+		long issuedAt;
+		long lastSeenAt;
+	}
+
 	private static final class CouplingConfirmFrame
 	{
 		final String type = "couplingConfirm";

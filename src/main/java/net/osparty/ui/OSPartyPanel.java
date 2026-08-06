@@ -97,6 +97,7 @@ public class OSPartyPanel extends PluginPanel
 	private final PartyState partyState;
 	private final LivePartyBackend liveParty;
 	private final BoardService boardService;
+	private final Runnable openDeviceManager;
 	/** The backend party we're in (host or member), mirrored for off-EDT reads (invite menu); null when none. */
 	private volatile Advertisement contextAd;
 	/** Run when the side panel is opened (used to stop the sidebar invite blink). */
@@ -167,7 +168,8 @@ public class OSPartyPanel extends PluginPanel
 		WorldPinger worldPinger, IntFunction<String> worldAddressResolver,
 		Supplier<Set<String>> friendNamesSupplier, FavoritesService favoritesService,
 		BlockListService blockListService, LongSupplier accountHashSupplier,
-		SpriteManager spriteManager, PartyHistoryService historyService, Consumer<String> gameMessage)
+		SpriteManager spriteManager, PartyHistoryService historyService, Consumer<String> gameMessage,
+		Runnable openDeviceManager)
 	{
 		super(false);
 
@@ -176,6 +178,7 @@ public class OSPartyPanel extends PluginPanel
 		this.accountHashSupplier = accountHashSupplier;
 		this.gameMessage = gameMessage;
 		this.historyService = historyService;
+		this.openDeviceManager = openDeviceManager;
 		this.partyState = new PartyState(configManager);
 		this.hostTransferHandler = new HostTransferHandler(liveParty, boardService, partyState,
 			playerNameSupplier, accountTypeSupplier, gameMessage);
@@ -307,6 +310,7 @@ public class OSPartyPanel extends PluginPanel
 		row1.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		row1.add(linkButton("GitHub", "Open the OSParty GitHub page", "github.png", GITHUB_URL));
 		row1.add(linkButton("Discord", "Open the OSParty Discord", "discord.png", DISCORD_URL));
+		row1.add(devicesButton());
 
 		JPanel row2 = new JPanel(new BorderLayout());
 		row2.setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -341,6 +345,24 @@ public class OSPartyPanel extends PluginPanel
 	}
 
 	/** A borderless icon button opening {@code url}, falling back to a text label when the icon is missing. */
+	/**
+	 * Plain text rather than {@link #linkButton}'s icon style: this opens a dialog in-client, not a browser
+	 * tab, and looking like the other two would suggest it does the same thing.
+	 */
+	private JButton devicesButton()
+	{
+		JButton button = new JButton("Devices");
+		button.setToolTipText("See and manage the devices signed in to your OSParty account");
+		button.setFocusPainted(false);
+		button.setContentAreaFilled(false);
+		button.setBorder(BorderFactory.createEmptyBorder(0, 4, 0, 4));
+		button.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		button.setFont(FontManager.getRunescapeSmallFont());
+		button.setCursor(new Cursor(Cursor.HAND_CURSOR));
+		button.addActionListener(e -> openDeviceManager.run());
+		return button;
+	}
+
 	private JButton linkButton(String text, String tooltip, String iconFile, String url)
 	{
 		JButton button = new JButton();
