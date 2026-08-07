@@ -32,12 +32,15 @@ import net.runelite.client.ui.FontManager;
 public final class DeviceManagerDialog extends JDialog
 {
 	private final OSPartySocket socket;
+	private final AccountRecoveryController recovery;
 	private final JPanel rows = new JPanel();
+	private final JLabel codesLabel = new JLabel();
 
-	private DeviceManagerDialog(Component parent, OSPartySocket socket)
+	private DeviceManagerDialog(Component parent, OSPartySocket socket, AccountRecoveryController recovery)
 	{
 		super(SwingUtilities.getWindowAncestor(parent), "OSParty — Devices", ModalityType.MODELESS);
 		this.socket = socket;
+		this.recovery = recovery;
 
 		rows.setLayout(new BoxLayout(rows, BoxLayout.Y_AXIS));
 		rows.setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -57,8 +60,9 @@ public final class DeviceManagerDialog extends JDialog
 		setLayout(new BorderLayout());
 		add(hint, BorderLayout.NORTH);
 		add(scroll, BorderLayout.CENTER);
+		add(recoveryRow(), BorderLayout.SOUTH);
 		getContentPane().setBackground(ColorScheme.DARK_GRAY_COLOR);
-		setSize(320, 360);
+		setSize(320, 400);
 		setLocationRelativeTo(parent);
 	}
 
@@ -67,14 +71,58 @@ public final class DeviceManagerDialog extends JDialog
 	 * since the round trip is usually well under a second and an empty dialog reads as "you have no devices"
 	 * for the moment before the reply lands.
 	 */
-	public static void open(Component parent, OSPartySocket socket)
+	public static void open(Component parent, OSPartySocket socket, AccountRecoveryController recovery)
 	{
+		// Nothing here can be answered without a signed-in connection, and the server refuses the request
+		// rather than returning an empty list -- so without this the button appeared to do nothing at all.
+		if (!socket.isSignedIn())
+		{
+			recovery.openRecovery();
+			return;
+		}
 		socket.listDevices(devices -> SwingUtilities.invokeLater(() ->
 		{
-			DeviceManagerDialog dialog = new DeviceManagerDialog(parent, socket);
+			DeviceManagerDialog dialog = new DeviceManagerDialog(parent, socket, recovery);
 			dialog.render(devices);
+			dialog.refreshRecoveryCount();
 			dialog.setVisible(true);
 		}));
+	}
+
+	/**
+	 * The recovery-code footer: how many are left, and a way to replace them.
+	 *
+	 * <p>Here rather than in its own dialog because it answers the same question as the list above it --
+	 * "what can get into my account" -- and because the count is the only prompt anyone will ever get to
+	 * notice they have run out.
+	 */
+	private JPanel recoveryRow()
+	{
+		JPanel row = new JPanel(new BorderLayout(6, 0));
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(1, 0, 0, 0, ColorScheme.DARKER_GRAY_COLOR),
+			BorderFactory.createEmptyBorder(8, 8, 8, 8)));
+
+		codesLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		codesLabel.setFont(FontManager.getRunescapeSmallFont());
+		codesLabel.setToolTipText("One-time codes that sign a new device in when no other device can");
+		row.add(codesLabel, BorderLayout.CENTER);
+
+		JButton generate = new JButton("New codes");
+		generate.setFont(FontManager.getRunescapeSmallFont());
+		generate.setToolTipText("Generate a fresh set. Any codes you saved before stop working.");
+		generate.addActionListener(e -> recovery.regenerateRecoveryCodes(this, this::refreshRecoveryCount));
+		row.add(generate, BorderLayout.EAST);
+		return row;
+	}
+
+	private void refreshRecoveryCount()
+	{
+		codesLabel.setText("Recovery codes: …");
+		recovery.requestRecoveryCount(remaining -> codesLabel.setText(remaining == 0
+			? "No recovery codes left"
+			: "Recovery codes: " + remaining + " left"));
 	}
 
 	private void render(List<OSPartySocket.DeviceInfo> devices)

@@ -104,6 +104,15 @@ public class OSPartyPanel extends PluginPanel
 	private volatile Runnable onActivated;
 	/** Run when the side panel is closed (used to restore the normal sidebar icon). */
 	private volatile Runnable onDeactivated;
+	/**
+	 * Shown while this device is not signed in to OSParty.
+	 *
+	 * <p>A banner rather than a dialog because the state can persist for days -- someone whose old PC died
+	 * is not signed in until they do something about it, and interrupting them on every reconnect (which is
+	 * what the first version did) is not a way to tell them that. It sits above the invites so the two never
+	 * fight for the same corner.
+	 */
+	private final JPanel signInBanner;
 	/** Stacked invite banners shown at the top of the panel; keyed by backend party id. EDT only. */
 	private final JPanel invitePanel = buildInvitePanel();
 	private final java.util.Map<String, JPanel> inviteBanners = new java.util.HashMap<>();
@@ -169,7 +178,7 @@ public class OSPartyPanel extends PluginPanel
 		Supplier<Set<String>> friendNamesSupplier, FavoritesService favoritesService,
 		BlockListService blockListService, LongSupplier accountHashSupplier,
 		SpriteManager spriteManager, PartyHistoryService historyService, Consumer<String> gameMessage,
-		Runnable openDeviceManager)
+		Runnable openDeviceManager, Runnable openSignInHelp)
 	{
 		super(false);
 
@@ -179,6 +188,7 @@ public class OSPartyPanel extends PluginPanel
 		this.gameMessage = gameMessage;
 		this.historyService = historyService;
 		this.openDeviceManager = openDeviceManager;
+		this.signInBanner = buildSignInBanner(openSignInHelp);
 		this.partyState = new PartyState(configManager);
 		this.hostTransferHandler = new HostTransferHandler(liveParty, boardService, partyState,
 			playerNameSupplier, accountTypeSupplier, gameMessage);
@@ -285,7 +295,11 @@ public class OSPartyPanel extends PluginPanel
 
 		JPanel north = new JPanel(new BorderLayout());
 		north.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		north.add(invitePanel, BorderLayout.NORTH);
+		JPanel notices = new JPanel(new BorderLayout());
+		notices.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		notices.add(signInBanner, BorderLayout.NORTH);
+		notices.add(invitePanel, BorderLayout.CENTER);
+		north.add(notices, BorderLayout.NORTH);
 		north.add(tabGroup, BorderLayout.CENTER);
 
 		add(north, BorderLayout.NORTH);
@@ -361,6 +375,56 @@ public class OSPartyPanel extends PluginPanel
 		button.setCursor(new Cursor(Cursor.HAND_CURSOR));
 		button.addActionListener(e -> openDeviceManager.run());
 		return button;
+	}
+
+	/**
+	 * The "not signed in" strip.
+	 *
+	 * <p>Says what is actually lost rather than warning in the abstract: browsing and joining keep working
+	 * without a signed-in device, and hosting under this character does not, so that is the sentence.
+	 * Starts hidden — most people are signed in and should never see it.
+	 */
+	private JPanel buildSignInBanner(Runnable openSignInHelp)
+	{
+		JPanel banner = new JPanel(new BorderLayout(6, 0));
+		banner.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		banner.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(0, 2, 0, 0, ColorScheme.PROGRESS_ERROR_COLOR),
+			BorderFactory.createEmptyBorder(6, 6, 6, 6)));
+
+		JLabel message = new JLabel("<html><body style='width:120px'>"
+			+ "Not signed in on this device — you can't host parties as this character."
+			+ "</body></html>");
+		message.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		message.setFont(FontManager.getRunescapeSmallFont());
+		banner.add(message, BorderLayout.CENTER);
+
+		JButton fix = new JButton("Fix");
+		fix.setFont(FontManager.getRunescapeSmallFont());
+		fix.setFocusPainted(false);
+		fix.setToolTipText("See how to sign this device in");
+		fix.addActionListener(e -> openSignInHelp.run());
+		banner.add(fix, BorderLayout.EAST);
+
+		banner.setVisible(false);
+		return banner;
+	}
+
+	/**
+	 * Show or hide the sign-in banner.
+	 *
+	 * <p>Called from the recovery controller on the EDT. Idempotent, because the socket reports the same
+	 * state again on every reconnect and a revalidate per world hop is not free.
+	 */
+	public void setSignedIn(boolean signedIn)
+	{
+		if (signInBanner.isVisible() == !signedIn)
+		{
+			return;
+		}
+		signInBanner.setVisible(!signedIn);
+		signInBanner.revalidate();
+		signInBanner.repaint();
 	}
 
 	private JButton linkButton(String text, String tooltip, String iconFile, String url)
@@ -540,7 +604,8 @@ public class OSPartyPanel extends PluginPanel
 		}
 	}
 
-	private void startDiscordLink()
+	/** Also the "Link Discord too" action offered right after an account's first device signs in. */
+	public void startDiscordLink()
 	{
 		long hash = accountHashSupplier.getAsLong();
 		if (hash == 0 || hash == -1)

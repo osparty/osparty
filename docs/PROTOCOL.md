@@ -105,13 +105,21 @@ server can no longer answer the difference (the gap is too old) it replies with 
 | `listDevices` | (none) | List the credentials/machines entitled to speak for this account |
 | `revokeDevice` | `deviceId` | Withdraw one device by the id `devices` reported for it |
 | `renameDevice` | `deviceId`, `label` | Cosmetic rename of one device |
+| `requestCouplingCode` | `accountHash` | Mint a six-digit code and show it on the account's other signed-in devices. **The only thing that mints one** — a failed sign-in no longer does, or naming an account hash would be enough to put a dialog in front of whoever really owns it |
 | `couplingConfirm` | `accountHash`, `code` | Confirm the six-digit coupling code shown on an incumbent device |
+| `retryAuth` | `accountHash` | Ask the server to attempt sign-in again. `identify` is answered **once per connection per account**, so this is the only way past that — deliberately a user action, since the answer only changes when they do something (typically starting OSParty on the device that holds the account) |
+| `recoveryConfirm` | `accountHash`, `code` | Spend a one-time recovery code to sign this device in. The only route needing neither a second device nor a browser |
+| `issueRecoveryCodes` | (none) | Mint a fresh set of codes, retiring any unspent ones. Signed-in sessions only, and only for their own account |
+| `recoveryStatus` | (none) | How many codes are left. Never returns the codes themselves |
+| `startDiscordRecovery` | `accountHash` | Begin Discord-based recovery; answered with `discordRecoveryUrl` |
+| `discordRecoveryPoll` | `ticket` | Has the browser half finished? Polled because the OAuth callback lands on whichever replica the browser reached, which cannot reach this socket |
 
 Frame shapes: [`OSPartySocket`](../src/main/java/net/osparty/api/OSPartySocket.java#L1765-L2036)
 (`HostFrame`, `UpdateFrame`, `MutateFrame`, `LookupFrame`, `VoiceFrame`, `TransferFrame`,
 `AccountHashFrame`, `BadgeVisibilityFrame`, `KickVoiceFrame`, `ReportFrame`, `VoiceAccessFrame`,
 `IdentifyFrame`, `InviteFrame`, `TypedFrame`, `RevokeDeviceFrame`, `RenameDeviceFrame`,
-`CouplingConfirmFrame`). Gson omits null fields, so a patch or request only carries what's set.
+`CouplingConfirmFrame`, `AccountFrame`, `CodeFrame`, `TicketFrame`). Gson omits null fields, so a patch
+or request only carries what's set.
 
 ### Server → client frames
 
@@ -135,12 +143,15 @@ Frame shapes: [`OSPartySocket`](../src/main/java/net/osparty/api/OSPartySocket.j
 | `presence` | `online` | The current count of connected plugin clients |
 | `invited` | `ad`, `from` | Push: someone invited us to their party |
 | `inviteAck` | `id` (the echoed target name), `delivered` | Whether an outbound `invite` reached the target's client |
-| `authIssued` | `token`, `playerId` | A fresh credential minted for this login; stored once (server keeps only a digest). `playerId` — the account's public, non-reversible id — is carried but currently unread by the client |
-| `couplingRequired` | `accountHash`, `code` | This (new) device must have its code confirmed before it can act |
-| `couplingCode` | `accountHash`, `code` | The code to display, sent to an already-enrolled (incumbent) device |
+| `authIssued` | `token`, `playerId`, `firstDevice`, `codes[]?` | A fresh credential minted for this login; stored once (server keeps only a digest). `playerId` — the account's public, non-reversible id — is carried but currently unread by the client. `codes` rides only the account's **first** credential, is plaintext, and is never obtainable again. **Named `codes`, not `recoveryCodes`:** the plugin reads every frame into one flat class where `recoveryCodes` is already `authFailed`'s boolean, and a list under that name made Gson throw and silently drop the whole frame |
+| `authFailed` | `accountHash`, `reason`, `coupling`, `recoveryCodes`, `discord` | This device could not be signed in, and which ways back in are open. Every flag is server-confirmed, so a route offered here will answer. Sent **at most once per connection per account** — see `retryAuth`. Carries no code and no Discord identity: it goes to a connection that has proved nothing. `coupling` means *a device is online somewhere*, **not** that a code is waiting — nothing is minted until `requestCouplingCode` |
+| `couplingCode` | `accountHash`, `code` | The code to display, sent to an already-enrolled (incumbent) device — on any replica, not just this one |
+| `couplingCodeSent` | `accountHash`, `reached` | Ack of `requestCouplingCode`: how many of the account's devices were shown it. `0` is a real answer, not an error — presence was checked before the request and the last device can go offline in between |
 | `couplingResult` | `accountHash`, `success` | Outcome of a coupling attempt |
-| `couplingUnavailable` | `accountHash` | No incumbent device was online to show a code; surfaced as a failed `couplingResult` rather than left silent |
 | `couplingAccepted` | `accountHash` | Notice to an incumbent device that another machine has just joined the account |
+| `recoveryCodes` | `codes[]?`, `remaining` | Reply to `issueRecoveryCodes` (with `codes`) or `recoveryStatus` (count only) |
+| `recoveryResult` | `success`, `pending`, `detail?` | Outcome of `recoveryConfirm` or `discordRecoveryPoll`. `pending` is what almost every poll sees and is **not** a failure — without it a client cannot tell "not finished" from "refused" |
+| `discordRecoveryUrl` | `url`, `ticket` | Where to send the browser, and the secret this connection polls with. The ticket never travels in the URL, so seeing the URL does not let anyone claim the enrolment |
 | `devices` | `devices[]` (`id`, `label`, `issuedAt`, `lastSeenAt`) | Reply to `listDevices` |
 | `deviceRevoked` | `deviceId`, `success` | Ack of `revokeDevice` |
 | `deviceRenamed` | `deviceId`, `success` | Ack of `renameDevice` |
@@ -255,6 +266,45 @@ Note this `passphrase`/`key` pair is easy to conflate: `passphrase` (also sent o
 here is the **board's** host-only-mutation secret. They are different values with different
 lifetimes; only `passphrase` is ever shown to other players (as the invite code/passphrase on the
 Party tab).
+
+### Signing in, and getting back in
+
+`X-OSParty-Auth` is presented at the handshake, but a machine that has never enrolled has nothing to
+present. That case is settled by the first `identify` on the connection: the server either mints a
+credential (`authIssued`) or explains why it cannot (`authFailed`).
+
+Enrolment is trust-on-first-use, so an account's *first* device enrols with no questions asked and
+every later one has to prove itself. There are three ways it can, and `authFailed` says which are
+actually open right now rather than assuming:
+
+| Route | Frame | Needs | Covers |
+|---|---|---|---|
+| Coupling | `requestCouplingCode` → `couplingConfirm` | A signed-in device **online now** to display a six-digit code | "Both my computers are here" |
+| Recovery code | `recoveryConfirm` | One of the ten codes issued with the account's first credential | "The old PC is gone" |
+| Discord | `startDiscordRecovery` → `discordRecoveryPoll` | A Discord link made *from a signed-in session* | "The old PC is gone and I saved nothing" |
+
+Three properties are load-bearing and easy to break by accident:
+
+- **A code is minted only on request, and reaches every replica.** Two devices belonging to one person land
+  on the same pod about a third of the time (3 replicas, no session affinity), so the code delivery and the
+  "is a device online" check both go through `CouplingBus` over Redis pub/sub rather than sweeping the local
+  connection map. And nothing is minted by a failed sign-in — otherwise naming an account hash was enough to
+  put a code dialog in front of whoever really owned it, repeatedly.
+
+- **`identify` is answered once per connection per account.** It is re-sent on every reconnect, and a
+  device that cannot enrol reconnects on every world hop and every network blip. Answering each one
+  put a modal prompt on the user's screen and a fresh code on their other machine's, repeatedly, for
+  a situation that had not changed. `retryAuth` is the deliberate way past it.
+- **Only a Discord link made by an authenticated session counts for recovery**
+  (`discord_link.verified`). Linking used to accept any account hash a session merely named, so
+  without this an attacker could bind their own Discord account to someone else's hash and then
+  "recover" it. `startDiscordLink` and `unlinkDiscord` therefore both require a signed-in session
+  once the account has a credential.
+
+Recovery codes are Crockford base32 (no I/L/O/U), sixteen characters shown as `XXXX-XXXX-XXXX-XXXX`.
+The server stores only their SHA-256, they are single-use, and they never expire — the day a machine
+dies is not a day anyone schedules. Typed-in codes are normalised before comparison, so `O` for zero
+and `l` for one are accepted.
 
 ### Keep-alive, resume and reconnection
 
