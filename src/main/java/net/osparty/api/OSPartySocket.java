@@ -67,6 +67,9 @@ public class OSPartySocket extends WebSocketListener
 	/** Sent as {@code X-OSParty-Client} so the service can see the deployed spread instead of guessing. */
 	private static final String VERSION = net.osparty.ui.OSPartyPanel.VERSION;
 
+	/** Overrides the device label outright, for a machine that does not resolve or a user who would rather not send its name. */
+	static final String DEVICE_LABEL_PROPERTY = "osparty.deviceLabel";
+
 	/**
 	 * Sent as {@code X-OSParty-Device} so a freshly enrolled credential starts with a real name instead of a
 	 * bare timestamp -- see {@link net.osparty.ui.DeviceManagerDialog}. Best-effort and unverified, same
@@ -83,28 +86,27 @@ public class OSPartySocket extends WebSocketListener
 		{
 			hostname = null;
 		}
-		return deviceLabel(hostname, System.getenv("COMPUTERNAME"), System.getenv("HOSTNAME"));
+		return deviceLabel(System.getProperty(DEVICE_LABEL_PROPERTY), hostname);
 	}
 
 	/**
 	 * The fallback chain on its own, apart from the system calls that feed it, so it can be exercised without
-	 * a real network stack: the local hostname lookup can fail depending on DNS/network config, Windows names
-	 * the machine via {@code COMPUTERNAME} rather than a resolvable hostname, and other platforms sometimes
-	 * only set {@code HOSTNAME}.
+	 * a real network stack: the local hostname lookup can fail depending on DNS/network config.
+	 *
+	 * <p>The override is a system property and not an environment variable because the plugin hub disallows
+	 * {@code System.getenv} outright -- see the {@code osparty.apiUrl} precedent in {@link BoardApiClient}.
+	 * Returning null is a fine outcome: the server names an unlabelled device after its enrolment date, and
+	 * the user can rename it from the device manager either way.
 	 */
-	static String deviceLabel(String hostname, String computerNameEnv, String hostnameEnv)
+	static String deviceLabel(String override, String hostname)
 	{
+		if (override != null && !override.isBlank())
+		{
+			return override.trim();
+		}
 		if (hostname != null && !hostname.isBlank())
 		{
 			return hostname;
-		}
-		if (computerNameEnv != null && !computerNameEnv.isBlank())
-		{
-			return computerNameEnv;
-		}
-		if (hostnameEnv != null && !hostnameEnv.isBlank())
-		{
-			return hostnameEnv;
 		}
 		return null;
 	}
