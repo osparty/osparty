@@ -52,6 +52,8 @@ public class OSPartySocket extends WebSocketListener
 	private final HttpUrl base;
 	/** Credentials this machine holds, one per character. Read on every connect, written on enrolment. */
 	private final net.osparty.store.CredentialStore credentials;
+	/** Frame parse failures already reported, so one that recurs every tick is logged once rather than always. */
+	private final java.util.Set<String> warnedFrames = java.util.concurrent.ConcurrentHashMap.newKeySet();
 	/**
 	 * The character whose credential this connection presents. Zero until the plugin reports one, which is
 	 * the ordinary state on a client that has not logged in yet.
@@ -894,6 +896,18 @@ public class OSPartySocket extends WebSocketListener
 		}
 		catch (Exception e)
 		{
+			// A frame this build cannot read. Between plugin and service versions that is what a protocol
+			// difference looks like, and it is also what a field collision in Frame looks like -- two frame
+			// types using one name for different types makes Gson throw here and take the whole frame with
+			// it. Dropping that in silence is why one presented as a server that had simply stopped
+			// answering: the credential was issued, the row was written, and nothing on this side ran.
+			// Logged once per shape so a client that meets it every tick reports it rather than filling the
+			// log. The service does the same for frames it cannot read.
+			if (warnedFrames.size() < 16 && warnedFrames.add(e.getClass().getName()))
+			{
+				log.warn("Party socket: unreadable frame ({}): {}", e.toString(),
+					text == null || text.length() <= 200 ? text : text.substring(0, 200) + "…");
+			}
 			return;
 		}
 		if (frame == null || frame.type == null)
@@ -980,24 +994,31 @@ public class OSPartySocket extends WebSocketListener
 				completeInviteAck(frame.id, frame.delivered);
 				break;
 		case "authIssued":
-			handleAuthIssued(frame.token);
+			handleAuthIssued(frame.token, frame.codes);
 			break;
-		case "couplingRequired":
-			handleCouplingRequired(frame.accountHash, frame.code);
+		case "authFailed":
+			handleAuthFailed(frame);
 			break;
 		case "couplingCode":
 			handleCouplingCode(frame.accountHash, frame.code);
 			break;
+		case "couplingCodeSent":
+			handleCouplingCodeSent(frame.reached);
+			break;
 		case "couplingResult":
 			handleCouplingResult(frame.accountHash, frame.success);
 			break;
-		case "couplingUnavailable":
-			// Asked to couple, but no machine of ours was online to display a code. Reported as a failure
-			// rather than left silent, or the panel waits forever on a number nothing ever showed.
-			handleCouplingResult(frame.accountHash, Boolean.FALSE);
-			break;
 		case "couplingAccepted":
 			handleCouplingAccepted(frame.accountHash);
+			break;
+		case "recoveryCodes":
+			handleRecoveryCodes(frame.codes, frame.remaining);
+			break;
+		case "recoveryResult":
+			handleRecoveryResult(frame.success, frame.pending, frame.detail);
+			break;
+		case "discordRecoveryUrl":
+			handleDiscordRecoveryUrl(frame.url, frame.ticket);
 			break;
 		case "devices":
 			handleDevices(frame.devices);
@@ -1023,6 +1044,7 @@ public class OSPartySocket extends WebSocketListener
 	public void onClosed(WebSocket socket, int code, String reason)
 	{
 		connected = false;
+		signedIn = false;
 		failAllPending(null);
 		fireLiveClosed();
 		scheduleReconnect();
@@ -1032,6 +1054,7 @@ public class OSPartySocket extends WebSocketListener
 	public void onFailure(WebSocket socket, Throwable t, Response response)
 	{
 		connected = false;
+		signedIn = false;
 		failAllPending(t);
 		if (!closed)
 		{
@@ -1232,7 +1255,7 @@ public class OSPartySocket extends WebSocketListener
 	 * connection: this one already carries the identity that earned the credential, and the next connect
 	 * picks it up from the store.
 	 */
-	private void handleAuthIssued(String token)
+	private void handleAuthIssued(String token, List<String> recoveryCodes)
 	{
 		long account = accountHash;
 		if (token == null || token.isEmpty() || !net.osparty.store.PlayerFlag.isKnown(account))
@@ -1240,22 +1263,82 @@ public class OSPartySocket extends WebSocketListener
 			return;
 		}
 		credentials.put(account, token);
+		signedIn = true;
 		log.debug("Party socket: stored an OSParty credential for this character");
+		Consumer<SignedInEvent> cb = onSignedIn;
+		if (cb != null)
+		{
+			cb.accept(new SignedInEvent(account, recoveryCodes == null ? List.of() : recoveryCodes));
+		}
 	}
 
-	private volatile Consumer<CouplingRequiredEvent> onCouplingRequired;
+	/**
+	 * The server could not sign this device in, and has said which ways back in are open.
+	 *
+	 * <p>Arrives at most once per connection per character: the server will not repeat itself until asked
+	 * with {@link #retryAuth}, because the answer does not change on its own and this used to interrupt the
+	 * user on every world hop.
+	 */
+	private void handleAuthFailed(Frame frame)
+	{
+		signedIn = false;
+		// Whatever this machine was holding for that character, the server did not accept it — either it was
+		// revoked from another device or there never was one. Keeping it would mean presenting a dead
+		// credential on every reconnect forever, and it is the thing standing between here and enrolling
+		// cleanly once the user has recovered.
+		if (frame.accountHash != null)
+		{
+			credentials.clear(frame.accountHash);
+		}
+		Consumer<AuthFailedEvent> cb = onAuthFailed;
+		if (cb != null)
+		{
+			cb.accept(new AuthFailedEvent(frame.accountHash == null ? 0L : frame.accountHash,
+				Boolean.TRUE.equals(frame.coupling),
+				Boolean.TRUE.equals(frame.recoveryCodes),
+				Boolean.TRUE.equals(frame.discord)));
+		}
+	}
+
+	private volatile Consumer<SignedInEvent> onSignedIn;
+	private volatile Consumer<AuthFailedEvent> onAuthFailed;
 	private volatile Consumer<CouplingCodeEvent> onCouplingCode;
+	private volatile Consumer<Integer> onCouplingCodeSent;
 	private volatile Consumer<CouplingResultEvent> onCouplingResult;
 	private volatile Consumer<Long> onCouplingAccepted;
+	/** Whether this connection is speaking for a proved character. Reset whenever the socket goes down. */
+	private volatile boolean signedIn;
 
-	public void setOnCouplingRequired(Consumer<CouplingRequiredEvent> callback)
+	public void setOnSignedIn(Consumer<SignedInEvent> callback)
 	{
-		this.onCouplingRequired = callback;
+		this.onSignedIn = callback;
+	}
+
+	public void setOnAuthFailed(Consumer<AuthFailedEvent> callback)
+	{
+		this.onAuthFailed = callback;
+	}
+
+	/**
+	 * Whether the current connection has proved which character it is.
+	 *
+	 * <p>False covers three different situations that look the same from here -- no credential yet, a
+	 * credential the server no longer honours, and simply not connected. The UI treats them alike because
+	 * the user's next step is the same in all three.
+	 */
+	public boolean isSignedIn()
+	{
+		return connected && signedIn;
 	}
 
 	public void setOnCouplingCode(Consumer<CouplingCodeEvent> callback)
 	{
 		this.onCouplingCode = callback;
+	}
+
+	public void setOnCouplingCodeSent(Consumer<Integer> callback)
+	{
+		this.onCouplingCodeSent = callback;
 	}
 
 	public void setOnCouplingResult(Consumer<CouplingResultEvent> callback)
@@ -1268,21 +1351,21 @@ public class OSPartySocket extends WebSocketListener
 		this.onCouplingAccepted = callback;
 	}
 
-	private void handleCouplingRequired(Long accountHash, String code)
-	{
-		Consumer<CouplingRequiredEvent> cb = onCouplingRequired;
-		if (cb != null)
-		{
-			cb.accept(new CouplingRequiredEvent(accountHash, code));
-		}
-	}
-
 	private void handleCouplingCode(Long accountHash, String code)
 	{
 		Consumer<CouplingCodeEvent> cb = onCouplingCode;
 		if (cb != null)
 		{
 			cb.accept(new CouplingCodeEvent(accountHash, code));
+		}
+	}
+
+	private void handleCouplingCodeSent(Integer reached)
+	{
+		Consumer<Integer> cb = onCouplingCodeSent;
+		if (cb != null)
+		{
+			cb.accept(reached == null ? 0 : reached);
 		}
 	}
 
@@ -1316,6 +1399,150 @@ public class OSPartySocket extends WebSocketListener
 			return;
 		}
 		send(gson.toJson(new CouplingConfirmFrame(accountHash, code)));
+	}
+
+	/**
+	 * Ask the server to try signing this device in again.
+	 *
+	 * <p>Needed because the server answers a failed sign-in once per connection and then stays quiet — the
+	 * answer only changes when the user does something about it, typically opening OSParty on the machine
+	 * that holds the account. This is that "I've done it, try again".
+	 */
+	public void retryAuth()
+	{
+		long account = accountHash;
+		if (!connected || !net.osparty.store.PlayerFlag.isKnown(account))
+		{
+			return;
+		}
+		send(gson.toJson(new AccountFrame("retryAuth", account)));
+	}
+
+	/**
+	 * Ask the server to mint a coupling code and show it on this account's other signed-in device(s).
+	 *
+	 * <p>Nothing is minted until this is called -- {@code authFailed}'s {@code coupling} flag only says a
+	 * device is out there, not that a code exists yet. The answer arrives on {@link #setOnCouplingCodeSent}.
+	 */
+	public void requestCouplingCode()
+	{
+		long account = accountHash;
+		if (!connected || !net.osparty.store.PlayerFlag.isKnown(account))
+		{
+			return;
+		}
+		send(gson.toJson(new AccountFrame("requestCouplingCode", account)));
+	}
+
+	// --- Recovery ---
+
+	private volatile Consumer<RecoveryCodesEvent> onRecoveryCodes;
+	private volatile Consumer<RecoveryResultEvent> onRecoveryResult;
+	private volatile java.util.function.BiConsumer<String, String> onDiscordRecoveryUrl;
+
+	public void setOnRecoveryCodes(Consumer<RecoveryCodesEvent> callback)
+	{
+		this.onRecoveryCodes = callback;
+	}
+
+	public void setOnRecoveryResult(Consumer<RecoveryResultEvent> callback)
+	{
+		this.onRecoveryResult = callback;
+	}
+
+	/** {@code (url, ticket)} for a started Discord recovery: open the URL, then poll with the ticket. */
+	public void setOnDiscordRecoveryUrl(java.util.function.BiConsumer<String, String> callback)
+	{
+		this.onDiscordRecoveryUrl = callback;
+	}
+
+	/**
+	 * Spend a recovery code to sign this device in.
+	 *
+	 * <p>The only path that needs nothing but the code — no second machine, no browser — which is why it is
+	 * the one that answers "the old PC is gone".
+	 */
+	public void redeemRecoveryCode(String code)
+	{
+		long account = accountHash;
+		if (!connected || code == null || !net.osparty.store.PlayerFlag.isKnown(account))
+		{
+			return;
+		}
+		send(gson.toJson(new CodeFrame("recoveryConfirm", account, code)));
+	}
+
+	/** Mint a fresh set of codes, replacing any unspent ones. Signed-in devices only. */
+	public void issueRecoveryCodes()
+	{
+		if (connected)
+		{
+			send(gson.toJson(new TypedFrame("issueRecoveryCodes")));
+		}
+	}
+
+	/** How many codes are left. Answers with a {@link RecoveryCodesEvent} carrying no codes. */
+	public void requestRecoveryStatus()
+	{
+		if (connected)
+		{
+			send(gson.toJson(new TypedFrame("recoveryStatus")));
+		}
+	}
+
+	/** Begin Discord recovery; the answer arrives on {@link #setOnDiscordRecoveryUrl}. */
+	public void startDiscordRecovery()
+	{
+		long account = accountHash;
+		if (!connected || !net.osparty.store.PlayerFlag.isKnown(account))
+		{
+			return;
+		}
+		send(gson.toJson(new AccountFrame("startDiscordRecovery", account)));
+	}
+
+	/**
+	 * Ask whether the browser half of a Discord recovery has finished.
+	 *
+	 * <p>Polled rather than waited on because the callback lands on whichever server replica the browser
+	 * reached, which is generally not the one holding this socket. The ticket is what ties the two together
+	 * and it is ours to keep, so this survives a reconnect mid-flow.
+	 */
+	public void pollDiscordRecovery(String ticket)
+	{
+		if (connected && ticket != null)
+		{
+			send(gson.toJson(new TicketFrame("discordRecoveryPoll", ticket)));
+		}
+	}
+
+	private void handleRecoveryCodes(List<String> codes, Integer remaining)
+	{
+		Consumer<RecoveryCodesEvent> cb = onRecoveryCodes;
+		if (cb != null)
+		{
+			cb.accept(new RecoveryCodesEvent(codes == null ? List.of() : codes,
+				remaining == null ? 0 : remaining));
+		}
+	}
+
+	private void handleRecoveryResult(Boolean success, Boolean pending, String detail)
+	{
+		Consumer<RecoveryResultEvent> cb = onRecoveryResult;
+		if (cb != null)
+		{
+			cb.accept(new RecoveryResultEvent(Boolean.TRUE.equals(success),
+				Boolean.TRUE.equals(pending), detail));
+		}
+	}
+
+	private void handleDiscordRecoveryUrl(String url, String ticket)
+	{
+		java.util.function.BiConsumer<String, String> cb = onDiscordRecoveryUrl;
+		if (cb != null && url != null)
+		{
+			cb.accept(url, ticket);
+		}
 	}
 
 	// --- Device management ---
@@ -1752,10 +1979,26 @@ public class OSPartySocket extends WebSocketListener
 		String token;
 		// "authIssued" frame: the public id this character is shown to other players under.
 		String playerId;
-		// "couplingRequired"/"couplingCode" frame: the six-digit code.
+		// "couplingCode" frame: the six-digit code, shown so another device can be told it.
 		String code;
-		// "couplingResult" frame: whether the coupling succeeded.
+		// "couplingCodeSent" frame: how many of this account's other devices were just shown the code.
+		Integer reached;
+		// "couplingResult"/"recoveryResult" frame: whether it worked.
 		Boolean success;
+		// "recoveryResult" frame: the Discord round trip hasn't finished yet. Not a failure -- it is what
+		// almost every poll sees.
+		Boolean pending;
+		// "authFailed" frame: which ways back in are open right now. Each is server-confirmed, so the UI
+		// only ever offers a route that will actually answer.
+		Boolean coupling;
+		Boolean recoveryCodes;
+		Boolean discord;
+		// "authIssued"/"recoveryCodes" frame: one-time recovery codes, in plaintext and only ever once.
+		List<String> codes;
+		// "recoveryCodes" frame: how many are left unspent.
+		Integer remaining;
+		// "discordRecoveryUrl" frame: the secret this connection polls the recovery with.
+		String ticket;
 		// "devices" frame: the caller's own devices.
 		List<DeviceFrameEntry> devices;
 		// "revokeDevice"/"deviceRevoked" frame: the target device's id (a token digest, not a secret).
@@ -1977,8 +2220,7 @@ public class OSPartySocket extends WebSocketListener
 		}
 	}
 
-	/** Outbound coupling code confirmation. */
-	/** Bare request carrying only its type: {@code listDevices}. */
+	/** Bare request carrying only its type: {@code listDevices}, {@code issueRecoveryCodes}. */
 	private static final class TypedFrame
 	{
 		final String type;
@@ -2035,16 +2277,132 @@ public class OSPartySocket extends WebSocketListener
 		}
 	}
 
-	/** Delivered when the server says a coupling code is needed. */
-	public static final class CouplingRequiredEvent
+	/** Request naming only the character it is about: {@code retryAuth}, {@code startDiscordRecovery}. */
+	private static final class AccountFrame
 	{
-		public final long accountHash;
-		public final String code;
+		final String type;
+		final long accountHash;
 
-		public CouplingRequiredEvent(long accountHash, String code)
+		AccountFrame(String type, long accountHash)
 		{
+			this.type = type;
+			this.accountHash = accountHash;
+		}
+	}
+
+	/** Request carrying a code to be checked: {@code recoveryConfirm}. */
+	private static final class CodeFrame
+	{
+		final String type;
+		final long accountHash;
+		final String code;
+
+		CodeFrame(String type, long accountHash, String code)
+		{
+			this.type = type;
 			this.accountHash = accountHash;
 			this.code = code;
+		}
+	}
+
+	/** Request carrying a recovery ticket: {@code discordRecoveryPoll}. */
+	private static final class TicketFrame
+	{
+		final String type;
+		final String ticket;
+
+		TicketFrame(String type, String ticket)
+		{
+			this.type = type;
+			this.ticket = ticket;
+		}
+	}
+
+	/**
+	 * Delivered when this device has been signed in as {@code accountHash}.
+	 *
+	 * @param recoveryCodes the account's one-time codes, present only on the very first device it ever
+	 *     signed in on and never obtainable again. Empty every other time.
+	 */
+	public static final class SignedInEvent
+	{
+		public final long accountHash;
+		public final List<String> recoveryCodes;
+
+		SignedInEvent(long accountHash, List<String> recoveryCodes)
+		{
+			this.accountHash = accountHash;
+			this.recoveryCodes = recoveryCodes;
+		}
+	}
+
+	/**
+	 * Delivered when this device could not be signed in, with the ways back in that are open right now.
+	 *
+	 * <p>Each flag is something the server has just checked, so an option offered here is one that will
+	 * answer. All three can be false — a lost credential on an account with no codes and no Discord link —
+	 * and that case is worth saying plainly rather than dressing up as a prompt the user cannot satisfy.
+	 *
+	 * @param coupling a six-digit code is on another of this account's devices right now
+	 * @param recoveryCodes this account has unspent recovery codes
+	 * @param discord this account can be recovered through Discord
+	 */
+	public static final class AuthFailedEvent
+	{
+		public final long accountHash;
+		public final boolean coupling;
+		public final boolean recoveryCodes;
+		public final boolean discord;
+
+		AuthFailedEvent(long accountHash, boolean coupling, boolean recoveryCodes, boolean discord)
+		{
+			this.accountHash = accountHash;
+			this.coupling = coupling;
+			this.recoveryCodes = recoveryCodes;
+			this.discord = discord;
+		}
+
+		/** Whether there is anything at all the user could do from here. */
+		public boolean hasAnyRoute()
+		{
+			return coupling || recoveryCodes || discord;
+		}
+	}
+
+	/**
+	 * Recovery codes as issued, or on a status check just how many are left.
+	 *
+	 * @param codes plaintext, delivered once. Empty on a status reply.
+	 */
+	public static final class RecoveryCodesEvent
+	{
+		public final List<String> codes;
+		public final int remaining;
+
+		RecoveryCodesEvent(List<String> codes, int remaining)
+		{
+			this.codes = codes;
+			this.remaining = remaining;
+		}
+	}
+
+	/**
+	 * How a recovery attempt went.
+	 *
+	 * @param pending a Discord recovery poll that found no answer yet — the ordinary case, and not a
+	 *     failure. Without it the UI cannot tell "still waiting" from "refused".
+	 */
+	public static final class RecoveryResultEvent
+	{
+		public final boolean success;
+		public final boolean pending;
+		public final String detail;
+
+		RecoveryResultEvent(boolean success, boolean pending, String detail)
+		{
+			this.success = success;
+			this.pending = pending;
+			this.detail = detail;
 		}
 	}
 

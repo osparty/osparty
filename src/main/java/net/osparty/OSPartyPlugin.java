@@ -20,6 +20,7 @@ import net.osparty.party.LivePartyBackend;
 import net.osparty.party.SpecDrainEvent;
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
+import net.osparty.ui.AccountRecoveryController;
 import net.osparty.ui.HiscoreLookup;
 import net.osparty.ui.OSPartyPanel;
 import net.osparty.ui.ApplicantOverlay;
@@ -214,6 +215,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private SpriteManager spriteManager;
 
 	private OSPartyPanel panel;
+	/** Owns every conversation about signing this device in, and the recovery routes when it cannot be. */
+	private AccountRecoveryController accountRecovery;
 	private BufferedImage navIcon;
 	private NavigationButton navButton;
 	private NavigationButton navButtonAlert;
@@ -313,68 +316,16 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 	}
 
-	/**
-	 * Attach the coupling conversation to the UI.
-	 *
-	 * <p>Coupling is how a second machine joins an account this service already knows: the machine that
-	 * already holds the credential shows a six-digit code, and the new one has to be told it. Reading it off
-	 * the other screen is the whole check -- it is the one thing somebody who merely knows the account
-	 * cannot do -- which is why the code never travels to the machine asking for it.
-	 *
-	 * <p>All four callbacks arrive on the socket reader thread, so each hops to the EDT before touching
-	 * Swing.
-	 */
-	private void wireCoupling()
-	{
-		socket.setOnCouplingCode(event -> SwingUtilities.invokeLater(() ->
-			JOptionPane.showMessageDialog(panel,
-				"Another device is signing in to this account.\n\n"
-					+ "Code: " + event.code + "\n\n"
-					+ "Type it there to allow it. If this wasn't you, ignore this — nothing happens without "
-					+ "the code, and this device keeps working either way.",
-				"OSParty device code", JOptionPane.INFORMATION_MESSAGE)));
-
-		socket.setOnCouplingRequired(event -> SwingUtilities.invokeLater(() ->
-		{
-			String code = JOptionPane.showInputDialog(panel,
-				"This account is already signed in on another device.\n\n"
-					+ "Open OSParty there to see a six-digit code, then type it here.",
-				"OSParty device code", JOptionPane.QUESTION_MESSAGE);
-			if (code != null && !code.trim().isEmpty())
-			{
-				socket.couplingConfirm(accountHash, code.trim());
-			}
-		}));
-
-		socket.setOnCouplingResult(event -> SwingUtilities.invokeLater(() ->
-		{
-			if (event.success)
-			{
-				JOptionPane.showMessageDialog(panel,
-					"This device is now signed in. Your other devices are unaffected.",
-					"OSParty", JOptionPane.INFORMATION_MESSAGE);
-				return;
-			}
-			JOptionPane.showMessageDialog(panel,
-				"That didn't work. The code may have been wrong or expired, or no other device was online "
-					+ "to show one. OSParty still works — you'll be asked again next time you connect.",
-				"OSParty", JOptionPane.WARNING_MESSAGE);
-		}));
-
-		// A notice, not a loss: coupling adds a device and this one keeps its credential. Shown because the
-		// screen the code was read off is the one place somebody who did not expect it would notice.
-		socket.setOnCouplingAccepted(account -> SwingUtilities.invokeLater(() ->
-			JOptionPane.showMessageDialog(panel,
-				"Another device just signed in to this account.",
-				"OSParty", JOptionPane.INFORMATION_MESSAGE)));
-	}
 
 	@Override
 	protected void startUp()
 	{
 		BoardService boardService = apiClient;
 
-		wireCoupling();
+		// Registered before the socket opens: the first connection can enrol this character, and the codes
+		// that come back with a brand-new account arrive exactly once.
+		accountRecovery = new AccountRecoveryController(socket, this::getAccountHash, this::getPlayerName);
+		accountRecovery.register();
 		socket.start();
 
 		applicantOverlay = new ApplicantOverlay(config);
@@ -465,10 +416,16 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			this::regionForWorld, this::getCoxLayout, configManager, gson,
 			worldPinger, this::worldAddressForNum, this::getFriendNames, favoritesService, blockListService,
 			this::getAccountHash, spriteManager, partyHistoryService, message -> chat(message, true),
-			() -> net.osparty.ui.DeviceManagerDialog.open(panel, socket));
+			() -> net.osparty.ui.DeviceManagerDialog.open(panel, socket, accountRecovery),
+			accountRecovery::openRecovery);
 
 		navIcon = ImageUtil.loadImageResource(getClass(), "panel_icon.png");
 		buildNavButtons();
+
+		// The panel is where the "not signed in" banner lives and where the dialogs parent themselves, so
+		// the controller only learns about it once it exists.
+		accountRecovery.attachPanel(panel, panel::setSignedIn);
+		accountRecovery.setOnLinkDiscord(panel::startDiscordLink);
 
 		clientToolbar.addNavigation(navButton);
 		panel.setOnActivated(this::onPanelActivated);
@@ -491,6 +448,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		liveParty.setOnReadyExpired(null);
 		liveParty.setOnKicked(null);
 		liveParty.setOnPingReceived(null);
+		if (accountRecovery != null)
+		{
+			accountRecovery.unregister();
+			accountRecovery = null;
+		}
 		keyManager.unregisterKeyListener(pingHotkeyListener);
 		pingHotkeyDown = false;
 		if (panel != null)
