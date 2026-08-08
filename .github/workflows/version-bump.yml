@@ -36,8 +36,8 @@ jobs:
           sed -i -E "s/(private static final String VERSION = \")[^\"]*(\";)/\1${next}\2/" "$panel"
 
           # Fail loudly if either file didn't end up on the new version.
-          grep -q "^version=${next}$" "$prop"
-          grep -q "VERSION = \"${next}\";" "$panel"
+          grep -q "^version=${next}$" "$prop" || { echo "Failed to update version in $prop"; exit 1; }
+          grep -q "VERSION = \"${next}\";" "$panel" || { echo "Failed to update VERSION in $panel"; exit 1; }
 
           echo "version=${next}" >> "$GITHUB_OUTPUT"
 
