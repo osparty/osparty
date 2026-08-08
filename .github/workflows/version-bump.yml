@@ -32,8 +32,8 @@ jobs:
           next="${major}.${minor}.$((patch + 1))"
           echo "Bumping $current -> $next"
 
-          sed -i -E "s/^version=.*/version=${next}/" "$prop"
-          sed -i -E "s/(private static final String VERSION = \")[^\"]*(\";)/\1${next}\2/" "$panel"
+          sed -i "s/^version=.*/version=${next}/" "$prop"
+          sed -i "s/VERSION = \"[^\"]*\"/VERSION = \"${next}\"/" "$panel"
 
           # Fail loudly if either file didn't end up on the new version.
           grep -q "^version=${next}$" "$prop" || { echo "Failed to update version in $prop"; exit 1; }
