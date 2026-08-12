@@ -21,7 +21,6 @@ import net.osparty.party.SpecDrainEvent;
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
 import net.osparty.ui.AccountRecoveryController;
-import net.osparty.ui.HiscoreLookup;
 import net.osparty.ui.OSPartyPanel;
 import net.osparty.ui.ApplicantOverlay;
 import net.osparty.ui.JoinPromptOverlay;
@@ -179,8 +178,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Inject
 	private InfoBoxManager infoBoxManager;
 
-	// Reaches RuneLite's own plugins: the Hiscore panel for card menus, and Player Indicators so our
-	// overhead party names don't print through the names it already draws.
+	// Reaches Player Indicators so our overhead party names don't print through the names it
+	// already draws.
 	@Inject
 	private PluginManager pluginManager;
 
@@ -407,8 +406,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		// A player can't block themselves.
 		blockListService.setSelf(this::getAccountHash, this::getSelfName);
-
-		HiscoreLookup.init(pluginManager);
 
 		panel = new OSPartyPanel(boardService, config, this::getPlayerName, this,
 			this::getFriendsChatOwner, this::getCurrentWorld, itemManager, liveParty, runeWatchService,

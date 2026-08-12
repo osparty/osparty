@@ -893,8 +893,8 @@ class PartyPanel extends JPanel
 	}
 
 	/**
-	 * Right-click actions for a roster member: favourite and block toggles, (host only, on an admitted
-	 * member) kick / kick-and-block, and a hiscore lookup. {@code null} when nothing applies.
+	 * Right-click actions for a roster member: favourite and block toggles, and (host only, on an
+	 * admitted member) kick / kick-and-block. {@code null} when nothing applies.
 	 */
 	private JPopupMenu memberMenu(Activity activity, RosterMember member, boolean host)
 	{
@@ -904,27 +904,13 @@ class PartyPanel extends JPanel
 		}
 		final String rsn = member.getName();
 		final long hash = memberHash(member);
-		// Your own row keeps the hiscore lookup; favouriting/blocking/kicking yourself makes no sense.
+		// Favouriting/blocking/kicking yourself makes no sense, so your own row has no menu at all.
 		final boolean self = member.isLocal();
 		JPopupMenu menu = new JPopupMenu();
 		boolean any = false;
 
-		JMenuItem hiscores = HiscoreLookup.menuItem(rsn);
-		if (hiscores != null)
-		{
-			menu.add(hiscores);
-			any = true;
-		}
-		// Divider between the lookup and the first of the member actions, whichever that turns out to be.
-		boolean divide = any;
-
 		if (!self && favoritesService != null)
 		{
-			if (divide)
-			{
-				menu.addSeparator();
-				divide = false;
-			}
 			boolean fav = favoritesService.isFavorite(hash, rsn);
 			JMenuItem favItem = new JMenuItem(fav ? "Remove from Favorites" : "Add to Favorites");
 			favItem.addActionListener(e -> {
@@ -937,11 +923,6 @@ class PartyPanel extends JPanel
 
 		if (!self && blockListService != null)
 		{
-			if (divide)
-			{
-				menu.addSeparator();
-				divide = false;
-			}
 			boolean blocked = blockListService.isBlocked(hash, rsn);
 			JMenuItem blockItem = new JMenuItem(blocked ? "Remove from blocklist" : "Add to blocklist");
 			blockItem.addActionListener(e -> {

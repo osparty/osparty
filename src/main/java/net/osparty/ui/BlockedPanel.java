@@ -9,9 +9,7 @@ import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JLabel;
-import javax.swing.JMenuItem;
 import javax.swing.JPanel;
-import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
 import javax.swing.event.AncestorEvent;
@@ -140,15 +138,6 @@ class BlockedPanel extends JPanel
 
 		row.add(name, BorderLayout.CENTER);
 		row.add(unblock, BorderLayout.EAST);
-
-		JMenuItem hiscores = HiscoreLookup.menuItem(flag.getUsername());
-		if (hiscores != null)
-		{
-			JPopupMenu menu = new JPopupMenu();
-			menu.add(hiscores);
-			row.setComponentPopupMenu(menu);
-			PanelWidgets.inheritPopupMenu(row);
-		}
 
 		return row;
 	}

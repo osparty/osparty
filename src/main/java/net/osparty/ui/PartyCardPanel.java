@@ -847,8 +847,8 @@ abstract class PartyCardPanel extends JPanel
 	}
 
 	/**
-	 * Right-click / 3-dot actions for a card's host: favourite and block toggles, report, and a hiscore
-	 * lookup. Null when none apply.
+	 * Right-click / 3-dot actions for a card's host: favourite and block toggles, and report.
+	 * Null when none apply.
 	 */
 	private JPopupMenu hostMenu(Advertisement ad)
 	{
@@ -864,26 +864,12 @@ abstract class PartyCardPanel extends JPanel
 		JPopupMenu menu = new JPopupMenu();
 		boolean any = false;
 
-		JMenuItem hiscores = HiscoreLookup.menuItem(host, "Look up host on hiscores");
-		if (hiscores != null)
-		{
-			menu.add(hiscores);
-			any = true;
-		}
-		// Divider between the lookup and the first of the host actions, whichever that turns out to be.
-		boolean divide = any;
-
 		if (favoritesService != null)
 		{
 			boolean fav = favoritesService.isFavorite(hostHash, host);
 			// You can't favourite yourself; only offer the item to REMOVE a self-favourite you already have.
 			if (!self || fav)
 			{
-				if (divide)
-				{
-					menu.addSeparator();
-					divide = false;
-				}
 				JMenuItem favItem = new JMenuItem(fav ? "Remove host from Favorites" : "Add host to Favorites");
 				favItem.addActionListener(e -> {
 					favoritesService.toggle(hostHash, host);
@@ -898,11 +884,6 @@ abstract class PartyCardPanel extends JPanel
 		// You can't block yourself, so don't offer it on your own ad.
 		if (blockListService != null && !self)
 		{
-			if (divide)
-			{
-				menu.addSeparator();
-				divide = false;
-			}
 			boolean blocked = blockListService.isBlocked(hostHash, host);
 			JMenuItem blockItem = new JMenuItem(blocked ? "Unblock host" : "Block host");
 			blockItem.addActionListener(e -> {
