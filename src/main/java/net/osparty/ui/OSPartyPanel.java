@@ -1031,11 +1031,58 @@ public class OSPartyPanel extends PluginPanel
 	 */
 	private void rememberMembership()
 	{
-		if (partyState.isInParty() && !partyState.isHost() && liveParty.isLocalAdmitted())
+		// A detected group is not a party to be put back into: it is re-detected on the next login if it is
+		// still happening, and there is no advertisement behind it to rejoin if it is not.
+		if (partyState.isInParty() && !partyState.isHost() && !partyState.isAmbient()
+			&& liveParty.isLocalAdmitted())
 		{
 			partyState.rememberMembership(partyState.getCurrentAd(), liveParty.getLocalRole(),
 				liveParty.isLocalLearner(), accountHashSupplier.getAsLong());
 		}
+	}
+
+	/**
+	 * Show the group the plugin detected in the game as the party we are in, so the Party tab, the overlays
+	 * and the history all treat it as one.
+	 *
+	 * <p>The advertisement built here is local and fictional — there is no ad on the board behind a detected
+	 * group, and the id is only ever used to key this client's own history and caches. It carries nothing a
+	 * host would have chosen (no description, requirements, loot rule or invite code) because nobody chose
+	 * anything: the only facts about a detected group are what it is doing and where.
+	 */
+	public void enterAmbientGroup(String roomKey, String activityId, int world)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			// A party the player actually chose outranks one they were put in.
+			if (partyState.isInParty() && !partyState.isAmbient())
+			{
+				return;
+			}
+			Advertisement ad = new Advertisement();
+			ad.setId("ambient:" + roomKey);
+			ad.setActivity(activityId);
+			ad.setWorld(world > 0 ? Integer.toString(world) : null);
+			partyState.setAmbient(ad);
+		});
+	}
+
+	/** The detected group is over (or was stepped out of): fold the party away again. */
+	public void exitAmbientGroup()
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			if (partyState.isAmbient())
+			{
+				partyState.clear();
+			}
+		});
+	}
+
+	/** What to run when the player presses "Stop sharing" on a detected group. */
+	public void setOnLeaveAmbientGroup(Runnable onLeave)
+	{
+		partyPanel.setOnLeaveAmbientGroup(onLeave);
 	}
 
 	/** Restore the Create/Party tab to its default party icon + tooltip (leaving edit mode). */

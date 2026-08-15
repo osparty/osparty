@@ -333,13 +333,30 @@ public interface OSPartyConfig extends Config
 
 	// ---- Privacy & safety ----
 
+	String AMBIENT_GROUPS = "ambientGroups";
+
+	@ConfigItem(
+		keyName = AMBIENT_GROUPS,
+		name = "Detect my group",
+		description = "Share the party tools with anyone else running OSParty in your friends chat while "
+			+ "you're at an activity together, without hosting or joining a party. Only players who are both "
+			+ "in your friends chat and on screen with you are named to the server, and you're only put in a "
+			+ "group with someone once you and they have each been seen standing with the other.",
+		position = 1,
+		section = PRIVACY
+	)
+	default boolean ambientGroups()
+	{
+		return false;
+	}
+
 	String HIDE_INVENTORY = "hideInventory";
 
 	@ConfigItem(
 		keyName = HIDE_INVENTORY,
 		name = "Hide my inventory",
 		description = "Don't share your inventory (including rune pouch contents) with other party members.",
-		position = 1,
+		position = 2,
 		section = PRIVACY
 	)
 	default boolean hideInventory()
@@ -353,7 +370,7 @@ public interface OSPartyConfig extends Config
 		keyName = HIDE_GEAR,
 		name = "Hide my gear",
 		description = "Don't share your equipped gear with other party members.",
-		position = 2,
+		position = 3,
 		section = PRIVACY
 	)
 	default boolean hideGear()
@@ -367,7 +384,7 @@ public interface OSPartyConfig extends Config
 		keyName = RUNE_WATCH,
 		name = "RuneWatch warnings",
 		description = "Warn when a party member or applicant is on the RuneWatch / We Do Raids scammer watchlist.",
-		position = 3,
+		position = 4,
 		section = PRIVACY
 	)
 	default boolean runeWatch()

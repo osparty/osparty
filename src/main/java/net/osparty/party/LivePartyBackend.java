@@ -63,6 +63,24 @@ public interface LivePartyBackend
 	void joinParty(String passphrase, String activityId, int teamSize, String role, boolean learner,
 		boolean invited);
 
+	/**
+	 * Attend the ambient room for a group detected in the game — a friends chat at an activity — rather than
+	 * one advertised on the board. There is no host and no application: everyone arrives unseated, and the
+	 * server seats an attendee once another attendee reports standing next to it and it reports the same back.
+	 *
+	 * @param room the room key both ends derive from the group; see {@code AmbientGroups}
+	 * @param name our own player name, which is what the rest of the group has to name us by — passed in
+	 *     rather than read from the live state so the very first frame carries it
+	 * @param seen the players from that group our own scene can currently see
+	 */
+	void attendGroup(String room, String activityId, int capacity, String name, List<String> seen);
+
+	/** Report a change in who we can see, which is what an ambient room seats people on. */
+	void reportSighted(List<String> seen);
+
+	/** Whether the party we are in is an ambient one, which nobody hosts and nothing advertises. */
+	boolean isAmbient();
+
 	void leave();
 
 	void leaveForSwitch();

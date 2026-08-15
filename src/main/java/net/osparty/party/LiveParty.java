@@ -17,6 +17,7 @@ import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
 import net.osparty.OSPartyConfig;
 import net.osparty.model.Member;
+import net.osparty.party.LiveFrames.AttendFrame;
 import net.osparty.party.LiveFrames.CapacityFrame;
 import net.osparty.party.LiveFrames.CommandFrame;
 import net.osparty.party.LiveFrames.DiscordFrame;
@@ -52,7 +53,11 @@ import net.runelite.client.eventbus.EventBus;
 @Slf4j
 @Singleton
 public class LiveParty implements LivePartyBackend {
-	private enum Mode { NONE, HOST, MEMBER }
+	/**
+	 * What this client is to the room it is in. {@link #AMBIENT} is a room nobody hosts, standing in for a
+	 * group that formed in the game itself — see {@link #attendGroup}.
+	 */
+	private enum Mode { NONE, HOST, MEMBER, AMBIENT }
 
 	private static final long ONLINE_TIMEOUT_MS = 20_000;
 	/**
@@ -127,6 +132,8 @@ public class LiveParty implements LivePartyBackend {
 	private volatile boolean localLearner;
 	private volatile boolean localTeacher;
 	private volatile boolean localInvited;
+	/** In an ambient room, who we last told the server we can see. Empty in every other mode. */
+	private volatile List<String> sighted = List.of();
 	// What has changed since we last told anyone. Split three ways because the frames are: vitals move every
 	// tick and cost ~60 bytes, items move rarely and cost ~500, profile barely moves at all.
 	private volatile boolean vitalsDirty;
@@ -223,6 +230,9 @@ public class LiveParty implements LivePartyBackend {
 		else if (mode == Mode.MEMBER) {
 			sendJoin();
 		}
+		else if (mode == Mode.AMBIENT) {
+			sendAttend();
+		}
 		markAllDirty();
 	}
 
@@ -297,6 +307,48 @@ public class LiveParty implements LivePartyBackend {
 		fire();
 	}
 
+	/**
+	 * Attend the ambient room for the group we are standing in, creating it if we are the first of its members
+	 * here. Unlike hosting or joining there is no advertisement behind this and no host to be admitted by: the
+	 * server seats us once someone else in the room reports seeing us and we report seeing them, which is what
+	 * {@code seen} carries.
+	 */
+	@Override
+	public void attendGroup(String room, String activityId, int capacity, String name, List<String> seen) {
+		reset();
+		mode = Mode.AMBIENT;
+		roomKey = room;
+		this.currentActivityId = activityId;
+		this.capacity = capacity;
+		// Ours to state up front: an attendee the room cannot name cannot be vouched for by anyone, and the
+		// tick that would otherwise resolve this runs after the one that attends.
+		this.localName = name;
+		this.sighted = List.copyOf(seen);
+		markAllDirty();
+		if (!channel.attach()) {
+			sendAttend();
+		}
+		fire();
+	}
+
+	/**
+	 * Report who we can currently see out of our group. Sent only on a change: it is the one thing an
+	 * {@code attend} frame says that ever moves, and the room re-checks its unseated attendees on every one.
+	 */
+	@Override
+	public void reportSighted(List<String> seen) {
+		if (mode != Mode.AMBIENT || seen.equals(sighted)) {
+			return;
+		}
+		sighted = List.copyOf(seen);
+		sendAttend();
+	}
+
+	@Override
+	public boolean isAmbient() {
+		return mode == Mode.AMBIENT;
+	}
+
 	@Override
 	public void leave() {
 		if (mode != Mode.NONE) {
@@ -334,6 +386,7 @@ public class LiveParty implements LivePartyBackend {
 		localLearner = false;
 		localTeacher = false;
 		localInvited = false;
+		sighted = List.of();
 		vitalsDirty = false;
 		itemsDirty = false;
 		profileDirty = false;
@@ -454,6 +507,13 @@ public class LiveParty implements LivePartyBackend {
 				break;
 			case "error":
 				log.debug("Live party error: {}", frame.detail);
+				// A refused attend is the end of that group, not a state to sit in: nothing about a full room
+				// or a key an advertised party already holds is going to change while we wait, and a client
+				// left attached to a room it was never seated in reports its vitals to nobody indefinitely.
+				if (mode == Mode.AMBIENT && ("room full".equals(frame.detail)
+					|| "not ambient".equals(frame.detail))) {
+					end();
+				}
 				break;
 			default:
 				break;
@@ -1353,6 +1413,20 @@ public class LiveParty implements LivePartyBackend {
 		boolean admitted = localInvited || localStatus == PartyStatus.MEMBER;
 		send(new JoinFrame(roomKey, currentActivityId, localRole, localLearner, localTeacher, admitted,
 			localName, localAccountHash));
+	}
+
+	/**
+	 * Announce ourselves in an ambient room, or refresh who we can see in the one we are already in — the
+	 * server tells the two apart itself, since for this frame they are the same claim.
+	 *
+	 * <p>Nothing here asserts a seat. Where {@code join} claims a prior admission so a handover does not
+	 * re-queue an admitted member, an ambient room has no admission to claim: our seat is decided by what our
+	 * peers report about us, and a client that re-sends this after a reconnect is seated on the same evidence
+	 * as the first time.
+	 */
+	private void sendAttend() {
+		send(new AttendFrame(roomKey, currentActivityId, capacity, localRole, localLearner, localTeacher,
+			localName, localAccountHash, sighted));
 	}
 
 	private void fire() {

@@ -29,6 +29,21 @@ public class LivePartyFrameWireTest
 		assertEquals(9, frame.updates.get(1).memberId);
 	}
 
+	/**
+	 * The frame that opens an ambient room. It is the only one that names other players, so what it carries
+	 * is worth pinning: the group we can see, and nothing else about them.
+	 */
+	@Test
+	public void attendCarriesTheGroupItCanSee()
+	{
+		String json = gson.toJson(new LiveFrames.AttendFrame("room-key", "tob", 5, null, false, false,
+			"Me", 42L, java.util.Arrays.asList("Mate", "Third")));
+
+		assertEquals("{\"t\":\"attend\",\"room\":\"room-key\",\"activityId\":\"tob\",\"capacity\":5,"
+			+ "\"learner\":false,\"teacher\":false,\"name\":\"Me\",\"accountHash\":42,"
+			+ "\"seen\":[\"Mate\",\"Third\"]}", json);
+	}
+
 	@Test
 	public void rosterAndWelcomeCarryTheirIdsToo()
 	{

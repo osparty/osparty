@@ -71,6 +71,41 @@ final class LiveFrames {
 		}
 	}
 
+	/**
+	 * Attend an ambient room: the live party for a group that formed in the game rather than on the board.
+	 *
+	 * <p>Sent instead of {@code host}/{@code join}, and re-sent whenever {@link #seen} changes. Nobody hosts
+	 * one of these rooms, so there is no admission to claim and none is offered: the server seats an attendee
+	 * only once another attendee names it and it names them back, which is what {@link #seen} is for.
+	 */
+	static final class AttendFrame {
+		@SerializedName("t")
+		final String type = "attend";
+		final String room;
+		final String activityId;
+		final Integer capacity;
+		final String role;
+		final Boolean learner;
+		final Boolean teacher;
+		final String name;
+		final long accountHash;
+		/** Players from our own in-game group that our scene can currently see. */
+		final java.util.List<String> seen;
+
+		AttendFrame(String room, String activityId, int capacity, String role, boolean learner,
+			boolean teacher, String name, long accountHash, java.util.List<String> seen) {
+			this.room = room;
+			this.activityId = activityId;
+			this.capacity = capacity;
+			this.role = role;
+			this.learner = learner;
+			this.teacher = teacher;
+			this.name = name;
+			this.accountHash = accountHash;
+			this.seen = seen;
+		}
+	}
+
 	/** Proof of life for an idle party; carries nothing else. The server relays it to peers as {@code alive}. */
 	static final class HeartbeatFrame {
 		@SerializedName("t")

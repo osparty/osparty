@@ -163,6 +163,8 @@ class PartyPanel extends JPanel
 	private String lastReportedLayout;
 	/** Invoked when the host clicks "Edit party"; wired by the owning panel to open the edit form. */
 	private Runnable onEditParty;
+	/** What to call when the player steps out of a detected group; see {@link #setOnLeaveAmbientGroup}. */
+	private Runnable onLeaveAmbientGroup;
 	/**
 	 * Ready-check countdown label plus the ticker that retexts it. The panel as a whole only
 	 * re-renders on roster/websocket events, which is far too coarse for a per-second countdown,
@@ -374,6 +376,8 @@ class PartyPanel extends JPanel
 		}
 
 		boolean host = partyState.isHost();
+		// A group nobody advertised: no host to name it after, and nothing here for anyone to administer.
+		boolean ambient = liveParty.isAmbient();
 		syncPartyMeta(ad, host);
 		Activity activity = Activity.fromId(ad.getActivity());
 		String activityName = (activity != null
@@ -382,7 +386,9 @@ class PartyPanel extends JPanel
 
 		JLabel header = new JLabel(host
 			? "Your " + activityName + " party"
-			: ad.getHost() + "'s " + activityName + " party");
+			: ambient
+				? activityName + " group"
+				: ad.getHost() + "'s " + activityName + " party");
 		header.setForeground(Color.WHITE);
 		header.setFont(FontManager.getRunescapeBoldFont());
 		header.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -392,10 +398,21 @@ class PartyPanel extends JPanel
 		content.add(header);
 		content.add(Box.createVerticalStrut(4));
 
+		if (ambient)
+		{
+			// Say where this came from. Nobody chose to be here, so a party appearing unexplained is a party
+			// the player has every reason to be suspicious of.
+			content.add(PanelWidgets.smallLabelLeft("Detected from your friends chat",
+				ColorScheme.BRAND_ORANGE));
+			content.add(Box.createVerticalStrut(4));
+		}
+
 		// Un-admitted applicants see only a waiting notice, not the party internals.
 		if (!host && !liveParty.isLocalAdmitted())
 		{
-			content.add(PanelWidgets.smallLabelLeft("Waiting for the host to accept you…",
+			content.add(PanelWidgets.smallLabelLeft(ambient
+					? "Waiting for someone in the group to see you…"
+					: "Waiting for the host to accept you…",
 				ColorScheme.LIGHT_GRAY_COLOR));
 			content.add(Box.createVerticalStrut(8));
 			content.add(buildActions(ad, false));
@@ -1988,12 +2005,21 @@ class PartyPanel extends JPanel
 			}
 		}
 
-		JButton button = new JButton(host ? "Disband party" : "Leave party");
+		boolean ambient = liveParty.isAmbient();
+		JButton button = new JButton(host ? "Disband party" : ambient ? "Stop sharing" : "Leave party");
 		button.setFocusPainted(false);
+		if (ambient)
+		{
+			button.setToolTipText("Stop sharing with this group, and don't rejoin it while you're logged in");
+		}
 		button.addActionListener(e -> {
 			if (host)
 			{
 				confirmDisband(ad, button);
+			}
+			else if (ambient)
+			{
+				leaveAmbientGroup(button);
 			}
 			else
 			{
@@ -2002,6 +2028,29 @@ class PartyPanel extends JPanel
 		});
 		actions.add(button, BorderLayout.CENTER);
 		return actions;
+	}
+
+	/**
+	 * Wire the "Stop sharing" button to whatever found the group, so leaving one sticks: the friends chat and
+	 * the activity are still there after this, and without telling the detector, the next tick would put us
+	 * straight back in.
+	 */
+	void setOnLeaveAmbientGroup(Runnable onLeaveAmbientGroup)
+	{
+		this.onLeaveAmbientGroup = onLeaveAmbientGroup;
+	}
+
+	private void leaveAmbientGroup(JButton button)
+	{
+		button.setEnabled(false);
+		setStatus("No longer sharing with this group.");
+		if (onLeaveAmbientGroup != null)
+		{
+			onLeaveAmbientGroup.run();
+			return;
+		}
+		liveParty.leave();
+		partyState.clear();
 	}
 
 	/** Wire the host-only "Edit party" button to the owning panel's edit flow. */

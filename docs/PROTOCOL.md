@@ -377,6 +377,7 @@ the connection outlived.
 | `hello` | `accountHash`, `name` | Announce/re-announce identity |
 | `host` | `room`, `hostName`, `activityId`, `capacity`, `locked`, `role`, `learner`, `teacher`, `accountHash` | Open (or re-announce) a room as its host |
 | `join` | `room`, `activityId`, `role`, `learner`, `teacher`, `invited`, `name`, `accountHash` | Join (or rejoin) a room as a member; `invited` claims prior admission (client-asserted) so a handover doesn't dump an admitted member back into the applicant queue |
+| `attend` | `room`, `activityId`, `capacity`, `role`, `learner`, `teacher`, `name`, `accountHash`, `seen` | Attend an *ambient* room (a group detected in the game rather than advertised), creating it if it does not exist. Re-sent whenever `seen` changes; for the room this connection is already in that is a sighting report rather than a second arrival. Claims no admission — see [Ambient rooms](#ambient-rooms) |
 | `heartbeat` | (none) | Proof of life, sent only when nothing else went out within 5 s |
 | `update` | `s` (state — partial `PlayerUpdate`, short-keyed), `g?` (urgent) | Report changed vitals/items/profile fields; `g: true` asks the owner node to relay without waiting out its idle window (only a vital moving *down* sets it) |
 | `ping` | `x`, `y`, `plane`, `color`, `name` | Drop a map ping |
@@ -393,6 +394,37 @@ the connection outlived.
 | `transferHost` | `kind` (`OFFER`/`ACCEPT`/`COMMIT`/`ABORT`), `target` (memberId), `newHostKey?`, `newHostName?`, `hostStays` | One step of the host-transfer handshake — see below |
 
 Frame shapes: [`LiveFrames`](../src/main/java/net/osparty/party/LiveFrames.java).
+
+### Ambient rooms
+
+A room opened by `attend` rather than `host` stands in for a group that formed in the game: a friends
+chat, at an activity, with nothing on the board to say so. It has **no host** — no admission, kick,
+capacity, lock, meta or transfer — and it ends when its last attendee leaves rather than when a
+particular one does.
+
+Its key is **derived, not issued**. Both ends compute
+`base64url(sha256("osparty:ambient:v1:" + activityId + ":" + normalise(friendsChatOwner)))[0..22]`
+([`AmbientGroups.roomKey`](../src/main/java/net/osparty/tools/AmbientGroups.java)), so every client in
+one group reaches the same room without a passphrase being passed between them. Hashed because the
+server has no use for the friends chat's name, and a room key that reads as a player's name says who is
+raiding with whom to anything that ever logs it.
+
+Because the key is derived, knowing it proves nothing: anyone who can join the friends chat can compute
+it. So it buys nothing on its own. Every attendee is seated `PENDING` and is **relayed no live state at
+all** until it is promoted, and promotion needs a *mutual sighting*: some other attendee's `seen` names
+this one, and this one's `seen` names them. Both halves of a confirmed pair are promoted together, the
+first two into an empty room included — there is no founder who is trusted for arriving first.
+
+`seen` carries only players who are **both in the local player's friends chat and in the local player's
+scene**, so a bystander is never named and neither is a channel member who is somewhere else. A client
+that is not standing with the group is named by nobody, whatever it claims to see itself, which is what
+the rule rests on: a client can lie about what it sees, and it cannot make anyone else's client lie
+about it.
+
+The room's capacity comes from the first attendee's activity, clamped to 2..32 server-side; an attendee
+arriving at a full room is refused with `error: room full`. `attend` against a key an advertised party
+already holds is refused with `error: not ambient` — that collision cannot happen by derivation, only by
+a client aiming at a passphrase.
 
 ### Server → client frames
 

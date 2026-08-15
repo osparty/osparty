@@ -41,6 +41,8 @@ class PartyState
 
 	private Advertisement currentAd;
 	private boolean host;
+	/** Whether {@link #currentAd} describes a detected group rather than a party on the board. */
+	private boolean ambient;
 	private boolean advertiseLayout;
 	/** Secret authorising host-only API mutations for the party we host; null otherwise. */
 	private String hostKey;
@@ -134,10 +136,38 @@ class PartyState
 	{
 		currentAd = ad;
 		host = false;
+		ambient = false;
 		advertiseLayout = false;
 		hostKey = null;
 		forgetHostKey();
 		fire();
+	}
+
+	/**
+	 * Stand in for a group detected in the game rather than one taken off the board, so the Party tab has
+	 * something to render for it.
+	 *
+	 * <p>The advertisement here is a local fiction: nothing on the board answers to its id, and nothing else
+	 * ever will, which is why {@link #isAmbient()} exists for the few places that would otherwise go looking
+	 * for one. Nor is it remembered — a detected group is re-detected on the next login if it is still there,
+	 * and resuming one would mean rejoining a party that was never joined.
+	 */
+	void setAmbient(Advertisement ad)
+	{
+		currentAd = ad;
+		host = false;
+		ambient = true;
+		advertiseLayout = false;
+		hostKey = null;
+		forgetHostKey();
+		forgetMembership();
+		fire();
+	}
+
+	/** Whether the party we are in was detected in the game rather than hosted or joined from the board. */
+	boolean isAmbient()
+	{
+		return ambient;
 	}
 
 	/**
@@ -224,6 +254,7 @@ class PartyState
 	{
 		currentAd = null;
 		host = false;
+		ambient = false;
 		advertiseLayout = false;
 		hostKey = null;
 		forgetHostKey();

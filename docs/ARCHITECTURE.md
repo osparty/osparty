@@ -51,6 +51,33 @@ The server holds no *durable* live state across a reconnect: every (re)connect r
 says about itself. That is also why a member re-sends `join` after 90 seconds of silence — long
 enough that a plain reconnect wouldn't explain it, most commonly a logout the socket outlived.
 
+## The ambient room
+
+Most groups are not formed on the board. They are formed in a Discord, and what reaches the game is
+"join my friends chat, world 330" — after which the party is standing together at an activity with
+nothing advertised anywhere to say so. An **ambient room** is the live party for exactly that: opened by
+[`AmbientGroups`](../src/main/java/net/osparty/tools/AmbientGroups.java) with an `attend` frame instead
+of `host`/`join`, keyed by a hash of the friends chat and the activity so everyone in the group derives
+the same room independently, and advertised nowhere. It is off by default (*Detect my group*, under
+Privacy & safety).
+
+This is possible at all because the board and the room were already separate: a room is named by a key
+and nothing about the LIVE channel needs an `Advertisement` to exist. What the room type changes is who
+runs it — nobody. There is no host to admit, kick, lock, re-capacity or transfer, and the room ends when
+its last attendee leaves rather than when a particular one does.
+
+Since the key is derived rather than issued, it cannot be what admits anyone: anyone who can join the
+friends chat can compute it. Admission is instead a **mutual sighting** — two attendees each reporting
+that they can see the other, out of players who are in both their friends chat and their game scene.
+Until that happens an attendee is `PENDING`, which in an ambient room means it is relayed nothing at
+all. A client can lie about what it can see; it cannot make anybody else's client lie about it, and it
+is the other client's word that seats it. See PROTOCOL.md's
+[Ambient rooms](PROTOCOL.md#ambient-rooms).
+
+The player-facing consequence is that the party tools stop being all-or-nothing. Two of five people in
+a Discord-sourced raid running OSParty get each other's gear, vitals, pings, ready checks and RuneWatch
+flags, and the group lands in local history, without anyone hosting anything.
+
 ## Trust model
 
 The dividing line is exactly the board/room split above: the server is authoritative for
@@ -65,6 +92,7 @@ The dividing line is exactly the board/room split above: the server is authorita
 | Kicks (`KICK`) | Account type badge (`NORMAL`/`IRONMAN`/…) | |
 | Lock state | Personal best time (`pbSeconds`) | |
 | Host identity (post-transfer) | World, friends-chat membership | |
+| Seating in an ambient room (two clients each reporting they can see the other) | Who a client says it can see | |
 
 A modified client cannot forge its way into a party, kick another member, or claim capacity that
 isn't there — those all require the owning node to agree. What a member reports about *itself* —

@@ -14,6 +14,7 @@ your party, and optional Discord role badges and voice channels if your communit
 - [What you get](#what-you-get)
 - [The side panel](#the-side-panel)
 - [Finding a party](#finding-a-party)
+- [Groups you didn't advertise](#groups-you-didnt-advertise)
 - [Hosting a party](#hosting-a-party)
 - [Discord (optional)](#discord-optional)
 - [Raid roles](#raid-roles)
@@ -33,6 +34,8 @@ your party, and optional Discord role badges and voice channels if your communit
   still needs.
 - **Invite friends directly** from your in-game friends list; accepted invites skip the
   applicant queue.
+- **Detect the group you're already in**, so the same tools work for a raid you found on Discord
+  and organised in a friends chat, with nobody hosting a party at all.
 - **Learner and teacher tagging**, so new raiders and experienced ones can find each other on
   purpose.
 - **RuneWatch warnings, a block list and reporting**, so you know who you're about to raid with.
@@ -117,6 +120,36 @@ Search.
 
 Your filters (activities, roles, loot, ironman, learner and which sections are expanded) are
 remembered across sessions.
+
+## Groups you didn't advertise
+
+Most raids aren't found on a party finder. They're found in a Discord, and what happens in game is
+"join my friends chat, world 330" — at which point everyone involved is standing together with
+nothing advertised anywhere.
+
+Turn on **Detect my group** (Privacy & safety, off by default) and OSParty picks that up on its own.
+When you're in a friends chat, at one of the 19 activities, with someone from that chat on screen
+with you, the Party tab fills in with everyone else there who is also running OSParty: their gear,
+inventory, stats, vitals, map pings, ready checks and RuneWatch flags, exactly as if you'd all
+joined the same party. It shows up as a group rather than a party — no host, no invite code, nothing
+listed on the board — and the raid lands in your History like any other.
+
+Nobody has to install anything for you to benefit: with two of five people in a raid running
+OSParty, those two see each other. Nothing is advertised and nothing is joinable from it.
+
+Two things to know about how it decides who's in your group:
+
+- **You're only put in a group with someone once you've each been seen standing with the other.**
+  The room a group shares is worked out from the friends chat's name, which means anyone who can
+  join that chat could work it out too — so knowing it isn't what gets anyone in. Until two clients
+  have each reported the other on screen, neither is sent anything at all.
+- **The only players named to the server are ones in your friends chat *and* on your screen.** Not
+  bystanders, and not people in the chat who are somewhere else. That's the whole of what is sent,
+  it's used only to work out who was standing with whom, and none of it is stored.
+
+"Stop sharing" on the Party tab leaves the group and keeps you out of it until you next log in, and
+turning the setting off stops all of it. A party you host or apply to always wins: while you're in
+one, nothing is detected.
 
 ## Hosting a party
 
@@ -262,6 +295,11 @@ toggles, and each role's tile colour is configurable — see the Player markers 
 - **Hide my gear / Hide my inventory** — two Privacy & safety settings that stop your equipped
   gear or inventory (including rune pouch contents) from being shared with the rest of your
   party. Both off by default, same as everything else you broadcast.
+- **Detected groups** — while Detect my group is on, and only while you're in a friends chat at an
+  activity, your client tells the server the names of players who are both in that chat and on your
+  screen. Nobody else is named, the names are used for one thing (working out who was standing with
+  whom, so that two people who were can share the party tools) and none of it is stored. Nothing is
+  sent while the setting is off, and nothing is sent about a party you host or joined normally.
 - **What's self-reported vs server-authoritative** — who's actually in a party, who's pending
   and what its capacity is are answered by the server, not by any client's claim, so admission,
   capacity and kicks hold even against a modified client. What a member reports about itself —
@@ -341,6 +379,7 @@ All off by default.
 
 | Setting | What it does |
 |---|---|
+| Detect my group | Share the party tools with other OSParty users in your friends chat while you're at an activity together, without hosting or joining a party. Off by default; see [Groups you didn't advertise](#groups-you-didnt-advertise). |
 | Hide my inventory | Don't share your inventory (including rune pouch contents) with the party. |
 | Hide my gear | Don't share your equipped gear with the party. |
 | RuneWatch warnings | Warn when a member or applicant is on the RuneWatch / We Do Raids watchlist. |

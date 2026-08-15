@@ -176,6 +176,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private CoxRaidScanner coxRaidScanner;
 
 	@Inject
+	private AmbientGroups ambientGroups;
+
+	@Inject
 	private InfoBoxManager infoBoxManager;
 
 	// Reaches Player Indicators so our overhead party names don't print through the names it
@@ -416,6 +419,14 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			() -> net.osparty.ui.DeviceManagerDialog.open(panel, socket, accountRecovery),
 			accountRecovery::openRecovery);
 
+		// A group found in the game shows up as the party we're in, and stepping out of one has to reach the
+		// detector rather than just the panel — the friends chat is still there, and the next tick would put
+		// us straight back into it.
+		ambientGroups.setOnDetected(group -> panel.enterAmbientGroup(group.getRoom(),
+			group.getActivity().getId(), getCurrentWorld()));
+		ambientGroups.setOnEnded(() -> panel.exitAmbientGroup());
+		panel.setOnLeaveAmbientGroup(() -> clientThread.invoke(ambientGroups::dismissCurrent));
+
 		navIcon = ImageUtil.loadImageResource(getClass(), "panel_icon.png");
 		buildNavButtons();
 
@@ -440,6 +451,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// These live on singletons that outlast the plugin, so a restart would otherwise stack callbacks
 		// onto a dead instance. Every setter tolerates null.
 		apiClient.setInviteListener(null);
+		ambientGroups.setOnDetected(null);
+		ambientGroups.setOnEnded(null);
+		ambientGroups.reset();
 		liveParty.setOnReadyCheckStarted(null);
 		liveParty.setOnAllReady(null);
 		liveParty.setOnReadyExpired(null);
@@ -596,6 +610,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		if (event.getGameState() == GameState.LOGIN_SCREEN)
 		{
 			rejoinChecked = false;
+			ambientGroups.reset();
 		}
 	}
 
@@ -652,6 +667,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		// Show the next in-game invite prompt if the chatbox is free.
 		drainInvitePrompts();
+
+		// Look for a group we're in without having advertised one, and keep its room in step with who we
+		// can actually see. Before liveParty.tick(), so a group found this tick is attended in the same one.
+		ambientGroups.tick();
 
 		// Push pending host state / our own live snapshot (client thread).
 		liveParty.tick();
