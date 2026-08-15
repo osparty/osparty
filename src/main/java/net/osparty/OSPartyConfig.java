@@ -204,6 +204,38 @@ public interface OSPartyConfig extends Config
 		return false;
 	}
 
+	String SUGGEST_PARTY = "suggestParty";
+
+	@ConfigItem(
+		keyName = SUGGEST_PARTY,
+		name = "Suggest a party for my group",
+		description = "When you're at an activity with players from your own friends chat, offer to start a "
+			+ "party for them. The check is entirely local -- nothing about the group is sent anywhere unless "
+			+ "you take the offer.",
+		position = 5,
+		section = HOSTING
+	)
+	default boolean suggestParty()
+	{
+		return true;
+	}
+
+	String ACCEPT_FRIENDS_CHAT = "acceptFriendsChat";
+
+	@ConfigItem(
+		keyName = ACCEPT_FRIENDS_CHAT,
+		name = "Accept my friends chat",
+		description = "Accept applicants who are already in your friends chat and standing with you, instead "
+			+ "of asking. Blocked players and anyone on the RuneWatch / We Do Raids watchlist are never "
+			+ "accepted this way.",
+		position = 6,
+		section = HOSTING
+	)
+	default boolean acceptFriendsChat()
+	{
+		return false;
+	}
+
 	// ---- Notifications ----
 
 	@ConfigItem(

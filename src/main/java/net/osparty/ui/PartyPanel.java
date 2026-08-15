@@ -107,6 +107,8 @@ class PartyPanel extends JPanel
 	private final PartyState partyState;
 	private final ItemManager itemManager;
 	private final LivePartyBackend liveParty;
+	/** Answers whether an applicant is standing here with us; null until the plugin wires it. */
+	private net.osparty.tools.GroupDetector groupDetector;
 	private final RuneWatchService runeWatch;
 	private final KillcountService killcounts;
 	private final SkillIconManager skillIcons;
@@ -613,6 +615,18 @@ class PartyPanel extends JPanel
 				&& liveParty.admit(member.getMemberId(), member.getName()))
 			{
 				hostApplicationHandler.announceInvitedAdmitted(applicant, activity);
+				continue;
+			}
+
+			// Someone already in our friends chat and standing here with us: the group this party was started
+			// for. Accepting them by hand is a click that confirms what the game has already shown us, so the
+			// setting exists to skip it -- but never past the two checks that are the reason to look at all.
+			if (!blocked && config.acceptFriendsChat() && groupDetector != null
+				&& groupDetector.isStandingWith(member.getName())
+				&& runeWatch.get(member.getName()) == null
+				&& liveParty.admit(member.getMemberId(), member.getName()))
+			{
+				hostApplicationHandler.announceChatAdmitted(applicant, activity);
 				continue;
 			}
 
@@ -2002,6 +2016,12 @@ class PartyPanel extends JPanel
 		});
 		actions.add(button, BorderLayout.CENTER);
 		return actions;
+	}
+
+	/** Wire in what answers "is this applicant standing here with us", for accepting out of a friends chat. */
+	void setGroupDetector(net.osparty.tools.GroupDetector groupDetector)
+	{
+		this.groupDetector = groupDetector;
 	}
 
 	/** Wire the host-only "Edit party" button to the owning panel's edit flow. */

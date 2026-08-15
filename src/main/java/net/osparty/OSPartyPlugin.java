@@ -176,6 +176,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private CoxRaidScanner coxRaidScanner;
 
 	@Inject
+	private GroupDetector groupDetector;
+
+	@Inject
 	private InfoBoxManager infoBoxManager;
 
 	// Reaches Player Indicators so our overhead party names don't print through the names it
@@ -416,6 +419,14 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			() -> net.osparty.ui.DeviceManagerDialog.open(panel, socket, accountRecovery),
 			accountRecovery::openRecovery);
 
+		// The group detector feeds two things: the offer to host a party for a group we're standing in, and
+		// the Party tab's question about whether an applicant is one of the people standing there.
+		groupDetector.setOnSuggest(group -> panel.suggestParty(
+			group.getActivity().getDisplayName(), group.getStandingWith()));
+		groupDetector.setOnGone(() -> panel.clearPartySuggestion());
+		panel.setOnDismissGroup(() -> clientThread.invoke(groupDetector::dismissCurrent));
+		panel.setGroupDetector(groupDetector);
+
 		navIcon = ImageUtil.loadImageResource(getClass(), "panel_icon.png");
 		buildNavButtons();
 
@@ -440,6 +451,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// These live on singletons that outlast the plugin, so a restart would otherwise stack callbacks
 		// onto a dead instance. Every setter tolerates null.
 		apiClient.setInviteListener(null);
+		groupDetector.setOnSuggest(null);
+		groupDetector.setOnGone(null);
+		groupDetector.reset();
 		liveParty.setOnReadyCheckStarted(null);
 		liveParty.setOnAllReady(null);
 		liveParty.setOnReadyExpired(null);
@@ -596,6 +610,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		if (event.getGameState() == GameState.LOGIN_SCREEN)
 		{
 			rejoinChecked = false;
+			groupDetector.reset();
 		}
 	}
 
@@ -652,6 +667,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		// Show the next in-game invite prompt if the chatbox is free.
 		drainInvitePrompts();
+
+		// Notice a group we're standing in that nobody has hosted a party for. Local only: what this reads
+		// is the friends chat, the region and the scene, and it goes no further than the panel.
+		groupDetector.tick();
 
 		// Push pending host state / our own live snapshot (client thread).
 		liveParty.tick();
@@ -1027,6 +1046,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	{
 		chat(applicant.getName() + " accepted your invite and joined your "
 			+ activity.getDisplayName() + " party.", true);
+	}
+
+	@Override
+	public void announceChatAdmitted(Applicant applicant, Activity activity)
+	{
+		chat(applicant.getName() + " joined your " + activity.getDisplayName()
+			+ " party (in your friends chat, and here).", true);
 	}
 
 	/** A compact one-liner about an applicant (cb, KC, PB, total, account type, RuneWatch). */

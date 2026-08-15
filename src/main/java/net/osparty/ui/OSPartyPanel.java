@@ -113,6 +113,15 @@ public class OSPartyPanel extends PluginPanel
 	 * fight for the same corner.
 	 */
 	private final JPanel signInBanner;
+	/**
+	 * Offers to host a party for the group the player is already standing in. Built once and shown or hidden,
+	 * like the sign-in banner: the suggestion comes and goes with the group, and rebuilding a component on
+	 * every game tick to say the same thing would be a waste of the EDT.
+	 */
+	private final JPanel groupBanner;
+	private final JLabel groupBannerText = new JLabel();
+	/** What to run when the player waves the suggestion away, so it does not come straight back. */
+	private Runnable onDismissGroup;
 	/** Stacked invite banners shown at the top of the panel; keyed by backend party id. EDT only. */
 	private final JPanel invitePanel = buildInvitePanel();
 	private final java.util.Map<String, JPanel> inviteBanners = new java.util.HashMap<>();
@@ -189,6 +198,7 @@ public class OSPartyPanel extends PluginPanel
 		this.historyService = historyService;
 		this.openDeviceManager = openDeviceManager;
 		this.signInBanner = buildSignInBanner(openSignInHelp);
+		this.groupBanner = buildGroupBanner();
 		this.partyState = new PartyState(configManager);
 		this.hostTransferHandler = new HostTransferHandler(liveParty, boardService, partyState,
 			playerNameSupplier, accountTypeSupplier, gameMessage);
@@ -299,6 +309,7 @@ public class OSPartyPanel extends PluginPanel
 		notices.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		notices.add(signInBanner, BorderLayout.NORTH);
 		notices.add(invitePanel, BorderLayout.CENTER);
+		notices.add(groupBanner, BorderLayout.SOUTH);
 		north.add(notices, BorderLayout.NORTH);
 		north.add(tabGroup, BorderLayout.CENTER);
 
@@ -425,6 +436,99 @@ public class OSPartyPanel extends PluginPanel
 		signInBanner.setVisible(!signedIn);
 		signInBanner.revalidate();
 		signInBanner.repaint();
+	}
+
+	/**
+	 * The "you're standing in a group, want a party for it?" banner. Built hidden; {@link #suggestParty}
+	 * fills in the activity and shows it.
+	 */
+	private JPanel buildGroupBanner()
+	{
+		JPanel banner = new JPanel(new BorderLayout(6, 0));
+		banner.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		banner.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(0, 2, 0, 0, ColorScheme.BRAND_ORANGE),
+			BorderFactory.createEmptyBorder(6, 6, 6, 6)));
+
+		groupBannerText.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		groupBannerText.setFont(FontManager.getRunescapeSmallFont());
+		banner.add(groupBannerText, BorderLayout.CENTER);
+
+		JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+		buttons.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+
+		JButton start = new JButton("Start");
+		start.setFont(FontManager.getRunescapeSmallFont());
+		start.setFocusPainted(false);
+		start.setToolTipText("Open the create form for this activity");
+		start.addActionListener(e -> {
+			// The create form already floats the activity you're standing at to the top of its dropdown and
+			// selects it, so opening the tab is the whole of "start a party for this group". Publishing is
+			// still the Create button: an advertisement goes on a public board, and that is worth a look.
+			tabGroup.select(createTab);
+			dismissGroupSuggestion();
+		});
+		buttons.add(start);
+
+		JButton dismiss = new JButton("✕");
+		dismiss.setFont(FontManager.getRunescapeSmallFont());
+		dismiss.setFocusPainted(false);
+		dismiss.setToolTipText("Don't suggest a party for this group again");
+		dismiss.addActionListener(e -> dismissGroupSuggestion());
+		buttons.add(dismiss);
+
+		banner.add(buttons, BorderLayout.EAST);
+		banner.setVisible(false);
+		return banner;
+	}
+
+	/** Offer to start a party for a group detected in the game. EDT. */
+	public void suggestParty(String activityName, int standingWith)
+	{
+		SwingUtilities.invokeLater(() -> {
+			groupBannerText.setText("<html><body style='width:110px'>"
+				+ standingWith + (standingWith == 1 ? " player" : " players")
+				+ " from your friends chat are here for " + activityName + ".</body></html>");
+			setGroupBannerVisible(true);
+		});
+	}
+
+	/** The group is gone (or the offer was taken); fold the banner away. EDT. */
+	public void clearPartySuggestion()
+	{
+		SwingUtilities.invokeLater(() -> setGroupBannerVisible(false));
+	}
+
+	/** Hand the group detector to the Party tab, which asks it about applicants. */
+	public void setGroupDetector(net.osparty.tools.GroupDetector groupDetector)
+	{
+		partyPanel.setGroupDetector(groupDetector);
+	}
+
+	/** What to run when the player waves the suggestion away, so the detector stops offering it. */
+	public void setOnDismissGroup(Runnable onDismissGroup)
+	{
+		this.onDismissGroup = onDismissGroup;
+	}
+
+	private void dismissGroupSuggestion()
+	{
+		setGroupBannerVisible(false);
+		if (onDismissGroup != null)
+		{
+			onDismissGroup.run();
+		}
+	}
+
+	private void setGroupBannerVisible(boolean visible)
+	{
+		if (groupBanner.isVisible() == visible)
+		{
+			return;
+		}
+		groupBanner.setVisible(visible);
+		groupBanner.revalidate();
+		groupBanner.repaint();
 	}
 
 	private JButton linkButton(String text, String tooltip, String iconFile, String url)
