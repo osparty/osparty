@@ -286,11 +286,9 @@ sign in as you, with Rename and Revoke for each. If you sign in on a new device 
 existing one is already registered, you'll be asked to confirm it with a six-digit coupling
 code.
 
-A newly enrolled device starts out named after your computer's hostname, purely so the list is
-readable rather than a column of dates. It's only ever shown back to you. If you'd rather not
-send it, launch RuneLite with `-Dosparty.deviceLabel=whatever` to pick the name yourself — the
-device is named after its enrolment date if neither is available, and you can rename it from
-this dialog regardless.
+A newly enrolled device starts out named after its enrolment date. Nothing about your machine
+is read for the name — OSParty never sends your computer's hostname — and you can rename any
+device from this dialog.
 
 ## Settings
 

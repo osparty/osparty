@@ -27,14 +27,17 @@ pins the connection to the pod that owns the live party the client is in or join
 [`OSPartySocket.currentUrl()`](../src/main/java/net/osparty/api/OSPartySocket.java#L218-L235).
 Without a party in progress the gateway round-robins.
 
-Three headers ride the WebSocket upgrade request itself
-([`OSPartySocket.connect()`](../src/main/java/net/osparty/api/OSPartySocket.java#L299-L326)):
+Two headers ride the WebSocket upgrade request itself
+([`OSPartySocket.connect()`](../src/main/java/net/osparty/api/OSPartySocket.java#L257-L280)):
 
 | Header | Carries | Notes |
 |---|---|---|
 | `X-OSParty-Auth` | The stored credential for the logged-in character, if this machine has enrolled one | Absent on a fresh install/character; see [Host authentication](#host-authentication) below and the credential system in ARCHITECTURE.md |
 | `X-OSParty-Client` | The plugin version string | So the service can see what's actually deployed rather than guess |
-| `X-OSParty-Device` | A best-effort device label: the `osparty.deviceLabel` system property if set, otherwise the resolved local hostname | Omitted when neither resolves. Only used as a fresh credential's starting display label; never used to decide anything |
+
+There is deliberately no device-name header: hub review rejected sending machine hostnames, so
+nothing about the machine rides the handshake. A newly enrolled device is named server-side
+after its enrolment date, and renamed only by an explicit `renameDevice` frame.
 
 Authentication is entirely out of band from the frames: identity is settled at the handshake,
 not by a login frame.

@@ -97,12 +97,13 @@ variables by design: the plugin hub disallows `System.getenv` outright, which
 | Property | Default | Effect |
 |---|---|---|
 | `osparty.apiUrl` | `https://api.osparty.net` | Base URL of the listing service ([`BoardApiClient`](../src/main/java/net/osparty/api/BoardApiClient.java#L20-L32)) |
-| `osparty.deviceLabel` | the machine's resolved hostname | Name this install reports as `X-OSParty-Device`, used only as the starting label for a newly enrolled device ([`OSPartySocket.deviceLabel()`](../src/main/java/net/osparty/api/OSPartySocket.java#L71-L112)) |
 
-`osparty.deviceLabel` exists both for machines whose hostname doesn't resolve and for anyone who
-would rather not send theirs. When it's unset and the lookup fails, the label is simply omitted
-and the server names the device after its enrolment date; it can be renamed from the device
-manager regardless.
+There is deliberately no device-name property or header: the plugin used to send the machine's
+resolved hostname as a starting label for a newly enrolled device, and
+[a reviewer on the plugin's submission](https://github.com/runelite/plugin-hub/pull/13020)
+rejected it (*"you can't send the hostnames of peoples' computers"*). Nothing about the machine
+is read now; the server names a new device after its enrolment date, and the only way a name
+reaches it is the device manager's explicit rename.
 
 ## Tests
 

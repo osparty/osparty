@@ -69,50 +69,6 @@ public class OSPartySocket extends WebSocketListener
 	/** Sent as {@code X-OSParty-Client} so the service can see the deployed spread instead of guessing. */
 	private static final String VERSION = net.osparty.ui.OSPartyPanel.VERSION;
 
-	/** Overrides the device label outright, for a machine that does not resolve or a user who would rather not send its name. */
-	static final String DEVICE_LABEL_PROPERTY = "osparty.deviceLabel";
-
-	/**
-	 * Sent as {@code X-OSParty-Device} so a freshly enrolled credential starts with a real name instead of a
-	 * bare timestamp -- see {@link net.osparty.ui.DeviceManagerDialog}. Best-effort and unverified, same
-	 * footing as {@link #VERSION}: nothing here is ever used to decide anything, only to display.
-	 */
-	private static String deviceLabel()
-	{
-		String hostname;
-		try
-		{
-			hostname = java.net.InetAddress.getLocalHost().getHostName();
-		}
-		catch (java.net.UnknownHostException e)
-		{
-			hostname = null;
-		}
-		return deviceLabel(System.getProperty(DEVICE_LABEL_PROPERTY), hostname);
-	}
-
-	/**
-	 * The fallback chain on its own, apart from the system calls that feed it, so it can be exercised without
-	 * a real network stack: the local hostname lookup can fail depending on DNS/network config.
-	 *
-	 * <p>The override is a system property and not an environment variable because the plugin hub disallows
-	 * {@code System.getenv} outright -- see the {@code osparty.apiUrl} precedent in {@link BoardApiClient}.
-	 * Returning null is a fine outcome: the server names an unlabelled device after its enrolment date, and
-	 * the user can rename it from the device manager either way.
-	 */
-	static String deviceLabel(String override, String hostname)
-	{
-		if (override != null && !override.isBlank())
-		{
-			return override.trim();
-		}
-		if (hostname != null && !hostname.isBlank())
-		{
-			return hostname;
-		}
-		return null;
-	}
-
 	/**
 	 * The pod the live party wants this connection on, or null for "anywhere".
 	 *
@@ -308,13 +264,9 @@ public class OSPartySocket extends WebSocketListener
 		// The version rides every connection so the service can see what is actually deployed rather than
 		// guess. Released plugins update on their own schedule and there is no way to ask them.
 		request.header("X-OSParty-Client", VERSION);
-		// A best-effort device name, used only as a fresh enrolment's starting label -- see deviceLabel().
-		// Absent rather than sent blank when nothing could be determined.
-		String label = deviceLabel();
-		if (label != null)
-		{
-			request.header("X-OSParty-Device", label);
-		}
+		// Deliberately no device-name header: hub review rejected sending machine hostnames, so nothing
+		// about the machine is read. A fresh device is named server-side after its enrolment date, and
+		// the user renames it from the device manager (see net.osparty.ui.DeviceManagerDialog).
 		// The credential for whoever is logged in, when this machine has one. Sent on the upgrade rather
 		// than in a frame so identity is settled before the connection carries anything, and as a header
 		// rather than a query parameter so it stays out of proxy logs. Every reconnect path funnels through
