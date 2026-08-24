@@ -22,4 +22,7 @@ public interface HostApplicationHandler
 
 	/** An invited player was auto-admitted (no approval needed); post a chat line so the host knows. */
 	void announceInvitedAdmitted(Applicant applicant, Activity activity);
+
+	/** An applicant accepted because they were already in the host's friends chat and standing with them. */
+	void announceChatAdmitted(Applicant applicant, Activity activity);
 }

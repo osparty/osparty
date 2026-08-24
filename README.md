@@ -15,6 +15,7 @@ your party, and optional Discord role badges and voice channels if your communit
 - [The side panel](#the-side-panel)
 - [Finding a party](#finding-a-party)
 - [Hosting a party](#hosting-a-party)
+- [Groups you didn't advertise](#groups-you-didnt-advertise)
 - [Discord (optional)](#discord-optional)
 - [Raid roles](#raid-roles)
 - [Learner and teacher raids](#learner-and-teacher-raids)
@@ -33,6 +34,8 @@ your party, and optional Discord role badges and voice channels if your communit
   still needs.
 - **Invite friends directly** from your in-game friends list; accepted invites skip the
   applicant queue.
+- **A party for the group you're already in**: OSParty spots a friends chat standing at an
+  activity and offers to host one for it, and can take that chat's applicants without asking.
 - **Learner and teacher tagging**, so new raiders and experienced ones can find each other on
   purpose.
 - **RuneWatch warnings, a block list and reporting**, so you know who you're about to raid with.
@@ -161,6 +164,33 @@ Transfer host hands the room to another admitted, online member. It happens imme
 their end — they aren't asked to confirm first, so only use it on someone you'd trust with the
 role. Disbanding offers the same choice as a dialog: transfer to a member and leave, disband for
 everyone, or cancel (with a "don't ask me again" tick for next time).
+
+## Groups you didn't advertise
+
+Most raids aren't found on a party finder. They're found in a Discord, and what happens in game
+is "join my friends chat, world 330" — at which point everyone involved is standing together and
+hosting a party is a second organising step for a group that already exists.
+
+So OSParty offers instead. When you're at one of the 19 activities with players from **your own**
+friends chat on screen, a banner appears at the top of the panel:
+
+> 3 players from your friends chat are here for Theatre of Blood.  **[Start]  [✕]**
+
+Start opens the create form with that activity already selected (it's the same form as always, so
+loot rule, KC bar and roles are still yours to set, and nothing is advertised until you press
+Create party). ✕ dismisses that group for the rest of your session. Only the chat's owner is
+asked — prompting everyone standing there would offer four more parties for one group — and
+nothing is suggested while you're already in a party. Turn it off with Suggest a party for my
+group.
+
+**Accept my friends chat** (off by default) is the other half. With it on, an applicant who is
+already in your friends chat and standing there with you is accepted without asking, the way an
+invited player already is. Anyone on your block list or on the RuneWatch / We Do Raids watchlist
+is never accepted this way, however close they're standing.
+
+All of this is worked out on your own machine, from the friends chat, the map region and who is
+on screen. Nothing about the group is sent anywhere unless you take the offer and host a party,
+at which point it's an ordinary advertisement like any other.
 
 ## Discord (optional)
 
@@ -312,6 +342,8 @@ All under RuneLite's OSParty plugin settings, grouped the same way as in the cli
 | Max applicants shown | Cap on applicants listed in the in-game applicant overlay before "+N more". |
 | Blocked applicant | What happens when a blocked player applies: warn you, auto-reject and notify, or auto-reject silently. |
 | Skip disband confirmation | Don't ask for confirmation before disbanding your own party. |
+| Suggest a party for my group | Offer to host a party when you're at an activity with your own friends chat. On by default; see [Groups you didn't advertise](#groups-you-didnt-advertise). |
+| Accept my friends chat | Accept applicants already in your friends chat and standing with you, except blocked or watchlisted players. Off by default. |
 
 ### Notifications
 
