@@ -413,7 +413,7 @@ public interface OSPartyConfig extends Config
 	@ConfigItem(
 		keyName = "partyChatChannel",
 		name = "Show as",
-		description = "Which chatbox tab party lines appear in: the Channel tab like a friends chat, the Clan tab, or the Game tab.",
+		description = "Which chatbox tab party lines appear in: the Channel tab like a friends chat, the Clan tab, or the Game tab. RuneLite's chat commands (!kc, !pb, ...) only expand in the Channel and Clan tabs.",
 		position = 3,
 		section = CHAT
 	)

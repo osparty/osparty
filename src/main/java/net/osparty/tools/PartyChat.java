@@ -14,6 +14,7 @@ import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.vars.AccountType;
 import net.runelite.client.callback.ClientThread;
+import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.events.ChatboxInput;
 import net.runelite.client.util.ColorUtil;
 import net.runelite.client.util.Text;
@@ -42,22 +43,27 @@ public class PartyChat
 	private final OSPartyConfig config;
 	private final LivePartyBackend liveParty;
 	private final BlockListService blockList;
+	private final EventBus eventBus;
+
+	/** Set while a party line is re-posted for the chat commands, so it is not read as a party line again. */
+	private boolean relaying;
 
 	@Inject
 	PartyChat(Client client, ClientThread clientThread, OSPartyConfig config, LivePartyBackend liveParty,
-		BlockListService blockList)
+		BlockListService blockList, EventBus eventBus)
 	{
 		this.client = client;
 		this.clientThread = clientThread;
 		this.config = config;
 		this.liveParty = liveParty;
 		this.blockList = blockList;
+		this.eventBus = eventBus;
 	}
 
 	/** A line typed into the chatbox. Ours if it starts with the prefix, in which case the game never sees it. */
 	public void onChatboxInput(ChatboxInput input)
 	{
-		if (!config.partyChat())
+		if (relaying || !config.partyChat())
 		{
 			return;
 		}
@@ -77,7 +83,41 @@ public class PartyChat
 		{
 			notice("You're not in a party.");
 		}
-		else if (!liveParty.sendChat(text))
+		else
+		{
+			offerToChatCommands(text, input.getChatType());
+		}
+	}
+
+	/**
+	 * Give RuneLite's chat commands the turn at a party line that they get at a public one. A command like
+	 * {@code !kc} first uploads the sender's count to RuneLite's service and only then lets the line go out
+	 * — it consumes the input and resumes it once the upload is done — and without that turn every
+	 * receiver's lookup comes back empty and the line stays as typed. So the text is re-posted as a chatbox
+	 * input of its own, with the party send as its resumption: a command that claims it sends it when ready,
+	 * and if none does it is sent at once.
+	 */
+	private void offerToChatCommands(String text, int chatType)
+	{
+		ChatboxInput offered = new ChatboxInput(text, chatType, () -> clientThread.invoke(() -> send(text)));
+		relaying = true;
+		try
+		{
+			eventBus.post(offered);
+		}
+		finally
+		{
+			relaying = false;
+		}
+		if (!offered.isConsumed())
+		{
+			send(text);
+		}
+	}
+
+	private void send(String text)
+	{
+		if (!liveParty.sendChat(text))
 		{
 			notice(liveParty.isLocalAdmitted()
 				? "Party chat is reconnecting; that line wasn't sent."

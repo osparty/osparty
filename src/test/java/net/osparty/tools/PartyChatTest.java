@@ -1,5 +1,7 @@
 package net.osparty.tools;
 
+import java.util.ArrayList;
+import java.util.List;
 import net.osparty.OSPartyConfig;
 import net.osparty.enums.PartyChatChannel;
 import net.osparty.party.LivePartyBackend;
@@ -10,6 +12,8 @@ import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.vars.AccountType;
 import net.runelite.client.callback.ClientThread;
+import net.runelite.client.eventbus.EventBus;
+import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ChatboxInput;
 import org.junit.Before;
 import org.junit.Test;
@@ -39,7 +43,25 @@ public class PartyChatTest
 	private OSPartyConfig config;
 	private LivePartyBackend liveParty;
 	private BlockListService blockList;
+	private ChatCommands commands;
 	private PartyChat chat;
+
+	/** Stands in for RuneLite's chat commands: sees every chatbox input, and claims them when told to. */
+	private static final class ChatCommands
+	{
+		final List<ChatboxInput> seen = new ArrayList<>();
+		boolean claims;
+
+		@Subscribe
+		public void onChatboxInput(ChatboxInput input)
+		{
+			seen.add(input);
+			if (claims)
+			{
+				input.consume();
+			}
+		}
+	}
 
 	@Before
 	public void setUp()
@@ -59,7 +81,19 @@ public class PartyChatTest
 		when(config.partyChatChannel()).thenReturn(PartyChatChannel.FRIENDS_CHAT);
 		liveParty = mock(LivePartyBackend.class);
 		blockList = mock(BlockListService.class);
-		chat = new PartyChat(client, clientThread, config, liveParty, blockList);
+		EventBus eventBus = new EventBus();
+		commands = new ChatCommands();
+		eventBus.register(commands);
+		chat = new PartyChat(client, clientThread, config, liveParty, blockList, eventBus);
+		// As the plugin wires it: every chatbox input on the bus reaches party chat too.
+		eventBus.register(new Object()
+		{
+			@Subscribe
+			public void onChatboxInput(ChatboxInput input)
+			{
+				chat.onChatboxInput(input);
+			}
+		});
 	}
 
 	// ---- what counts as a party line ----------------------------------------
@@ -151,6 +185,49 @@ public class PartyChatTest
 
 		verify(client).addChatMessage(eq(ChatMessageType.GAMEMESSAGE), eq(""), contains("hasn't admitted"),
 			isNull());
+	}
+
+	// ---- RuneLite's chat commands inside a party line --------------------------
+
+	@Test
+	public void theLineIsOfferedToTheChatCommandsAndSentAtOnceWhenNoneClaimsIt()
+	{
+		when(liveParty.isInParty()).thenReturn(true);
+		when(liveParty.sendChat("!kc cox")).thenReturn(true);
+
+		chat.onChatboxInput(new ChatboxInput("!p !kc cox", 0, () -> { }));
+
+		assertEquals(1, commands.seen.size());
+		assertEquals("!kc cox", commands.seen.get(0).getValue());
+		verify(liveParty).sendChat("!kc cox");
+	}
+
+	@Test
+	public void aCommandThatClaimsTheLineSendsItWhenItResumes()
+	{
+		when(liveParty.isInParty()).thenReturn(true);
+		when(liveParty.sendChat("!kc cox")).thenReturn(true);
+		commands.claims = true;
+
+		chat.onChatboxInput(new ChatboxInput("!p !kc cox", 0, () -> { }));
+		// !kc is still uploading the count; nothing may go out before it has.
+		verify(liveParty, never()).sendChat(anyString());
+
+		commands.seen.get(0).resume();
+		verify(liveParty).sendChat("!kc cox");
+	}
+
+	@Test
+	public void theOfferedLineIsNotReadAsAPartyLineAgain()
+	{
+		when(liveParty.isInParty()).thenReturn(true);
+		when(liveParty.sendChat("!p hi")).thenReturn(true);
+
+		chat.onChatboxInput(new ChatboxInput("!p !p hi", 0, () -> { }));
+
+		verify(liveParty).sendChat("!p hi");
+		verify(liveParty, never()).sendChat("hi");
+		assertEquals(1, commands.seen.size());
 	}
 
 	@Test
