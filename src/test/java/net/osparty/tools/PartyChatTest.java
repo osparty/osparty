@@ -10,6 +10,7 @@ import net.osparty.service.BlockListService;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
+import net.runelite.api.gameval.VarClientID;
 import net.runelite.api.vars.AccountType;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.eventbus.EventBus;
@@ -240,6 +241,149 @@ public class PartyChatTest
 
 		assertFalse(input.isConsumed());
 		verify(liveParty, never()).sendChat(anyString());
+	}
+
+	// ---- party chat mode ----------------------------------------------------
+
+	/** Types the prefix on its own, from inside a party. */
+	private void enterPartyMode()
+	{
+		when(liveParty.isInParty()).thenReturn(true);
+		chat.onChatboxInput(new ChatboxInput("!p", 0, () -> { }));
+	}
+
+	private ChatboxInput typed(String value, int chatType)
+	{
+		ChatboxInput input = new ChatboxInput(value, chatType, () -> { });
+		chat.onChatboxInput(input);
+		return input;
+	}
+
+	@Test
+	public void thePrefixAloneTurnsPartyModeOnAndPlainLinesThenGoToTheParty()
+	{
+		when(liveParty.sendChat("hi")).thenReturn(true);
+
+		enterPartyMode();
+		verify(client).addChatMessage(eq(ChatMessageType.GAMEMESSAGE), eq(""), contains("mode on"), isNull());
+
+		assertTrue(typed("hi", 0).isConsumed());
+		verify(liveParty).sendChat("hi");
+		// Offered to the chat commands like any other party line.
+		assertEquals("hi", commands.seen.get(0).getValue());
+	}
+
+	@Test
+	public void thePrefixAgainTurnsPartyModeOff()
+	{
+		enterPartyMode();
+
+		assertTrue(typed("!p", 0).isConsumed());
+		verify(client).addChatMessage(eq(ChatMessageType.GAMEMESSAGE), eq(""), contains("mode off"), isNull());
+
+		assertFalse(typed("hi", 0).isConsumed());
+		verify(liveParty, never()).sendChat(anyString());
+	}
+
+	@Test
+	public void prefixedLinesStillWorkInPartyMode()
+	{
+		when(liveParty.sendChat("gz")).thenReturn(true);
+		enterPartyMode();
+
+		assertTrue(typed("!p gz", 0).isConsumed());
+		verify(liveParty).sendChat("gz");
+	}
+
+	@Test
+	public void partyModeLeavesLinesThePlayerRoutedElsewhereToTheGame()
+	{
+		enterPartyMode();
+
+		// "/hello" to the clan, "/hello" to a friends chat, "//hello" to a guest clan, and a "::" command.
+		assertFalse(typed("hello", 3).isConsumed());
+		assertFalse(typed("hello", 2).isConsumed());
+		assertFalse(typed("hello", 4).isConsumed());
+		assertFalse(typed("::toggleroof", 1).isConsumed());
+		assertFalse(typed("::toggleroof", 0).isConsumed());
+		verify(liveParty, never()).sendChat(anyString());
+	}
+
+	@Test
+	public void partyModeFollowsTheChatboxMode()
+	{
+		// The chatbox is in clan mode, so an unprefixed line reaches us already routed to the clan.
+		when(client.getVarcIntValue(VarClientID.CHATBOX_MODE)).thenReturn(2);
+		when(liveParty.sendChat("hi")).thenReturn(true);
+		enterPartyMode();
+
+		assertTrue(typed("hi", 3).isConsumed());
+		verify(liveParty).sendChat("hi");
+		// "//hi" is the player's own doing, and stays with the guest clan.
+		assertFalse(typed("hi", 4).isConsumed());
+	}
+
+	@Test
+	public void partyModeCannotBeEnteredOutsideAParty()
+	{
+		when(liveParty.isInParty()).thenReturn(false);
+
+		assertTrue(typed("!p", 0).isConsumed());
+		verify(client).addChatMessage(eq(ChatMessageType.GAMEMESSAGE), eq(""), contains("not in a party"),
+			isNull());
+
+		assertFalse(typed("hi", 0).isConsumed());
+	}
+
+	@Test
+	public void partyModeEndsWithTheParty()
+	{
+		enterPartyMode();
+		when(liveParty.isInParty()).thenReturn(false);
+
+		chat.onGameTick();
+
+		verify(client).addChatMessage(eq(ChatMessageType.GAMEMESSAGE), eq(""), contains("mode off"), isNull());
+		assertFalse(typed("hi", 0).isConsumed());
+	}
+
+	@Test
+	public void aLineTypedInPartyModeAfterThePartyEndedIsSwallowedNotLeaked()
+	{
+		enterPartyMode();
+		when(liveParty.isInParty()).thenReturn(false);
+
+		// No tick has run yet to notice the party is gone; the line was meant for it all the same.
+		assertTrue(typed("hi", 0).isConsumed());
+		verify(liveParty, never()).sendChat(anyString());
+		verify(client).addChatMessage(eq(ChatMessageType.GAMEMESSAGE), eq(""), contains("mode off"), isNull());
+
+		assertFalse(typed("hi", 0).isConsumed());
+	}
+
+	@Test
+	public void partyModeIsForgottenWhenChatIsSwitchedOffOrThePluginRestarts()
+	{
+		enterPartyMode();
+		chat.reset();
+		assertFalse(typed("hi", 0).isConsumed());
+
+		enterPartyMode();
+		when(config.partyChat()).thenReturn(false);
+		assertFalse(typed("hi", 0).isConsumed());
+		when(config.partyChat()).thenReturn(true);
+		assertFalse(typed("hi", 0).isConsumed());
+	}
+
+	@Test
+	public void theChatboxModeTableMatchesTheChatSendScript()
+	{
+		assertEquals(0, PartyChat.chatTypeOfMode(0));
+		assertEquals(2, PartyChat.chatTypeOfMode(1));
+		assertEquals(3, PartyChat.chatTypeOfMode(2));
+		assertEquals(4, PartyChat.chatTypeOfMode(3));
+		assertEquals(3, PartyChat.chatTypeOfMode(4));
+		assertEquals(0, PartyChat.chatTypeOfMode(99));
 	}
 
 	// ---- party lines --------------------------------------------------------

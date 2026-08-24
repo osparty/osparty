@@ -12,6 +12,7 @@ import net.osparty.service.BlockListService;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
+import net.runelite.api.gameval.VarClientID;
 import net.runelite.api.vars.AccountType;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.eventbus.EventBus;
@@ -25,6 +26,10 @@ import net.runelite.client.util.Text;
  * party, our own included, are added to the chatbox the way a friends chat's are, under an {@code [OSParty]}
  * channel name, so they land in whichever tab the player keeps that kind of chat in.
  *
+ * <p>The prefix on its own switches <em>party chat mode</em>, the counterpart of the game's own {@code /@c}:
+ * while it is on, whatever the player types goes to the party, except for a line they route somewhere
+ * else themselves with {@code /} or {@code ::}. It ends with the party, or with the prefix typed again.
+ *
  * <p>The prefix is matched on what RuneLite hands us, which is not always what was typed: the game resolves
  * its own {@code /} prefixes first (see {@link #extract}).
  */
@@ -34,8 +39,11 @@ public class PartyChat
 	/** What the chatbox shows in front of every party line, where a friends chat shows its channel name. */
 	static final String CHANNEL = "OSParty";
 
-	// ChatboxInput.getChatType(): 0 public, 1 cheat, 2 friends chat, 3 clan, 4 guest clan.
+	// ChatboxInput.getChatType(): the channel the game resolved the line to before RuneLite saw it.
+	private static final int PUBLIC = 0;
+	private static final int CHEAT = 1;
 	private static final int FRIENDS_CHAT = 2;
+	private static final int CLAN_CHAT = 3;
 	private static final int GUEST_CLAN_CHAT = 4;
 
 	private final Client client;
@@ -47,6 +55,8 @@ public class PartyChat
 
 	/** Set while a party line is re-posted for the chat commands, so it is not read as a party line again. */
 	private boolean relaying;
+	/** Whether unprefixed lines go to the party. Client-thread state, but read by {@link #reset} on shutdown. */
+	private volatile boolean partyMode;
 
 	@Inject
 	PartyChat(Client client, ClientThread clientThread, OSPartyConfig config, LivePartyBackend liveParty,
@@ -60,24 +70,82 @@ public class PartyChat
 		this.eventBus = eventBus;
 	}
 
-	/** A line typed into the chatbox. Ours if it starts with the prefix, in which case the game never sees it. */
+	/**
+	 * A line typed into the chatbox. Ours if it starts with the prefix, or if party chat mode is on and the
+	 * player did not route it elsewhere; either way the game never sees it.
+	 */
 	public void onChatboxInput(ChatboxInput input)
 	{
-		if (relaying || !config.partyChat())
+		if (relaying)
 		{
+			return;
+		}
+		if (!config.partyChat())
+		{
+			partyMode = false;
 			return;
 		}
 		String prefix = config.partyChatPrefix();
 		String text = extract(input.getValue(), input.getChatType(), prefix);
+		if (text != null && text.isEmpty())
+		{
+			// The prefix on its own is the mode switch.
+			input.consume();
+			togglePartyMode(prefix.trim());
+			return;
+		}
 		if (text == null)
 		{
-			return;
+			if (!partyMode || !unrouted(input))
+			{
+				return;
+			}
+			text = input.getValue().trim();
+			if (text.isEmpty() || text.startsWith("::"))
+			{
+				return;
+			}
 		}
 		// Consumed whether or not it can be sent: a line meant for the party must not go out as public chat.
 		input.consume();
-		if (text.isEmpty())
+		if (!liveParty.isInParty())
 		{
-			notice("Type " + prefix.trim() + " followed by a message to talk to your party.");
+			if (partyMode)
+			{
+				endPartyMode();
+			}
+			else
+			{
+				notice("You're not in a party.");
+			}
+		}
+		else
+		{
+			offerToChatCommands(text, input.getChatType());
+		}
+	}
+
+	/** Party chat mode ends with the party, so the next line typed is not swallowed on its way to public chat. */
+	public void onGameTick()
+	{
+		if (partyMode && !liveParty.isInParty())
+		{
+			endPartyMode();
+		}
+	}
+
+	/** Forget the chat mode: the plugin is going down, and must not come back up still in it. */
+	public void reset()
+	{
+		partyMode = false;
+	}
+
+	private void togglePartyMode(String prefix)
+	{
+		if (partyMode)
+		{
+			partyMode = false;
+			notice("Party chat mode off.");
 		}
 		else if (!liveParty.isInParty())
 		{
@@ -85,7 +153,46 @@ public class PartyChat
 		}
 		else
 		{
-			offerToChatCommands(text, input.getChatType());
+			partyMode = true;
+			notice("Party chat mode on: everything you type now goes to your party. Type " + prefix
+				+ " again to turn it off.");
+		}
+	}
+
+	private void endPartyMode()
+	{
+		partyMode = false;
+		notice("Party chat mode off: you're no longer in a party.");
+	}
+
+	/**
+	 * Whether the line is going wherever the chatbox sends lines by default, rather than somewhere the player
+	 * pointed it with a prefix. The game resolves its own prefixes before we see a line, and what is left is
+	 * the channel it chose: a line routed with {@code /} shows up on a channel other than the chatbox mode's,
+	 * and a {@code ::} command on the cheat channel. Party chat mode claims only the default.
+	 */
+	private boolean unrouted(ChatboxInput input)
+	{
+		int chatType = input.getChatType();
+		return chatType != CHEAT && chatType == chatTypeOfMode(client.getVarcIntValue(VarClientID.CHATBOX_MODE));
+	}
+
+	/** The channel the game's chat-send script resolves each chatbox mode to (its own table, script 5517). */
+	static int chatTypeOfMode(int chatboxMode)
+	{
+		switch (chatboxMode)
+		{
+			case 1:
+				return FRIENDS_CHAT;
+			case 2:
+				return CLAN_CHAT;
+			case 3:
+				return GUEST_CLAN_CHAT;
+			case 4:
+				// Group ironman chat rides the clan channel, told apart by a target flag we never see.
+				return CLAN_CHAT;
+			default:
+				return PUBLIC;
 		}
 	}
 

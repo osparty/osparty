@@ -401,7 +401,7 @@ public interface OSPartyConfig extends Config
 	@ConfigItem(
 		keyName = "partyChatPrefix",
 		name = "Chat prefix",
-		description = "What to type in front of a message to send it to your party, e.g. \"!p on my way\". A prefix starting with / also works (the game strips the slash, so OSParty matches the rest on lines headed for clan or friends chat).",
+		description = "What to type in front of a message to send it to your party, e.g. \"!p on my way\". Typed on its own it switches party chat mode on or off, where everything you type goes to the party. A prefix starting with / also works (the game strips the slash, so OSParty matches the rest on lines headed for clan or friends chat).",
 		position = 2,
 		section = CHAT
 	)

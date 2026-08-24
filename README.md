@@ -226,7 +226,9 @@ toggles, and each role's tile colour is configurable — see the Player markers 
   as `[OSParty] Name: message` — ironman icon and all, like a friends-chat line — in the Channel
   tab, or in the Clan or Game tab if you prefer. RuneLite's chat commands work inside a party
   line too (`!p !kc cox`), except in the Game tab. Lines from anyone on your block list are
-  dropped.
+  dropped. Type `!p` on its own to switch **party chat mode** on, like the game's `/@c`:
+  everything you type then goes to the party, apart from lines you route elsewhere yourself with
+  `/` or `::`, until you type `!p` again or the party ends.
 - **Map pings** — hold the ping hotkey (default the backtick key) and left-click a tile to ping
   it for the whole party. Incoming pings animate on the scene in the sender's colour, with an
   optional arrow at the screen edge for off-screen ones.
@@ -356,7 +358,7 @@ All off by default.
 | Setting | What it does |
 |---|---|
 | Party chat | Send and receive party chat in the game chatbox. |
-| Chat prefix | What to type in front of a message to send it to your party (default `!p`). |
+| Chat prefix | What to type in front of a message to send it to your party (default `!p`). On its own it toggles party chat mode. |
 | Show as | Which chatbox tab party lines appear in: Channel (as friends chat), Clan, or Game. |
 
 ### Map pings

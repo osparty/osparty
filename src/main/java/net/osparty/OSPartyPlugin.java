@@ -442,6 +442,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	{
 		liveParty.leave();
 		liveParty.unregister();
+		partyChat.reset();
 		// These live on singletons that outlast the plugin, so a restart would otherwise stack callbacks
 		// onto a dead instance. Every setter tolerates null.
 		apiClient.setInviteListener(null);
@@ -660,6 +661,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		// Push pending host state / our own live snapshot (client thread).
 		liveParty.tick();
+		partyChat.onGameTick();
 
 		// Resolve this tick's local special attack, then apply all queued drains
 		// (local and party members') and clear dead targets.
