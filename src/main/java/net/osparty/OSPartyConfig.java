@@ -5,6 +5,7 @@ import java.awt.Color;
 import net.osparty.enums.BlockedApplicantAction;
 import net.osparty.enums.DefenceOverlayPosition;
 import net.osparty.enums.MagicDefenceDisplay;
+import net.osparty.enums.PartyChatChannel;
 import net.osparty.enums.SceneFontSize;
 import net.runelite.client.config.Alpha;
 import net.runelite.client.config.Config;
@@ -60,9 +61,17 @@ public interface OSPartyConfig extends Config
 	String PRIVACY = "privacy";
 
 	@ConfigSection(
+		name = "Party chat",
+		description = "Talk to your party from the game chatbox, the way you would in a clan or friends chat.",
+		position = 6,
+		closedByDefault = true
+	)
+	String CHAT = "chat";
+
+	@ConfigSection(
 		name = "Map pings",
 		description = "Tile pings you and your party draw on the game scene.",
-		position = 6,
+		position = 7,
 		closedByDefault = true
 	)
 	String MAP_PINGS = "mapPings";
@@ -70,7 +79,7 @@ public interface OSPartyConfig extends Config
 	@ConfigSection(
 		name = "Player markers",
 		description = "Names above party members, plus the icons and tile markers for learners and teachers.",
-		position = 7,
+		position = 8,
 		closedByDefault = true
 	)
 	String MARKERS = "markers";
@@ -78,7 +87,7 @@ public interface OSPartyConfig extends Config
 	@ConfigSection(
 		name = "Defence tracker",
 		description = "Show the live defence of a monster the party is draining with special attacks.",
-		position = 8,
+		position = 9,
 		closedByDefault = true
 	)
 	String DEFENCE = "defence";
@@ -373,6 +382,44 @@ public interface OSPartyConfig extends Config
 	default boolean runeWatch()
 	{
 		return true;
+	}
+
+	// ---- Party chat ----
+
+	@ConfigItem(
+		keyName = "partyChat",
+		name = "Party chat",
+		description = "Send and receive party chat in the game chatbox. Type the prefix, a space and your message to talk to your party; the line never reaches public or clan chat.",
+		position = 1,
+		section = CHAT
+	)
+	default boolean partyChat()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "partyChatPrefix",
+		name = "Chat prefix",
+		description = "What to type in front of a message to send it to your party, e.g. \"!p on my way\". A prefix starting with / also works (the game strips the slash, so OSParty matches the rest on lines headed for clan or friends chat).",
+		position = 2,
+		section = CHAT
+	)
+	default String partyChatPrefix()
+	{
+		return "!p";
+	}
+
+	@ConfigItem(
+		keyName = "partyChatChannel",
+		name = "Show as",
+		description = "Which chatbox tab party lines appear in: the Channel tab like a friends chat, the Clan tab, or the Game tab.",
+		position = 3,
+		section = CHAT
+	)
+	default PartyChatChannel partyChatChannel()
+	{
+		return PartyChatChannel.FRIENDS_CHAT;
 	}
 
 	// ---- Map pings ----

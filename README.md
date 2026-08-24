@@ -33,6 +33,8 @@ your party, and optional Discord role badges and voice channels if your communit
   still needs.
 - **Invite friends directly** from your in-game friends list; accepted invites skip the
   applicant queue.
+- **Party chat in the game chatbox** — type `!p` and a message to talk to your party; it shows
+  up like a friends-chat line, `[OSParty] Name: message`.
 - **Learner and teacher tagging**, so new raiders and experienced ones can find each other on
   purpose.
 - **RuneWatch warnings, a block list and reporting**, so you know who you're about to raid with.
@@ -219,6 +221,10 @@ toggles, and each role's tile colour is configurable — see the Player markers 
 
 ## In-game extras
 
+- **Party chat** — type `!p` (configurable) and a message in the normal chatbox to send it to
+  your party; the line never reaches public or clan chat. Everyone's lines, yours included, show
+  as `[OSParty] Name: message` — ironman icon and all, like a friends-chat line — in the Channel
+  tab, or in the Clan or Game tab if you prefer. Lines from anyone on your block list are dropped.
 - **Map pings** — hold the ping hotkey (default the backtick key) and left-click a tile to ping
   it for the whole party. Incoming pings animate on the scene in the sender's colour, with an
   optional arrow at the screen edge for off-screen ones.
@@ -342,6 +348,14 @@ All off by default.
 | Hide my inventory | Don't share your inventory (including rune pouch contents) with the party. |
 | Hide my gear | Don't share your equipped gear with the party. |
 | RuneWatch warnings | Warn when a member or applicant is on the RuneWatch / We Do Raids watchlist. |
+
+### Party chat
+
+| Setting | What it does |
+|---|---|
+| Party chat | Send and receive party chat in the game chatbox. |
+| Chat prefix | What to type in front of a message to send it to your party (default `!p`). |
+| Show as | Which chatbox tab party lines appear in: Channel (as friends chat), Clan, or Game. |
 
 ### Map pings
 

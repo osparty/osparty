@@ -141,6 +141,16 @@ public interface LivePartyBackend
 	 */
 	void sendSpecDrain(int npcIndex, String weapon, int hit, int world);
 
+	// ---- party chat ---------------------------------------------------------
+	/**
+	 * Say something to the party. On success our own {@link PartyChatEvent} is posted too, so the line
+	 * shows for us the way it does for everyone else — the server never echoes a sender its own frame.
+	 *
+	 * @return whether the line went out; false when not in a party, not yet admitted, or the live channel
+	 *     is down, and then nothing is posted either
+	 */
+	boolean sendChat(String text);
+
 	// ---- host transfer ------------------------------------------------------
 	void promoteToHost(String hostName);
 

@@ -17,6 +17,7 @@ import net.osparty.party.HostTransferEvent;
 import net.osparty.party.LiveParty;
 import net.osparty.party.LocalPlayerSnapshot;
 import net.osparty.party.LivePartyBackend;
+import net.osparty.party.PartyChatEvent;
 import net.osparty.party.SpecDrainEvent;
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
@@ -88,6 +89,7 @@ import net.runelite.api.vars.AccountType;
 import net.runelite.client.Notifier;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.events.ChatboxInput;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.audio.AudioPlayer;
 import net.runelite.client.eventbus.Subscribe;
@@ -171,6 +173,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 	@Inject
 	private SpecialAttackTracker specTracker;
+
+	@Inject
+	private PartyChat partyChat;
 
 	@Inject
 	private CoxRaidScanner coxRaidScanner;
@@ -727,6 +732,18 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	public void onSpecDrainEvent(SpecDrainEvent event)
 	{
 		specTracker.onSpecDrain(event);
+	}
+
+	@Subscribe
+	public void onChatboxInput(ChatboxInput event)
+	{
+		partyChat.onChatboxInput(event);
+	}
+
+	@Subscribe
+	public void onPartyChatEvent(PartyChatEvent event)
+	{
+		partyChat.onPartyChatEvent(event);
 	}
 
 	@Subscribe

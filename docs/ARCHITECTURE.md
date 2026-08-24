@@ -40,7 +40,7 @@ The room holds:
   relays it to the rest of the room without reading or validating it. Receivers merge each
   update into the copy they hold — an omitted field means "unchanged", not "cleared" — and render
   it on the Party tab.
-- **Host management.** Admit, kick, capacity, lock and the map-ping/ready-check/spec-drain
+- **Host management.** Admit, kick, capacity, lock and the map-ping/ready-check/spec-drain/party-chat
   broadcasts are all enforced by the node that owns the room.
 - **The host-transfer handshake** and **friends-chat/notice-board/obelisk join prompts**, both
   targeted point-to-point deliveries between two members, routed by the server rather than
@@ -65,6 +65,7 @@ The dividing line is exactly the board/room split above: the server is authorita
 | Kicks (`KICK`) | Account type badge (`NORMAL`/`IRONMAN`/…) | |
 | Lock state | Personal best time (`pbSeconds`) | |
 | Host identity (post-transfer) | World, friends-chat membership | |
+| Party chat sender (the room's name for them) | Party chat text (trimmed, capped, rate-limited; escaped by the receiver) | |
 
 A modified client cannot forge its way into a party, kick another member, or claim capacity that
 isn't there — those all require the owning node to agree. What a member reports about *itself* —

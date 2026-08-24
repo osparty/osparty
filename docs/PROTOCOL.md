@@ -330,8 +330,8 @@ the server holds no durable live state across a reconnect.
 ## The LIVE channel (`Mux.LIVE = 2`)
 
 The live channel carries the party room itself: the server-authoritative roster, per-member live
-state, map pings, ready checks, spec-drain broadcasts, join prompts and the host-transfer
-handshake. It rides the same connection as the board, tagged with `Mux.LIVE` instead of
+state, map pings, ready checks, spec-drain broadcasts, party chat, join prompts and the
+host-transfer handshake. It rides the same connection as the board, tagged with `Mux.LIVE` instead of
 `Mux.BOARD`, and is attached/detached as a unit by
 [`LivePartyChannel`](../src/main/java/net/osparty/party/LivePartyChannel.java) whenever the
 client hosts, joins, or leaves a party — there is no live-channel traffic for a client that isn't
@@ -392,6 +392,7 @@ the connection outlived.
 | `readyStart` | `checkId`, `starter` | Start a ready check (any member may) |
 | `ready` | `checkId` | Mark ready for the named check |
 | `specDrain` | `npcIndex`, `weapon`, `hit`, `world` | Broadcast a defence-draining special attack |
+| `chat` | `text` | Say something to the party. Relayed to every admitted member but the sender, under the name the room holds for them; the text is trimmed, capped at 80 characters (the chatbox's own limit) and held to 10 lines per 10 s per member |
 | `fcRequest` | `target` (memberId), `kind`, `friendsChat` | Host → one member: how to actually get into the raid (`kind`: `FC` / `NOTICE_BOARD` / `OBELISK`) |
 | `transferHost` | `kind` (`OFFER`/`ACCEPT`/`COMMIT`/`ABORT`), `target` (memberId), `newHostKey?`, `newHostName?`, `hostStays` | One step of the host-transfer handshake — see below |
 
@@ -412,6 +413,7 @@ Frame shapes: [`LiveFrames`](../src/main/java/net/osparty/party/LiveFrames.java)
 | `readyStart` | `checkId`, `starter`, `m` | Someone started a ready check |
 | `ready` | `checkId`, `m` | A member marked ready |
 | `specDrain` | `m`, `npcIndex`, `weapon`, `hit`, `world` | A relayed defence-draining special |
+| `chat` | `m`, `name`, `text` | A peer's party chat line; `name` is the room's record of the sender, not the sender's claim |
 | `fcRequest` | `host`, `kind`, `friendsChat`, `m` | Targeted join prompt (delivered only to its target) |
 | `transferHost` | `kind`, `m`, `newHostKey?`, `newHostName?`, `hostStays` | Targeted host-transfer step (delivered only to its target) |
 | `kicked` | (none) | The host removed us; delivered only to the removed member |

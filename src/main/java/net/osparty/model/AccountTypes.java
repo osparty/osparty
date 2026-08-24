@@ -1,5 +1,6 @@
 package net.osparty.model;
 
+import net.runelite.api.IconID;
 import net.runelite.api.vars.AccountType;
 
 /**
@@ -55,6 +56,33 @@ public final class AccountTypes
 				return "HCGIM";
 			default:
 				return null;
+		}
+	}
+
+	/**
+	 * The icon the game puts in front of this account type's name in chat ({@code <img=N>}), or an empty
+	 * string for a normal account.
+	 */
+	public static String chatIcon(AccountType type)
+	{
+		if (type == null)
+		{
+			return "";
+		}
+		switch (type)
+		{
+			case IRONMAN:
+				return IconID.IRONMAN.toString();
+			case HARDCORE_IRONMAN:
+				return IconID.HARDCORE_IRONMAN.toString();
+			case ULTIMATE_IRONMAN:
+				return IconID.ULTIMATE_IRONMAN.toString();
+			case GROUP_IRONMAN:
+				return IconID.GROUP_IRONMAN.toString();
+			case HARDCORE_GROUP_IRONMAN:
+				return IconID.HARDCORE_GROUP_IRONMAN.toString();
+			default:
+				return "";
 		}
 	}
 }

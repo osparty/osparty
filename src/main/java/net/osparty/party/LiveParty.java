@@ -16,8 +16,10 @@ import javax.inject.Singleton;
 import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
 import net.osparty.OSPartyConfig;
+import net.osparty.model.AccountTypes;
 import net.osparty.model.Member;
 import net.osparty.party.LiveFrames.CapacityFrame;
+import net.osparty.party.LiveFrames.ChatFrame;
 import net.osparty.party.LiveFrames.CommandFrame;
 import net.osparty.party.LiveFrames.DiscordFrame;
 import net.osparty.party.LiveFrames.HeartbeatFrame;
@@ -38,6 +40,7 @@ import net.osparty.tools.PersonalBests;
 import net.runelite.api.Client;
 import net.runelite.api.Skill;
 import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.vars.AccountType;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.EventBus;
 
@@ -47,7 +50,7 @@ import net.runelite.client.eventbus.EventBus;
  * parts that changed and merged on receipt.
  *
  * <p>Everything the party does goes through here: host and join, live state, admission and kick, map pings,
- * ready checks, spec drains, friends-chat prompts and the host-transfer handshake.
+ * ready checks, spec drains, party chat, friends-chat prompts and the host-transfer handshake.
  */
 @Slf4j
 @Singleton
@@ -435,6 +438,9 @@ public class LiveParty implements LivePartyBackend {
 				break;
 			case "specDrain":
 				applySpecDrain(frame);
+				break;
+			case "chat":
+				applyChat(frame);
 				break;
 			case "fcRequest":
 				applyJoinPrompt(frame);
@@ -1544,6 +1550,43 @@ public class LiveParty implements LivePartyBackend {
 		eventBus.post(new SpecDrainEvent(frame.memberId,
 			frame.npcIndex == null ? -1 : frame.npcIndex, weapon,
 			frame.hit == null ? 0 : frame.hit, frame.world == null ? 0 : frame.world));
+	}
+
+	// ---- party chat ---------------------------------------------------------
+
+	@Override
+	public boolean sendChat(String text) {
+		if (mode == Mode.NONE || !isLocalAdmitted() || !channel.isConnected()) {
+			return false;
+		}
+		send(new ChatFrame(text));
+		// The room relays a line to everyone but its sender, so our own is posted from here.
+		eventBus.post(new PartyChatEvent(localMemberId, localName, accountTypeOf(localMemberId), text));
+		return true;
+	}
+
+	private void applyChat(LivePartyChannel.Frame frame) {
+		if (frame.memberId == null || frame.memberId == localMemberId || frame.text == null) {
+			return;
+		}
+		String name = frame.name != null ? frame.name : nameForMember(frame.memberId);
+		eventBus.post(new PartyChatEvent(frame.memberId, name, accountTypeOf(frame.memberId), frame.text));
+	}
+
+	/** A member's account type as their live snapshot reports it — ours included — or null before one has arrived. */
+	private AccountType accountTypeOf(long memberId) {
+		PlayerUpdate data = playerData.get(memberId);
+		return data == null ? null : AccountTypes.fromName(data.getAccountType());
+	}
+
+	/** The name we hold for a member — their live self-report first, then the roster — or null for a stranger. */
+	private String nameForMember(long memberId) {
+		for (LivePartyChannel.RosterEntry entry : rosterEntries) {
+			if (entry.memberId == memberId) {
+				return nameFor(entry);
+			}
+		}
+		return null;
 	}
 
 	// ---- friends-chat / join prompts ----------------------------------------

@@ -272,6 +272,8 @@ public class LivePartyChannel implements OSPartySocket.LiveChannel {
 		public String newHostKey;
 		public String newHostName;
 		public Boolean hostStays;
+		// Party chat; the sender's name rides in {@link #name}.
+		public String text;
 	}
 
 	/** One member's live update inside an {@code mu} frame. */
