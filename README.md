@@ -319,7 +319,7 @@ All under RuneLite's OSParty plugin settings, grouped the same way as in the cli
 | Setting | What it does |
 |---|---|
 | Default party size | Capacity pre-filled on the create-party form. |
-| Max applicants shown | Cap on applicants listed in the in-game applicant overlay before "+N more". |
+| Check for similar parties | Before creating, look for a party already running the same thing and offer to join it instead. |
 | Blocked applicant | What happens when a blocked player applies: warn you, auto-reject and notify, or auto-reject silently. |
 | Skip disband confirmation | Don't ask for confirmation before disbanding your own party. |
 
@@ -328,9 +328,10 @@ All under RuneLite's OSParty plugin settings, grouped the same way as in the cli
 | Setting | What it does |
 |---|---|
 | Chatbox notifications | Post OSParty events (applicants, requests, ready checks) to your chatbox. |
-| In-game join prompts | As host, also show Accept/Decline for new applicants in the chatbox, not just the panel. |
+| In-game join prompts | As host, also show an Accept/Decline card for new applicants in the chatbox, not just the panel. |
 | Desktop notifications | Send a desktop notification for invites, requests, applicants and ready checks. |
 | Friend invites | How a party invite from a friend is surfaced: sidebar, in-game, both, or off. |
+| Parties found while looking | How a party found by "Find me a party" is surfaced: sidebar, in-game, both, or off. |
 | Friends-chat join requests | Allow hosts to ask you, via a popup, to join their friends chat. |
 | Join-request popup duration (s) | How long the friends-chat/notice-board join-request popup stays up. |
 

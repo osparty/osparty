@@ -176,19 +176,6 @@ public interface OSPartyConfig extends Config
 		return 3;
 	}
 
-	@Range(min = 1, max = 20)
-	@ConfigItem(
-		keyName = "applicantOverlayMax",
-		name = "Max applicants shown",
-		description = "Maximum applicants listed in the in-game applicant overlay before a \"+N more\" line.",
-		position = 2,
-		section = HOSTING
-	)
-	default int applicantOverlayMax()
-	{
-		return 5;
-	}
-
 	@ConfigItem(
 		keyName = "blockedApplicantAction",
 		name = "Blocked applicant",
@@ -201,11 +188,26 @@ public interface OSPartyConfig extends Config
 		return BlockedApplicantAction.WARN;
 	}
 
+	String SIMILAR_PARTY_CHECK = "similarPartyCheck";
+
+	@ConfigItem(
+		keyName = SIMILAR_PARTY_CHECK,
+		name = "Check for similar parties",
+		description = "Before creating a party, look for one already running the same thing and offer to "
+			+ "join it instead. Turned off by \"Create, don't ask again\" on that prompt.",
+		position = 4,
+		section = HOSTING
+	)
+	default boolean similarPartyCheck()
+	{
+		return true;
+	}
+
 	@ConfigItem(
 		keyName = "skipDisbandConfirm",
 		name = "Skip disband confirmation",
 		description = "Don't ask for confirmation before disbanding a party you host.",
-		position = 4,
+		position = 5,
 		section = HOSTING
 	)
 	default boolean skipDisbandConfirm()
@@ -266,10 +268,23 @@ public interface OSPartyConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "matchDisplay",
+		name = "Parties found while looking",
+		description = "How to surface a party that turns up while \"Find me a party\" is on: blink the OSParty "
+			+ "sidebar button, show an in-game card, both, or don't offer them at all.",
+		position = 5,
+		section = NOTIFICATIONS
+	)
+	default net.osparty.enums.InviteDisplay matchDisplay()
+	{
+		return net.osparty.enums.InviteDisplay.BOTH;
+	}
+
+	@ConfigItem(
 		keyName = "receiveFriendsChatRequests",
 		name = "Friends-chat join requests",
 		description = "Allow party hosts to ask you (via an on-screen popup) to join their friends chat. Turn off to ignore these requests.",
-		position = 5,
+		position = 6,
 		section = NOTIFICATIONS
 	)
 	default boolean receiveFriendsChatRequests()
@@ -282,7 +297,7 @@ public interface OSPartyConfig extends Config
 		keyName = "fcRequestDurationSecs",
 		name = "Join-request popup duration (s)",
 		description = "How long the friends-chat / notice-board join-request popup stays on screen before it disappears.",
-		position = 6,
+		position = 7,
 		section = NOTIFICATIONS
 	)
 	default int fcRequestDurationSecs()

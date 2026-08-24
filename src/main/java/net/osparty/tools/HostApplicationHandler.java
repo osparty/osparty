@@ -5,9 +5,9 @@ import net.osparty.model.Applicant;
 import java.util.List;
 
 /**
- * Lets the host-facing UI mirror incoming applications in-game: an overlay
- * listing every pending applicant, and one-off chatbox pings as they arrive or
- * are resolved.
+ * Lets the host-facing UI mirror incoming applications in-game: a chatbox
+ * Accept/Decline card per applicant, and one-off chatbox pings as they arrive
+ * or are resolved.
  */
 public interface HostApplicationHandler
 {

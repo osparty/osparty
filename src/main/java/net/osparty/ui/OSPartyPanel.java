@@ -729,10 +729,13 @@ public class OSPartyPanel extends PluginPanel
 		}
 	}
 
-	/** Accept a party invite by joining via its invite code, reusing the Search panel's join-by-code flow. */
-	public void joinByInviteCode(String code, java.util.function.Consumer<String> status)
+	/**
+	 * Accept a party invite by joining via its invite code, reusing the Search panel's join-by-code flow.
+	 * A {@code chooser} answers the role question wherever the invite itself was answered.
+	 */
+	public void joinByInviteCode(String code, java.util.function.Consumer<String> status, RoleChooser chooser)
 	{
-		searchPanel.joinByCode(code, status, true);
+		searchPanel.joinByCode(code, status, true, chooser);
 	}
 
 	/** Register what the sidebar invite banner's Accept/Decline buttons do. */
@@ -806,6 +809,100 @@ public class OSPartyPanel extends PluginPanel
 			invitePanel.revalidate();
 			invitePanel.repaint();
 		}
+	}
+
+	/** Sidebar mirror of the in-game "party found" card, in the same notices strip as an invite. */
+	public void addMatch(MatchOffer offer, Consumer<MatchOffer> onJoin, Consumer<MatchOffer> onDismiss)
+	{
+		Advertisement ad = offer.ad();
+		if (ad == null || ad.getId() == null || inviteBanners.containsKey(ad.getId()))
+		{
+			return;
+		}
+		JPanel banner = buildMatchBanner(offer, onJoin, onDismiss);
+		inviteBanners.put(ad.getId(), banner);
+		inviteExpiry.put(ad.getId(), System.currentTimeMillis() + INVITE_TTL_MS);
+		invitePanel.add(banner);
+		invitePanel.revalidate();
+		invitePanel.repaint();
+		startInviteSweep();
+	}
+
+	private JPanel buildMatchBanner(MatchOffer offer, Consumer<MatchOffer> onJoin,
+		Consumer<MatchOffer> onDismiss)
+	{
+		Advertisement ad = offer.ad();
+		net.osparty.model.Activity activity = net.osparty.model.Activity.fromId(ad.getActivity());
+		String label = activity != null ? activity.displayName(ad.isHardMode(), ad.getInvocation()) : "a party";
+		String size = ad.getCapacity() > 0 ? " (" + ad.getSize() + "/" + ad.getCapacity() + ")" : "";
+
+		JPanel banner = new JPanel(new BorderLayout(0, 4));
+		banner.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		banner.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(0, 0, 1, 0, ColorScheme.MEDIUM_GRAY_COLOR),
+			BorderFactory.createEmptyBorder(6, 8, 6, 8)));
+
+		JLabel text = new JLabel("<html><body style='width:170px'><b>" + ad.getHost() + "</b> is running "
+			+ label + size + "</body></html>");
+		text.setForeground(Color.WHITE);
+		text.setFont(FontManager.getRunescapeSmallFont());
+		banner.add(text, BorderLayout.NORTH);
+
+		JPanel buttons = new JPanel(new GridLayout(1, 2, 4, 0));
+		buttons.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		// "Request" rather than "Join": the host still has to admit them.
+		JButton join = new JButton("Request");
+		join.setFocusPainted(false);
+		join.addActionListener(e -> onJoin.accept(offer));
+		JButton dismiss = new JButton("Not now");
+		dismiss.setFocusPainted(false);
+		dismiss.addActionListener(e -> onDismiss.accept(offer));
+		buttons.add(join);
+		buttons.add(dismiss);
+		banner.add(buttons, BorderLayout.SOUTH);
+		return banner;
+	}
+
+	/**
+	 * Register where a "this is already running" prompt is shown. The inline block in the Create tab is
+	 * always one of them — the click that raises it was made there — and {@code inGame} adds the card.
+	 */
+	public void setSimilarHandler(Consumer<SimilarParties> inGame, RoleChooser chooser,
+		Runnable onAnswered)
+	{
+		createPanel.setSimilarHandlers(
+			similar ->
+			{
+				createPanel.showSimilar(similar, chooser, onAnswered);
+				if (inGame != null)
+				{
+					inGame.accept(similar);
+				}
+			},
+			(ad, roleChooser) -> searchPanel.applyTo(ad, roleChooser, gameMessage));
+	}
+
+	/** Take the inline similar-parties prompt down, when it was answered somewhere else. */
+	public void hideSimilar()
+	{
+		createPanel.hideSimilar();
+	}
+
+	/** Register where a party found while looking should be shown, and what the answers do. */
+	public void setMatchHandler(Consumer<MatchOffer> handler)
+	{
+		searchPanel.setMatchHandler(handler);
+	}
+
+	public void setOnLookingChanged(Runnable listener)
+	{
+		searchPanel.setOnLookingChanged(listener);
+	}
+
+	/** Stop looking — used when the player joins or hosts a party by any other route. */
+	public void stopLooking()
+	{
+		searchPanel.setLooking(false);
 	}
 
 	private JPanel buildInviteBanner(net.osparty.api.PartyInvite invite)
