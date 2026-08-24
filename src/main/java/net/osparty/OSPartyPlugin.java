@@ -26,6 +26,8 @@ import net.osparty.ui.OSPartyPanel;
 import net.osparty.ui.ApplicantOverlay;
 import net.osparty.ui.JoinPromptOverlay;
 import net.osparty.ui.DefenceInfoBox;
+import net.osparty.ui.InvitePrompt;
+import net.osparty.ui.PartyPrompt;
 import net.osparty.ui.NpcDefenceOverlay;
 import net.osparty.ui.PartyNameOverlay;
 import net.osparty.ui.PlayerMarkerOverlay;
@@ -1059,6 +1061,28 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		List<String> parts = new ArrayList<>();
 		parts.add("cb " + applicant.getCombatLevel());
+		parts.addAll(applicantParts(applicant, activity));
+		if (runeWatchService.get(applicant.getName()) != null)
+		{
+			parts.add("(!) RuneWatch listed");
+		}
+		return String.join(", ", parts);
+	}
+
+	/** What the block list and RuneWatch have to say about an applicant, or {@code null}. */
+	private String applicantWarning(Applicant applicant)
+	{
+		if (applicant.isBlocked())
+		{
+			return "On your block list";
+		}
+		return runeWatchService.get(applicant.getName()) != null ? "RuneWatch listed" : null;
+	}
+
+	/** The applicant's stats as separate facts, so the in-game card can lay them out itself. */
+	private List<String> applicantParts(Applicant applicant, Activity activity)
+	{
+		List<String> parts = new ArrayList<>();
 
 		if (applicant.getKillCount() >= 0)
 		{
@@ -1088,12 +1112,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			parts.add(tag);
 		}
 
-		if (runeWatchService.get(applicant.getName()) != null)
-		{
-			parts.add("(!) RuneWatch listed");
-		}
-
-		return String.join(", ", parts);
+		return parts;
 	}
 
 	private static int totalLevel(Applicant applicant)
@@ -1148,12 +1167,25 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		Applicant applicant = prompt.applicant;
 		Activity activity = prompt.activity;
 
-		String title = applicant.getName() + " - " + applicantSummary(applicant, activity);
-
 		promptOpen = true;
 		openPromptMemberId = applicant.getMemberId();
-		chatboxPanelManager.openTextMenuInput(title)
-			.option("Accept", () -> {
+
+		PartyPrompt card = PartyPrompt.create(chatboxPanelManager)
+			.heading("Join request")
+			.title(applicant.getName())
+			.subtitle("Wants to join your " + activity.getDisplayName() + " party")
+			.warning(applicantWarning(applicant));
+		// A blocked applicant gets the block line and nothing else, exactly as the chat line does.
+		if (!applicant.isBlocked())
+		{
+			card.meta("cb " + applicant.getCombatLevel());
+			for (String part : applicantParts(applicant, activity))
+			{
+				card.detail(part);
+			}
+		}
+
+		card.option("Accept", PartyPrompt.ACCEPT, () -> {
 				promptOpen = false;
 				openPromptMemberId = 0;
 				if (liveParty.admit(applicant.getMemberId(), applicant.getName()))
@@ -1165,13 +1197,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 					chat("Party is full - couldn't accept " + applicant.getName() + ".", true);
 				}
 			})
-			.option("Decline", () -> {
+			.option("Decline", PartyPrompt.DECLINE, () -> {
 				promptOpen = false;
 				openPromptMemberId = 0;
 				liveParty.reject(applicant.getMemberId());
 				announceResolved(applicant, activity, false);
 			})
-			.option("Decide later", () -> {
+			.option("Decide later", PartyPrompt.NEUTRAL, () -> {
 				promptOpen = false;
 				openPromptMemberId = 0;
 			})
@@ -1447,30 +1479,27 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			return; // resolved via the sidebar banner before we got to it
 		}
-		Activity activity = Activity.fromId(ad.getActivity());
-		String label = activity != null ? activity.getDisplayName() + " party" : "their party";
 
 		promptOpen = true;
 		openInviteId = key;
-		chatboxPanelManager.openTextMenuInput(inviterName(invite) + " invites you to " + label)
-			.option("Accept", () ->
+		InvitePrompt.open(chatboxPanelManager, invite, inviterName(invite),
+			() ->
 			{
 				promptOpen = false;
 				openInviteId = null;
 				resolveInvite(invite, true);
-			})
-			.option("Decline", () ->
+			},
+			() ->
 			{
 				promptOpen = false;
 				openInviteId = null;
 				resolveInvite(invite, false);
-			})
-			.onClose(() ->
+			},
+			() ->
 			{
 				promptOpen = false;
 				openInviteId = null;
-			})
-			.build();
+			});
 	}
 
 	/** Accept an invite: join the party by its invite code, reusing the standard join flow. */

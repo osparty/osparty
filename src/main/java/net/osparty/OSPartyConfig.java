@@ -255,8 +255,8 @@ public interface OSPartyConfig extends Config
 	@ConfigItem(
 		keyName = "inviteDisplay",
 		name = "Friend invites",
-		description = "How to surface a party invite from a friend: blink the OSParty sidebar button, post an "
-			+ "in-game chat line, both, or ignore invites entirely.",
+		description = "How to surface a party invite from a friend: blink the OSParty sidebar button, show an "
+			+ "in-game Accept/Decline card, both, or ignore invites entirely.",
 		position = 4,
 		section = NOTIFICATIONS
 	)
