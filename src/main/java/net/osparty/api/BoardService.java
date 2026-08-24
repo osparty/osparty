@@ -33,6 +33,13 @@ public interface BoardService
 	void fetchAdByHost(String host, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError);
 
 	/**
+	 * Parties already running {@code activityId} in the same mode, closest to full first, so a host can be
+	 * asked whether they would rather join one than advertise the same thing beside it. Empty when there
+	 * are none, when the connection is down, or when the server predates the lookup.
+	 */
+	void fetchSimilarParties(String activityId, boolean hardMode, Consumer<java.util.List<Advertisement>> onResult);
+
+	/**
 	 * Register a callback fired (off the EDT) with the ad id when the server reports the
 	 * hosted ad no longer exists (stale purge, manual cleanup, or expiry before a resume).
 	 */

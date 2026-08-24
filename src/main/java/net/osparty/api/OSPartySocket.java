@@ -122,6 +122,9 @@ public class OSPartySocket extends WebSocketListener
 	private volatile long boardSeq;
 	// One-shot lookups awaiting a directed byCode/byHost reply, keyed by the echoed code/host.
 	private final Map<String, Consumer<Advertisement>> pendingByCode = new ConcurrentHashMap<>();
+	/** The outstanding {@code similar} lookup, if any. One at a time; see {@link #fetchSimilar}. */
+	private final java.util.concurrent.atomic.AtomicReference<Consumer<List<Advertisement>>> pendingSimilar =
+		new java.util.concurrent.atomic.AtomicReference<>();
 	private final Map<String, Consumer<Advertisement>> pendingByHost = new ConcurrentHashMap<>();
 	// Host createVoiceChannel requests awaiting a voiceChannel reply (or a matching error), keyed by party id.
 	private final Map<String, VoicePending> pendingVoiceChannel = new ConcurrentHashMap<>();
@@ -575,6 +578,33 @@ public class OSPartySocket extends WebSocketListener
 		send(gson.toJson(new LookupFrame("getByCode", code, null)));
 	}
 
+	/**
+	 * Ask what is already running the thing we are about to advertise. {@code onResult} gets the parties
+	 * worth joining instead, closest to full first, or an empty list when there are none or we are offline.
+	 *
+	 * <p>Only one lookup is outstanding at a time: it is asked once, on the way through a create the user
+	 * is waiting on, so a second would mean they clicked Create twice.
+	 */
+	public void fetchSimilar(String activityId, boolean hardMode, Consumer<List<Advertisement>> onResult)
+	{
+		if (activityId == null || !connected)
+		{
+			onResult.accept(java.util.Collections.emptyList());
+			return;
+		}
+		pendingSimilar.set(onResult);
+		send(gson.toJson(new SimilarFrame(activityId, hardMode)));
+	}
+
+	private void completeSimilar(Advertisement[] ads)
+	{
+		Consumer<List<Advertisement>> callback = pendingSimilar.getAndSet(null);
+		if (callback != null)
+		{
+			callback.accept(ads == null ? java.util.Collections.emptyList() : java.util.Arrays.asList(ads));
+		}
+	}
+
 	/** Look up the ad hosted by a player; {@code onResult} gets the ad, or null if none/offline. */
 	public void fetchByHost(String host, Consumer<Advertisement> onResult)
 	{
@@ -935,6 +965,9 @@ public class OSPartySocket extends WebSocketListener
 				break;
 			case "byHost":
 				completeLookup(pendingByHost, frame.id, frame.ad);
+				break;
+			case "similar":
+				completeSimilar(frame.ads);
 				break;
 			case "presence":
 				onlineUsers = frame.online;
@@ -1998,6 +2031,19 @@ public class OSPartySocket extends WebSocketListener
 			this.type = type;
 			this.id = id;
 			this.key = key;
+		}
+	}
+
+	private static final class SimilarFrame
+	{
+		final String type = "similar";
+		final String activity;
+		final boolean hardMode;
+
+		SimilarFrame(String activity, boolean hardMode)
+		{
+			this.activity = activity;
+			this.hardMode = hardMode;
 		}
 	}
 

@@ -47,6 +47,9 @@ public class PartyPrompt extends ChatboxInput implements KeyListener
 	private static final int BUTTON_HEIGHT = 22;
 	private static final int BUTTON_MAX_WIDTH = 118;
 	private static final int BUTTON_GAP = 10;
+	private static final int BUTTON_ROW_GAP = 4;
+	/** Past this many options the row wraps, so a full role list still fits the chatbox. */
+	private static final int BUTTONS_PER_ROW = 4;
 
 	private static final int HEADING_HEIGHT = 13;
 	private static final int TITLE_HEIGHT = 16;
@@ -131,7 +134,47 @@ public class PartyPrompt extends ChatboxInput implements KeyListener
 
 	public PartyPrompt option(String text, int color, Runnable action)
 	{
-		options.add(new Option(text, color, action));
+		options.add(new Option(text, color, action, true));
+		return this;
+	}
+
+	/**
+	 * An option that turns the page instead of closing the card: the panel stays up and the action is
+	 * expected to build the next page and {@link #refresh()} it in.
+	 */
+	public PartyPrompt page(String text, int color, Runnable action)
+	{
+		options.add(new Option(text, color, action, false));
+		return this;
+	}
+
+	/** Empty the current page so the next one can be built onto the same open card. Keeps {@link #onClose}. */
+	public PartyPrompt reset()
+	{
+		heading = null;
+		title = null;
+		target = null;
+		meta = null;
+		subtitle = null;
+		warning = null;
+		note = null;
+		details.clear();
+		options.clear();
+		return this;
+	}
+
+	/**
+	 * Draw the current page over whatever the card is showing. The panel is never closed, so there is no
+	 * blank frame between pages the way reopening the message layer would give.
+	 */
+	public PartyPrompt refresh()
+	{
+		Widget container = chatboxPanelManager.getContainerWidget();
+		if (container != null)
+		{
+			container.deleteAllChildren();
+			open();
+		}
 		return this;
 	}
 
@@ -151,14 +194,17 @@ public class PartyPrompt extends ChatboxInput implements KeyListener
 	protected void open()
 	{
 		Widget container = chatboxPanelManager.getContainerWidget();
-		if (container == null || options.isEmpty())
+		if (container == null)
 		{
 			return;
 		}
 
 		int width = container.getWidth();
 		int contentWidth = width - PAD * 2;
-		int buttonTop = container.getHeight() - BUTTON_HEIGHT - 8;
+		// Spread the options over as few rows as they fit on, then reserve the block at the bottom.
+		int rows = (options.size() + BUTTONS_PER_ROW - 1) / BUTTONS_PER_ROW;
+		int perRow = rows == 0 ? 0 : (options.size() + rows - 1) / rows;
+		int buttonTop = container.getHeight() - 8 - rows * BUTTON_HEIGHT - (rows - 1) * BUTTON_ROW_GAP;
 		int y = 5;
 
 		if (heading != null)
@@ -215,14 +261,23 @@ public class PartyPrompt extends ChatboxInput implements KeyListener
 				NOTE_COLOR, WidgetTextAlignment.LEFT);
 		}
 
-		int buttonWidth = Math.min(BUTTON_MAX_WIDTH,
-			(contentWidth - BUTTON_GAP * (options.size() - 1)) / options.size());
-		int row = buttonWidth * options.size() + BUTTON_GAP * (options.size() - 1);
-		int x = (width - row) / 2;
-		for (Option option : options)
+		if (options.isEmpty())
 		{
-			button(container, option, x, buttonTop, buttonWidth);
-			x += buttonWidth + BUTTON_GAP;
+			return;
+		}
+
+		int buttonWidth = Math.min(BUTTON_MAX_WIDTH, (contentWidth - BUTTON_GAP * (perRow - 1)) / perRow);
+		int buttonY = buttonTop;
+		for (int first = 0; first < options.size(); first += perRow)
+		{
+			int inRow = Math.min(perRow, options.size() - first);
+			int x = (width - (buttonWidth * inRow + BUTTON_GAP * (inRow - 1))) / 2;
+			for (int i = 0; i < inRow; i++)
+			{
+				button(container, options.get(first + i), x, buttonY, buttonWidth);
+				x += buttonWidth + BUTTON_GAP;
+			}
+			buttonY += BUTTON_HEIGHT + BUTTON_ROW_GAP;
 		}
 	}
 
@@ -273,12 +328,15 @@ public class PartyPrompt extends ChatboxInput implements KeyListener
 
 	private void select(Option option)
 	{
-		Widget container = chatboxPanelManager.getContainerWidget();
-		if (container != null)
+		if (option.closes)
 		{
-			container.setOnKeyListener((Object[]) null);
+			Widget container = chatboxPanelManager.getContainerWidget();
+			if (container != null)
+			{
+				container.setOnKeyListener((Object[]) null);
+			}
+			chatboxPanelManager.close();
 		}
-		chatboxPanelManager.close();
 		option.action.run();
 	}
 
@@ -412,12 +470,15 @@ public class PartyPrompt extends ChatboxInput implements KeyListener
 		private final String text;
 		private final int color;
 		private final Runnable action;
+		/** False for an option that re-pages the card rather than dismissing it. */
+		private final boolean closes;
 
-		private Option(String text, int color, Runnable action)
+		private Option(String text, int color, Runnable action, boolean closes)
 		{
 			this.text = text;
 			this.color = color;
 			this.action = action;
+			this.closes = closes;
 		}
 	}
 }

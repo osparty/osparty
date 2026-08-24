@@ -96,6 +96,13 @@ public class BoardApiClient implements BoardService
 	}
 
 	@Override
+	public void fetchSimilarParties(String activityId, boolean hardMode,
+		Consumer<java.util.List<Advertisement>> onResult)
+	{
+		socket.fetchSimilar(activityId, hardMode, onResult);
+	}
+
+	@Override
 	public void setOnHostedAdGone(Consumer<String> callback)
 	{
 		socket.setOnHostedGone(callback);

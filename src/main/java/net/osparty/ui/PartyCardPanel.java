@@ -339,7 +339,7 @@ abstract class PartyCardPanel extends JPanel
 	}
 
 	/** Roles the player may pick when applying: the needed roles, else all activity roles. */
-	private List<Role> roleOptionsFor(Advertisement ad, Activity activity)
+	protected List<Role> roleOptionsFor(Advertisement ad, Activity activity)
 	{
 		List<Role> options = new ArrayList<>();
 		List<String> needed = neededRolesOf(ad);

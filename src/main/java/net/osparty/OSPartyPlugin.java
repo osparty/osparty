@@ -11,6 +11,7 @@ import net.osparty.model.Activity;
 import net.osparty.model.Applicant;
 import net.osparty.model.Advertisement;
 import net.osparty.model.Member;
+import net.osparty.model.Role;
 import net.osparty.party.JoinPromptEvent;
 import net.osparty.party.PlayerNames;
 import net.osparty.party.HostTransferEvent;
@@ -23,11 +24,16 @@ import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
 import net.osparty.ui.AccountRecoveryController;
 import net.osparty.ui.OSPartyPanel;
-import net.osparty.ui.ApplicantOverlay;
 import net.osparty.ui.JoinPromptOverlay;
 import net.osparty.ui.DefenceInfoBox;
+import net.osparty.ui.ChatboxCards;
 import net.osparty.ui.InvitePrompt;
+import net.osparty.ui.MatchOffer;
+import net.osparty.ui.MatchPrompt;
+import net.osparty.ui.SimilarParties;
+import net.osparty.ui.SimilarPrompt;
 import net.osparty.ui.PartyPrompt;
+import net.osparty.ui.RoleChooser;
 import net.osparty.ui.NpcDefenceOverlay;
 import net.osparty.ui.PartyNameOverlay;
 import net.osparty.ui.PlayerMarkerOverlay;
@@ -49,7 +55,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedDeque;
 
 import com.google.gson.Gson;
 import javax.inject.Inject;
@@ -162,6 +167,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private ChatboxPanelManager chatboxPanelManager;
 
 	@Inject
+	private ChatboxCards cards;
+
+	@Inject
 	private Gson gson;
 
 	@Inject
@@ -229,7 +237,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private Timer navBlinkTimer;
 	private boolean navAlertShown;
 	private volatile boolean panelActive;
-	private final ConcurrentLinkedDeque<PartyInvite> invitePromptQueue = new ConcurrentLinkedDeque<>();
 	private final Map<String, PartyInvite> activeInvites = new ConcurrentHashMap<>();
 	private static final long INVITE_COOLDOWN_MS = 30_000;
 	private static final String SOUND_READY_CHECK = "/net/osparty/sounds/readycheck.wav";
@@ -237,10 +244,14 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private static final String SOUND_KICKED = "/net/osparty/sounds/kicked.wav";
 	private static final String SOUND_FRIENDS_CHAT = "/net/osparty/sounds/friendschatsound.wav";
 	private final Map<String, Long> lastInviteAt = new ConcurrentHashMap<>();
-	private String openInviteId;
+	/** The in-game invite or match card while it is up, so accepting turns its page instead of reopening. */
+	private PartyPrompt partyCard;
+	/** The party currently being offered by the matchmaker, on either surface; null when none is. */
+	private volatile String openMatchId;
+	/** Set while an in-game role question is outstanding; see {@link #answerRole(String)}. */
+	private java.util.function.Consumer<String> pendingRolePick;
 	private long identifiedHash;
 	private String identifiedName;
-	private ApplicantOverlay applicantOverlay;
 	private JoinPromptOverlay joinPromptOverlay;
 	private ReadyCheckOverlay readyCheckOverlay;
 	private TilePingOverlay tilePingOverlay;
@@ -265,9 +276,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private int friendsSignature;
 
 	/** Filled from the EDT (the panel's refresh), drained on the client thread. */
-	private final ConcurrentLinkedDeque<PendingPrompt> promptQueue = new ConcurrentLinkedDeque<>();
-	private volatile boolean promptOpen;
-	private long openPromptMemberId;
 
 	/**
 	 * Whether a printable key would land in a text field rather than reach us. There is no such thing
@@ -310,19 +318,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 	};
 
-	private static final class PendingPrompt
-	{
-		final Applicant applicant;
-		final Activity activity;
-
-		PendingPrompt(Applicant applicant, Activity activity)
-		{
-			this.applicant = applicant;
-			this.activity = activity;
-		}
-	}
-
-
 	@Override
 	protected void startUp()
 	{
@@ -333,9 +328,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		accountRecovery = new AccountRecoveryController(socket, this::getAccountHash, this::getPlayerName);
 		accountRecovery.register();
 		socket.start();
-
-		applicantOverlay = new ApplicantOverlay(config);
-		overlayManager.add(applicantOverlay);
 
 		joinPromptOverlay = new JoinPromptOverlay();
 		overlayManager.add(joinPromptOverlay);
@@ -434,7 +426,14 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		clientToolbar.addNavigation(navButton);
 		panel.setOnActivated(this::onPanelActivated);
 		panel.setOnDeactivated(this::onPanelDeactivated);
-		panel.setInviteHandlers(invite -> resolveInvite(invite, true), invite -> resolveInvite(invite, false));
+		panel.setInviteHandlers(invite -> resolveInvite(invite, true, false),
+			invite -> resolveInvite(invite, false, false));
+		panel.setMatchHandler(this::onMatchFound);
+		// The Create tab always shows its own inline prompt; this adds the in-game card beside it.
+		panel.setSimilarHandler(this::onSimilarParties, inGameRoleChooser,
+			() -> clientThread.invoke(() -> cards.dismiss(SIMILAR_CARD_KEY)));
+		// Turning the toggle off has to take any offer already on screen with it.
+		panel.setOnLookingChanged(() -> clientThread.invoke(() -> cards.dismiss(openMatchId)));
 		apiClient.setInviteListener(this::onPartyInvite);
 		log.info("OSParty started (API {})", BoardApiClient.apiBaseUrl());
 	}
@@ -475,7 +474,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			clientToolbar.removeNavigation(navButtonAlert);
 		}
-		overlayManager.remove(applicantOverlay);
 		overlayManager.remove(joinPromptOverlay);
 		overlayManager.remove(readyCheckOverlay);
 		overlayManager.remove(tilePingOverlay);
@@ -495,7 +493,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			worldPinger.shutdown();
 			worldPinger = null;
 		}
-		applicantOverlay = null;
 		joinPromptOverlay = null;
 		readyCheckOverlay = null;
 		tilePingOverlay = null;
@@ -514,12 +511,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		accountHash = -1L;
 		// A prompt left open would keep both drain loops short-circuited for the rest of the session,
 		// and rejoinChecked would eat the once-per-login rejoin offer.
-		promptOpen = false;
-		openPromptMemberId = 0;
-		openInviteId = null;
+		partyCard = null;
+		openMatchId = null;
+		pendingRolePick = null;
 		rejoinChecked = false;
-		promptQueue.clear();
-		invitePromptQueue.clear();
+		cards.clear();
 		activeInvites.clear();
 		lastInviteAt.clear();
 		friendNames = Collections.emptySet();
@@ -598,7 +594,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			mapRegions = null;
 			accountType = null;
 			accountHash = -1L;
-			promptQueue.clear();
+			cards.clear(ChatboxCards.Priority.JOIN_REQUEST);
 		}
 		// Re-arm the rejoin check on a real logout (not a world hop).
 		if (event.getGameState() == GameState.LOGIN_SCREEN)
@@ -655,11 +651,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		coxRaidScanner.update();
 		coxLayout = coxRaidScanner.layout();
 
-		// Show the next in-game applicant prompt if the chatbox is free.
-		drainApplicantPrompts();
-
-		// Show the next in-game invite prompt if the chatbox is free.
-		drainInvitePrompts();
+		// Show the next queued in-game card if the chatbox is free.
+		cards.tick();
 
 		// Push pending host state / our own live snapshot (client thread).
 		liveParty.tick();
@@ -993,7 +986,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Override
 	public void setPendingApplicants(List<Applicant> applicants, Activity activity)
 	{
-		applicantOverlay.setApplicants(applicants, activity);
 		// Badge the sidebar button while applications are waiting, not only for invites: the chat line
 		// announcing an applicant scrolls away, so otherwise nothing points at the panel. Driven by the
 		// live list rather than the one-shot announcement, so the dot lasts as long as the applications do.
@@ -1031,7 +1023,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// Also offer an in-game chatbox Accept/Decline (driven on the game tick).
 		if (config.inGamePrompts() && applicant.getMemberId() != 0)
 		{
-			promptQueue.add(new PendingPrompt(applicant, activity));
+			cards.offer(applicantCard(applicant, activity));
 		}
 	}
 
@@ -1132,44 +1124,39 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		return total;
 	}
 
-	/** Host: show the next queued applicant as a chatbox Accept/Decline, one at a time. Client thread. */
-	private void drainApplicantPrompts()
+	/** Host: the queued card offering one applicant, skipped if they stop being pending before its turn. */
+	private ChatboxCards.Card applicantCard(Applicant applicant, Activity activity)
 	{
-		if (!config.inGamePrompts())
+		return new ChatboxCards.Card()
 		{
-			promptQueue.clear();
-			return;
-		}
-		if (promptOpen || promptQueue.isEmpty() || chatboxPanelManager.getCurrentInput() != null)
-		{
-			return;
-		}
-
-		// Skip anyone who's no longer a pending applicant (left, or resolved elsewhere).
-		PendingPrompt next = null;
-		while (!promptQueue.isEmpty())
-		{
-			PendingPrompt candidate = promptQueue.poll();
-			if (liveParty.isPendingApplicant(candidate.applicant.getMemberId()))
+			@Override
+			public ChatboxCards.Priority priority()
 			{
-				next = candidate;
-				break;
+				return ChatboxCards.Priority.JOIN_REQUEST;
 			}
-		}
-		if (next != null)
-		{
-			openApplicantPrompt(next);
-		}
+
+			@Override
+			public Object key()
+			{
+				return applicant.getMemberId();
+			}
+
+			@Override
+			public boolean isStale()
+			{
+				return !config.inGamePrompts() || !liveParty.isPendingApplicant(applicant.getMemberId());
+			}
+
+			@Override
+			public PartyPrompt open()
+			{
+				return openApplicantPrompt(applicant, activity);
+			}
+		};
 	}
 
-	private void openApplicantPrompt(PendingPrompt prompt)
+	private PartyPrompt openApplicantPrompt(Applicant applicant, Activity activity)
 	{
-		Applicant applicant = prompt.applicant;
-		Activity activity = prompt.activity;
-
-		promptOpen = true;
-		openPromptMemberId = applicant.getMemberId();
-
 		PartyPrompt card = PartyPrompt.create(chatboxPanelManager)
 			.heading("Join request")
 			.title(applicant.getName())
@@ -1185,9 +1172,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			}
 		}
 
-		card.option("Accept", PartyPrompt.ACCEPT, () -> {
-				promptOpen = false;
-				openPromptMemberId = 0;
+		return card.option("Accept", PartyPrompt.ACCEPT, () -> {
 				if (liveParty.admit(applicant.getMemberId(), applicant.getName()))
 				{
 					announceResolved(applicant, activity, true);
@@ -1198,19 +1183,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 				}
 			})
 			.option("Decline", PartyPrompt.DECLINE, () -> {
-				promptOpen = false;
-				openPromptMemberId = 0;
 				liveParty.reject(applicant.getMemberId());
 				announceResolved(applicant, activity, false);
 			})
-			.option("Decide later", PartyPrompt.NEUTRAL, () -> {
-				promptOpen = false;
-				openPromptMemberId = 0;
-			})
-			.onClose(() -> {
-				promptOpen = false;
-				openPromptMemberId = 0;
-			})
+			.option("Decide later", PartyPrompt.NEUTRAL, () -> { })
 			.build();
 	}
 
@@ -1223,19 +1199,14 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			+ " for your " + activity.getDisplayName() + " party.", true);
 	}
 
-	/** Close the open chatbox applicant prompt if it's the one for {@code memberId}. */
+	/** Drop or close the applicant card for {@code memberId}, wherever it got to in the queue. */
 	private void dismissPromptFor(long memberId)
 	{
 		if (memberId == 0)
 		{
 			return;
 		}
-		clientThread.invoke(() -> {
-			if (openPromptMemberId == memberId)
-			{
-				chatboxPanelManager.close();
-			}
-		});
+		clientThread.invoke(() -> cards.dismiss(memberId));
 	}
 
 	private void playReadySound()
@@ -1387,8 +1358,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		desktopNotify(inviterName(invite) + " invited you to their party.");
 		if (mode.showsInGame())
 		{
-			// In-game chatbox Accept/Decline prompt (mirrors the host's applicant prompt); shown next tick.
-			invitePromptQueue.add(invite);
+			// In-game chatbox Accept/Decline card (mirrors the host's applicant card); shown once the queue frees.
+			cards.offer(inviteCardFor(invite));
 		}
 		if (mode.showsSidebar())
 		{
@@ -1404,8 +1375,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 	}
 
-	/** Resolve an invite (Accept or Decline) from either surface; dismisses both and joins on accept. */
-	private void resolveInvite(PartyInvite invite, boolean accept)
+	/**
+	 * Resolve an invite (Accept or Decline) from either surface; dismisses both and joins on accept.
+	 * {@code inGame} carries which surface answered, so the role question is asked in the same place.
+	 */
+	private void resolveInvite(PartyInvite invite, boolean accept, boolean inGame)
 	{
 		Advertisement ad = invite.getAd();
 		String key = ad == null ? null : ad.getId();
@@ -1426,7 +1400,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 		if (accept)
 		{
-			acceptInvite(invite);
+			acceptInvite(invite, inGame);
 		}
 		else
 		{
@@ -1434,20 +1408,14 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 	}
 
-	/** Close the chatbox invite prompt if it's the one for {@code key}. */
+	/** Drop or close the invite card for {@code key}, wherever it got to in the queue. */
 	private void dismissInvitePrompt(String key)
 	{
 		if (key == null)
 		{
 			return;
 		}
-		clientThread.invoke(() ->
-		{
-			if (key.equals(openInviteId))
-			{
-				chatboxPanelManager.close();
-			}
-		});
+		clientThread.invoke(() -> cards.dismiss(key));
 	}
 
 	private static String inviterName(PartyInvite invite)
@@ -1456,54 +1424,254 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		return from != null ? from : "A friend";
 	}
 
-	/** Show the next queued invite as an in-game Accept/Decline prompt if the chatbox is free. Client thread. */
-	private void drainInvitePrompts()
+	/** The queued card offering one invite, skipped if the side panel answers it first. */
+	private ChatboxCards.Card inviteCardFor(PartyInvite invite)
 	{
-		if (invitePromptQueue.isEmpty() || promptOpen || chatboxPanelManager.getCurrentInput() != null)
+		String key = invite.getAd().getId();
+		return new ChatboxCards.Card()
+		{
+			@Override
+			public ChatboxCards.Priority priority()
+			{
+				return ChatboxCards.Priority.INVITE;
+			}
+
+			@Override
+			public Object key()
+			{
+				return key;
+			}
+
+			@Override
+			public boolean isStale()
+			{
+				return key == null || !activeInvites.containsKey(key);
+			}
+
+			@Override
+			public PartyPrompt open()
+			{
+				return openInvitePrompt(invite);
+			}
+		};
+	}
+
+	/** Open the Accept/Decline card for a received invite; Accept turns it to the role question. */
+	private PartyPrompt openInvitePrompt(PartyInvite invite)
+	{
+		// Accepting turns this card to the role question rather than closing it, so it is kept until
+		// the join is settled one way or the other.
+		partyCard = InvitePrompt.open(chatboxPanelManager, invite, inviterName(invite),
+			() -> resolveInvite(invite, true, true),
+			() -> resolveInvite(invite, false, true),
+			() ->
+			{
+				partyCard = null;
+				answerRole(null);
+			});
+		return partyCard;
+	}
+
+	/** Identity of the similar-parties card. There is only ever one, so it needs no per-party key. */
+	private static final Object SIMILAR_CARD_KEY = new Object();
+
+	/**
+	 * The player is creating a party and something is already running it. Queued at the top priority:
+	 * they clicked Create and nothing happens until this is answered.
+	 */
+	private void onSimilarParties(SimilarParties similar)
+	{
+		InviteDisplay mode = config.matchDisplay();
+		if (mode == null || !mode.showsInGame())
+		{
+			return; // the Create tab's own inline prompt is the only surface asked for
+		}
+		cards.offer(new ChatboxCards.Card()
+		{
+			@Override
+			public ChatboxCards.Priority priority()
+			{
+				return ChatboxCards.Priority.ACTION;
+			}
+
+			@Override
+			public Object key()
+			{
+				return SIMILAR_CARD_KEY;
+			}
+
+			@Override
+			public PartyPrompt open()
+			{
+				partyCard = SimilarPrompt.open(chatboxPanelManager, similar,
+					() ->
+					{
+						Advertisement best = similar.matches().get(0);
+						// Turn the page first so the card never blanks while the application goes out.
+						SimilarPrompt.showRequesting(partyCard, best);
+						hideSimilarPanel();
+						similar.requestJoin(best, inGameRoleChooser);
+					},
+					() ->
+					{
+						hideSimilarPanel();
+						similar.createAnyway();
+					},
+					() ->
+					{
+						hideSimilarPanel();
+						similar.createAndStopAsking();
+					},
+					() ->
+					{
+						partyCard = null;
+						answerRole(null);
+					});
+				return partyCard;
+			}
+		});
+	}
+
+	/** Answering in-game takes the Create tab's inline copy of the question down with it. */
+	private void hideSimilarPanel()
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			if (panel != null)
+			{
+				panel.hideSimilar();
+			}
+		});
+	}
+
+	/**
+	 * A party turned up while the player has <em>Find me a party</em> on. Surfaced per
+	 * {@link InviteDisplay}, the same way a friend's invite is, because it asks the same thing.
+	 */
+	private void onMatchFound(MatchOffer offer)
+	{
+		InviteDisplay mode = config.matchDisplay();
+		Advertisement ad = offer.ad();
+		if (mode == null || mode == InviteDisplay.DISABLED || ad == null || ad.getId() == null)
 		{
 			return;
 		}
-		PartyInvite next = invitePromptQueue.poll();
-		if (next != null)
+		openMatchId = ad.getId();
+		desktopNotify(ad.getHost() + " is running " + activityLabel(ad) + ".");
+		if (mode.showsInGame())
 		{
-			openInvitePrompt(next);
+			cards.offer(matchCardFor(offer));
+		}
+		if (mode.showsSidebar())
+		{
+			SwingUtilities.invokeLater(() ->
+			{
+				if (panel != null)
+				{
+					panel.addMatch(offer,
+						found -> resolveMatch(found, Answer.JOIN, false),
+						found -> resolveMatch(found, Answer.DISMISS, false));
+				}
+				flashInviteButton();
+			});
 		}
 	}
 
-	/** Open the chatbox Accept/Decline prompt for a received invite; Accept joins via the invite code. */
-	private void openInvitePrompt(PartyInvite invite)
+	/** The queued card offering one found party, skipped once the player stops looking or answers it. */
+	private ChatboxCards.Card matchCardFor(MatchOffer offer)
 	{
-		Advertisement ad = invite.getAd();
-		String key = ad.getId();
-		if (key == null || !activeInvites.containsKey(key))
+		String key = offer.ad().getId();
+		return new ChatboxCards.Card()
 		{
-			return; // resolved via the sidebar banner before we got to it
-		}
+			@Override
+			public ChatboxCards.Priority priority()
+			{
+				return ChatboxCards.Priority.MATCH;
+			}
 
-		promptOpen = true;
-		openInviteId = key;
-		InvitePrompt.open(chatboxPanelManager, invite, inviterName(invite),
-			() ->
+			@Override
+			public Object key()
 			{
-				promptOpen = false;
-				openInviteId = null;
-				resolveInvite(invite, true);
-			},
-			() ->
+				return key;
+			}
+
+			@Override
+			public boolean isStale()
 			{
-				promptOpen = false;
-				openInviteId = null;
-				resolveInvite(invite, false);
-			},
-			() ->
+				return !key.equals(openMatchId);
+			}
+
+			@Override
+			public PartyPrompt open()
 			{
-				promptOpen = false;
-				openInviteId = null;
-			});
+				partyCard = MatchPrompt.open(chatboxPanelManager, offer,
+					() ->
+					{
+						// Turn the page first so the card never blanks while the application goes out.
+						MatchPrompt.showRequesting(partyCard, offer.ad());
+						resolveMatch(offer, Answer.JOIN, true);
+					},
+					() -> resolveMatch(offer, Answer.DISMISS, true),
+					() -> resolveMatch(offer, Answer.STOP_LOOKING, true),
+					() ->
+					{
+						partyCard = null;
+						answerRole(null);
+					});
+				return partyCard;
+			}
+		};
+	}
+
+	private enum Answer
+	{
+		JOIN,
+		DISMISS,
+		STOP_LOOKING
+	}
+
+	/**
+	 * Resolve a match offer from either surface, clearing it off both. {@code inGame} keeps the card
+	 * that asked open, because a Request turns that same card to the role question.
+	 */
+	private void resolveMatch(MatchOffer offer, Answer answer, boolean inGame)
+	{
+		String key = offer.ad().getId();
+		openMatchId = null;
+		SwingUtilities.invokeLater(() ->
+		{
+			if (panel != null)
+			{
+				panel.removeInvite(key);
+			}
+			stopInviteFlash();
+		});
+		if (!inGame)
+		{
+			clientThread.invoke(() -> cards.dismiss(key));
+		}
+		switch (answer)
+		{
+			case JOIN:
+				offer.join(inGameRoleChooser, message -> chat(message, false));
+				break;
+			case DISMISS:
+				offer.dismiss();
+				break;
+			case STOP_LOOKING:
+				offer.stopLooking();
+				break;
+		}
+	}
+
+	private static String activityLabel(Advertisement ad)
+	{
+		Activity activity = Activity.fromId(ad.getActivity());
+		return activity == null ? "a party" : activity.displayName(ad.isHardMode(), ad.getInvocation());
 	}
 
 	/** Accept an invite: join the party by its invite code, reusing the standard join flow. */
-	private void acceptInvite(PartyInvite invite)
+	private void acceptInvite(PartyInvite invite, boolean inGame)
 	{
 		Advertisement ad = invite.getAd();
 		String code = ad.getInviteCode();
@@ -1513,7 +1681,75 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			chat("Couldn't join that party - the invite is missing its code.", false);
 			return;
 		}
-		SwingUtilities.invokeLater(() -> currentPanel.joinByInviteCode(code, message -> chat(message, false)));
+		RoleChooser chooser = inGame ? inGameRoleChooser : null;
+		SwingUtilities.invokeLater(() ->
+			currentPanel.joinByInviteCode(code, message -> chat(message, false), chooser));
+	}
+
+	/**
+	 * Asks which role we'll fill in-game, so an invite taken in-game is finished there. The question is
+	 * drawn onto the card the player accepted on, which is still up, rather than opening a second one.
+	 */
+	private final RoleChooser inGameRoleChooser = new RoleChooser()
+	{
+		@Override
+		public void choose(Advertisement ad, Activity activity, List<Role> options,
+			java.util.function.Consumer<String> onPicked)
+		{
+			clientThread.invoke(() ->
+			{
+				pendingRolePick = role ->
+				{
+					if (role == null)
+					{
+						chat("Didn't join " + ad.getHost() + "'s party - no role picked.", false);
+					}
+					onPicked.accept(role);
+				};
+				PartyPrompt card = partyCard;
+				if (card != null && cards.current() == card)
+				{
+					InvitePrompt.showRolePicker(card, ad, activity, options, OSPartyPlugin.this::answerRole);
+				}
+				else
+				{
+					partyCard = InvitePrompt.openRolePicker(chatboxPanelManager, ad, activity, options,
+						OSPartyPlugin.this::answerRole, () ->
+						{
+							partyCard = null;
+							answerRole(null);
+						});
+				}
+			});
+		}
+
+		@Override
+		public void dismiss()
+		{
+			clientThread.invoke(() ->
+			{
+				PartyPrompt card = partyCard;
+				if (card != null && cards.current() == card)
+				{
+					chatboxPanelManager.close();
+				}
+			});
+		}
+	};
+
+	/**
+	 * Settle the outstanding role question exactly once, however it was answered: a pick, Cancel, or
+	 * the card being closed out from under it.
+	 */
+	private void answerRole(String role)
+	{
+		java.util.function.Consumer<String> pending = pendingRolePick;
+		if (pending == null)
+		{
+			return;
+		}
+		pendingRolePick = null;
+		pending.accept(role);
 	}
 
 	/** Flash the OSParty sidebar button until the panel is opened. No-op if the panel is already open. EDT only. */
