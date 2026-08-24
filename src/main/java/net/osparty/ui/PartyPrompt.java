@@ -45,10 +45,13 @@ public class PartyPrompt extends ChatboxInput implements KeyListener
 	private static final int BUTTON_EDGE = 0x241C11;
 	private static final int BUTTON_EDGE_HOVER = 0xC9B27A;
 	private static final int BUTTON_HEIGHT = 22;
-	private static final int BUTTON_MAX_WIDTH = 118;
+	/** Width a button gets when its label needs less, so a pair of short answers is not a pair of slabs. */
+	private static final int BUTTON_MIN_WIDTH = 118;
 	private static final int BUTTON_GAP = 10;
 	private static final int BUTTON_ROW_GAP = 4;
-	/** Past this many options the row wraps, so a full role list still fits the chatbox. */
+	/** Breathing room either side of a button's label. */
+	private static final int BUTTON_TEXT_PAD = 16;
+	/** However well they fit, never more than this on one row: past it they stop reading as choices. */
 	private static final int BUTTONS_PER_ROW = 4;
 
 	private static final int HEADING_HEIGHT = 13;
@@ -201,9 +204,18 @@ public class PartyPrompt extends ChatboxInput implements KeyListener
 
 		int width = container.getWidth();
 		int contentWidth = width - PAD * 2;
-		// Spread the options over as few rows as they fit on, then reserve the block at the bottom.
-		int rows = (options.size() + BUTTONS_PER_ROW - 1) / BUTTONS_PER_ROW;
-		int perRow = rows == 0 ? 0 : (options.size() + rows - 1) / rows;
+		// Buttons are sized to the longest label, and wrap onto as many rows as that needs. Sizing them
+		// to a fixed width instead is what let a long answer print past its own edge.
+		int buttonWidth = widestLabel(container) + BUTTON_TEXT_PAD;
+		int perRow = fitPerRow(buttonWidth, contentWidth);
+		int rows = perRow == 0 ? 0 : (options.size() + perRow - 1) / perRow;
+		if (rows > 0)
+		{
+			// Balance them: three options over two rows read better as 2 + 1 than 3 + 0 ever could.
+			perRow = (options.size() + rows - 1) / rows;
+			buttonWidth = Math.min((contentWidth - BUTTON_GAP * (perRow - 1)) / perRow,
+				Math.max(BUTTON_MIN_WIDTH, buttonWidth));
+		}
 		int buttonTop = container.getHeight() - 8 - rows * BUTTON_HEIGHT - (rows - 1) * BUTTON_ROW_GAP;
 		int y = 5;
 
@@ -266,7 +278,6 @@ public class PartyPrompt extends ChatboxInput implements KeyListener
 			return;
 		}
 
-		int buttonWidth = Math.min(BUTTON_MAX_WIDTH, (contentWidth - BUTTON_GAP * (perRow - 1)) / perRow);
 		int buttonY = buttonTop;
 		for (int first = 0; first < options.size(); first += perRow)
 		{
@@ -298,7 +309,7 @@ public class PartyPrompt extends ChatboxInput implements KeyListener
 
 		Widget label = container.createChild(-1, WidgetType.TEXT);
 		label.setFontId(FontID.PLAIN_12);
-		label.setText(option.text);
+		label.setText(fit(label, option.text, width - 4));
 		label.setTextColor(option.color);
 		label.setTextShadowed(true);
 		label.setXTextAlignment(WidgetTextAlignment.CENTER);
@@ -412,6 +423,35 @@ public class PartyPrompt extends ChatboxInput implements KeyListener
 		widget.setOriginalWidth(width);
 		widget.setOriginalHeight(height);
 		widget.revalidate();
+	}
+
+	/** The widest option label, so every button in the card can be cut to one size that holds them all. */
+	private int widestLabel(Widget container)
+	{
+		if (options.isEmpty())
+		{
+			return 0;
+		}
+		Widget ruler = container.createChild(-1, WidgetType.TEXT);
+		ruler.setFontId(FontID.PLAIN_12);
+		ruler.setHidden(true);
+		int widest = 0;
+		for (Option option : options)
+		{
+			widest = Math.max(widest, measure(ruler, option.text));
+		}
+		return widest;
+	}
+
+	/** How many buttons of {@code buttonWidth} fit across {@code contentWidth}, at least one. */
+	private int fitPerRow(int buttonWidth, int contentWidth)
+	{
+		if (options.isEmpty())
+		{
+			return 0;
+		}
+		int fits = (contentWidth + BUTTON_GAP) / (Math.max(1, buttonWidth) + BUTTON_GAP);
+		return Math.max(1, Math.min(Math.min(fits, BUTTONS_PER_ROW), options.size()));
 	}
 
 	/** Greedily fill lines with as many details as measure out under {@code width}. */

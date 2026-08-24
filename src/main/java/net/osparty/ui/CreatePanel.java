@@ -386,8 +386,6 @@ class CreatePanel extends ScrollableColumn
 		add(createRow);
 
 		// Sits directly under Create, where the click that raises it was made. Hidden until there is one.
-		similarPanel.setLayout(new BoxLayout(similarPanel, BoxLayout.Y_AXIS));
-		similarPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		similarPanel.setVisible(false);
 		add(similarPanel);
 
@@ -1462,8 +1460,13 @@ class CreatePanel extends ScrollableColumn
 	}
 
 	/** Wire the join-by-code apply (owned by the Search tab); {@code (code, statusSink)}. */
-	/** Inline "this is already running" prompt, directly under the Create button. EDT only. */
-	private final JPanel similarPanel = new JPanel();
+	/**
+	 * Inline "this is already running" prompt, directly under the Create button. EDT only.
+	 *
+	 * <p>A capped column, like every other child of this BoxLayout: a plain JPanel would default to
+	 * centre alignment and to an unbounded height, and one misaligned child shifts the whole tab.
+	 */
+	private final JPanel similarPanel = PanelWidgets.cappedColumn();
 
 	/**
 	 * Show the inline prompt. Every button finishes the create the player started, so there is no way to
@@ -1475,7 +1478,7 @@ class CreatePanel extends ScrollableColumn
 		List<Advertisement> matches = similar.matches();
 		Advertisement best = matches.get(0);
 
-		JPanel box = new JPanel(new BorderLayout(0, 4));
+		JPanel box = PanelWidgets.cappedRow(new BorderLayout(0, 4));
 		box.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		box.setBorder(BorderFactory.createCompoundBorder(
 			BorderFactory.createMatteBorder(1, 0, 0, 0, ColorScheme.BRAND_ORANGE),
