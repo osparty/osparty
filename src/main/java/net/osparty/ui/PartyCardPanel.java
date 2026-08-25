@@ -526,7 +526,7 @@ abstract class PartyCardPanel extends JPanel
 		String roleSuffix = role != null ? " as " + Role.displayNameOf(role) : "";
 		String learnerSuffix = learner ? " (learner)" : "";
 		setStatus("Joined " + ad.getHost() + "'s room" + roleSuffix + learnerSuffix
-			+ " — awaiting host approval.");
+			+ ". Awaiting host approval.");
 		updateAllButtons();
 	}
 
@@ -548,14 +548,14 @@ abstract class PartyCardPanel extends JPanel
 		}
 		if (isOwnParty(ad))
 		{
-			return new ApplyState("Your party", false, "You host this party — manage it on the Party tab");
+			return new ApplyState("Your party", false, "You host this party; manage it on the Party tab");
 		}
 		if (isActive(ad))
 		{
 			// Only an applicant still waiting on the host has something to withdraw. Once admitted you're
 			// a member, so say so and leave from the Party tab rather than offering to cancel.
 			return liveParty.isLocalAdmitted()
-				? new ApplyState("In this party", false, "You're in this party — manage it on the Party tab")
+				? new ApplyState("In this party", false, "You're in this party; manage it on the Party tab")
 				: new ApplyState("Cancel", true, "Withdraw your application");
 		}
 		if (!meetsIronmanRule(ad))
@@ -571,7 +571,7 @@ abstract class PartyCardPanel extends JPanel
 		if (remaining > 0)
 		{
 			return new ApplyState("Wait " + remaining + "s", false, "Recently applied to this party",
-				"Recently applied — wait " + remaining + "s", ColorScheme.MEDIUM_GRAY_COLOR);
+				"Recently applied, wait " + remaining + "s", ColorScheme.MEDIUM_GRAY_COLOR);
 		}
 		KcStatus kc = kcStatus(ad);
 		if (kc == KcStatus.BELOW)

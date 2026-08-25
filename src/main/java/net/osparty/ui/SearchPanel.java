@@ -1461,7 +1461,7 @@ class SearchPanel extends PartyCardPanel
 			}
 			else
 			{
-				setStatus("No response from the OSParty server — it may be offline. Try again shortly.");
+				setStatus("No response from the OSParty server. It may be offline; try again shortly.");
 			}
 		});
 		timeout.setRepeats(false);
@@ -1544,7 +1544,7 @@ class SearchPanel extends PartyCardPanel
 
 	private void updateLookingButton()
 	{
-		lookingButton.setText(looking ? "Looking for a party — stop" : "Find me a party");
+		lookingButton.setText(looking ? "Stop looking for a party" : "Find me a party");
 		lookingButton.setForeground(looking ? ColorScheme.BRAND_ORANGE : java.awt.Color.WHITE);
 		lookingButton.setToolTipText(looking
 			? "Turn off to stop being offered parties"

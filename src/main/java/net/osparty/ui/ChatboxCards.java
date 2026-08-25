@@ -44,7 +44,7 @@ public class ChatboxCards
 		/** Build and show it. Client thread. Returns the card shown, or null if it could not be. */
 		PartyPrompt open();
 
-		/** True once this is no longer worth showing — answered elsewhere, or its party is gone. */
+		/** True once this is no longer worth showing: answered elsewhere, or its party is gone. */
 		default boolean isStale()
 		{
 			return false;

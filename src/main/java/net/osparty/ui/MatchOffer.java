@@ -13,7 +13,7 @@ public interface MatchOffer
 	Advertisement ad();
 
 	/**
-	 * Apply to it. Not an invite — the host still approves, exactly as if the player had clicked Apply
+	 * Apply to it. Not an invite: the host still approves, exactly as if the player had clicked Apply
 	 * on the card in the panel. {@code chooser} answers the role question wherever they accepted.
 	 */
 	void join(RoleChooser chooser, Consumer<String> status);

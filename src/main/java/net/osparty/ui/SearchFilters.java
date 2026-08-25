@@ -16,8 +16,8 @@ import net.runelite.http.api.worlds.WorldRegion;
  * decide what is worth interrupting the player for. Keeping one answer means a party offered in-game
  * is always a party they would have seen in the panel.
  *
- * <p>Everything an advertisement cannot answer about itself — is this host blocked, do I have the
- * killcount, how far is that world — comes in through {@link Context}, which keeps this a value
+ * <p>Everything an advertisement cannot answer about itself (is this host blocked, do I have the
+ * killcount, how far is that world) comes in through {@link Context}, which keeps this a value
  * object that can be built and tested without a panel.
  */
 public final class SearchFilters

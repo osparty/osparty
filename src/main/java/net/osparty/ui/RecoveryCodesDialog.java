@@ -43,7 +43,7 @@ public final class RecoveryCodesDialog extends JDialog
 
 	private RecoveryCodesDialog(Component parent, List<String> codes, boolean firstTime, Runnable onLinkDiscord)
 	{
-		super(parent == null ? null : SwingUtilities.getWindowAncestor(parent), "OSParty — recovery codes",
+		super(parent == null ? null : SwingUtilities.getWindowAncestor(parent), "OSParty recovery codes",
 			ModalityType.APPLICATION_MODAL);
 
 		setLayout(new BorderLayout());
@@ -72,7 +72,7 @@ public final class RecoveryCodesDialog extends JDialog
 	{
 		StringBuilder body = new StringBuilder(
 			"These codes are the way back into this account if this device is ever lost or wiped. "
-			+ "They're shown now and can't be shown again — keep them somewhere safe.");
+			+ "They're shown now and can't be shown again, so keep them somewhere safe.");
 		if (!firstTime)
 		{
 			body.append(" Any codes issued before this have stopped working.");

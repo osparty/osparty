@@ -699,12 +699,12 @@ class CreatePanel extends ScrollableColumn
 		if (minKc > 0 && kc.isKnown(false) && kc.killCount < minKc)
 		{
 			return "You have " + kc.killCount + " " + activity.getDisplayName() + " KC, below the "
-				+ minKc + " you're asking for — you must meet your own requirement.";
+				+ minKc + " you're asking for. You must meet your own requirement.";
 		}
 		if (minHardKc > 0 && kc.isKnown(true) && kc.hardModeKillCount < minHardKc)
 		{
 			return "You have " + kc.hardModeKillCount + " " + activity.getHardModeLabel() + " KC, below the "
-				+ minHardKc + " you're asking for — you must meet your own requirement.";
+				+ minHardKc + " you're asking for. You must meet your own requirement.";
 		}
 		return null;
 	}
@@ -737,7 +737,7 @@ class CreatePanel extends ScrollableColumn
 		}
 		else if (kc.unavailable)
 		{
-			showKcMessage("Hiscores are unavailable — your own KC can't be checked right now, so this "
+			showKcMessage("Hiscores are unavailable, so your own KC can't be checked right now. This "
 				+ "party will be created without verifying it.", false);
 		}
 		else if ((minKc > 0 && kc.killCount < 0) || (minHardKc > 0 && kc.hardModeKillCount < 0))
@@ -1404,7 +1404,7 @@ class CreatePanel extends ScrollableColumn
 				error -> SwingUtilities.invokeLater(() -> {
 					creating = false;
 					createButton.setEnabled(true);
-					setError("Create failed — " + net.osparty.api.PartyErrors.friendly(error));
+					setError("Create failed: " + net.osparty.api.PartyErrors.friendly(error));
 				}));
 		});
 	}
@@ -1421,11 +1421,11 @@ class CreatePanel extends ScrollableColumn
 		liveParty.hostParty(passphrase, host, ad.getActivity(), capacity, false, hostRole, hostLearner, hostTeacher);
 		if (ad.isPrivateAd() && ad.getInviteCode() != null)
 		{
-			setSuccess("Private party created — invite code " + ad.getInviteCode() + " (also on the Party tab).");
+			setSuccess("Private party created. Invite code " + ad.getInviteCode() + " (also on the Party tab).");
 		}
 		else
 		{
-			setSuccess("Party created — manage it on the Party tab.");
+			setSuccess("Party created. Manage it on the Party tab.");
 		}
 		partyState.setHosting(ad, hostKey);
 	}
@@ -1626,7 +1626,7 @@ class CreatePanel extends ScrollableColumn
 			if (fillIdx < 0)
 			{
 				setError("Add at least one " + mine.getDisplayName()
-					+ " slot — that's the role you'll fill.");
+					+ " slot; that's the role you'll fill.");
 				return null;
 			}
 			requiredRoles = new ArrayList<>(requiredRoles);
@@ -1656,7 +1656,7 @@ class CreatePanel extends ScrollableColumn
 		activityDropdown.setEnabled(false);
 		createButton.setText("Save changes");
 		createButton.setEnabled(true);
-		setStatus("Editing your party — the activity can't be changed.");
+		setStatus("Editing your party. The activity can't be changed.");
 	}
 
 	/** The party those messages pointed at is gone, so drop them rather than leave a dead pointer to the Party tab. */
@@ -1761,7 +1761,7 @@ class CreatePanel extends ScrollableColumn
 			ignored -> SwingUtilities.invokeLater(() -> onEdited(ad, edit, form.advertiseLayout)),
 			error -> SwingUtilities.invokeLater(() -> {
 				createButton.setEnabled(true);
-				setError("Edit failed — " + net.osparty.api.PartyErrors.friendly(error));
+				setError("Edit failed: " + net.osparty.api.PartyErrors.friendly(error));
 			}));
 	}
 

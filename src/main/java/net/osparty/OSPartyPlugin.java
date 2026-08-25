@@ -855,7 +855,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			joinPromptOverlay.show(host, title, detail, config.fcRequestDurationSecs() * 1000L);
 			chat(host + " - " + detail, true);
-			desktopNotify(host + " — " + detail);
+			desktopNotify(host + ": " + detail);
 			if (config.friendsChatRequestSound())
 			{
 				playResourceSound(SOUND_FRIENDS_CHAT);
@@ -1009,7 +1009,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		if (applicant.isBlocked())
 		{
 			// Persistent in-game notification for a blocked applicant, since the chat line scrolls away.
-			notifier.notify(applicant.getName() + " is on your block list — applied to your "
+			notifier.notify(applicant.getName() + " is on your block list, and applied to your "
 				+ activity.getDisplayName() + " party.");
 		}
 		else
@@ -1030,7 +1030,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Override
 	public void announceAutoDeclinedBlocked(Applicant applicant, Activity activity)
 	{
-		notifier.notify("Auto-declined " + applicant.getName() + " — on your block list ("
+		notifier.notify("Auto-declined " + applicant.getName() + ", who is on your block list ("
 			+ activity.getDisplayName() + ").");
 		chat("Auto-declined " + applicant.getName() + " - on your block list.", true);
 	}
@@ -1817,7 +1817,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			.panel(panel)
 			.build();
 		navButtonAlert = NavigationButton.builder()
-			.tooltip("OSParty — needs your attention")
+			.tooltip("OSParty: needs your attention")
 			.icon(withInviteBadge(navIcon))
 			.priority(priority)
 			.panel(panel)

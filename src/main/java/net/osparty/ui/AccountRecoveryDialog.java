@@ -55,7 +55,7 @@ public final class AccountRecoveryDialog extends JDialog
 		// a modal setVisible(true) does not return until the dialog is dismissed, so the controller would
 		// not hold the instance until it no longer needed it, and neither setStatus nor the automatic
 		// dismissal on a successful sign-in could ever reach it.
-		super(parent == null ? null : SwingUtilities.getWindowAncestor(parent), "OSParty — couldn't sign in",
+		super(parent == null ? null : SwingUtilities.getWindowAncestor(parent), "OSParty: couldn't sign in",
 			ModalityType.MODELESS);
 
 		String who = characterName == null || characterName.isEmpty() ? "this character" : characterName;

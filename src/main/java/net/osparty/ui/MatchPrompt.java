@@ -6,8 +6,8 @@ import net.osparty.model.Advertisement;
 import net.runelite.client.game.chatbox.ChatboxPanelManager;
 
 /**
- * The in-game card offering a party to someone who is looking for one. It reads as an invite does —
- * same header, same buttons — because from the player's side it is the same question, with one
+ * The in-game card offering a party to someone who is looking for one. It reads as an invite does,
+ * same header and same buttons, because from the player's side it is the same question, with one
  * difference the wording has to carry: nobody invited them, so the host still has to say yes.
  */
 public final class MatchPrompt

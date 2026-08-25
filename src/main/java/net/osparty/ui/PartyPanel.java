@@ -2239,7 +2239,7 @@ class PartyPanel extends JPanel
 				channelUrl -> SwingUtilities.invokeLater(() -> {
 					// Record and re-broadcast so members get a "Join voice" button.
 					liveParty.setDiscordInviteUrl(channelUrl);
-					setStatus("Voice channel created — members can now join.");
+					setStatus("Voice channel created. Members can now join.");
 				}),
 				err -> SwingUtilities.invokeLater(() -> {
 					create.setEnabled(true);
@@ -2397,7 +2397,7 @@ class PartyPanel extends JPanel
 		}
 		if (flagged.getRating() != null)
 		{
-			tip.append(" — evidence rating ").append(escape(flagged.getRating()));
+			tip.append(", evidence rating ").append(escape(flagged.getRating()));
 		}
 		if (flagged.getDate() != null)
 		{

@@ -287,7 +287,7 @@ public class AccountRecoveryController
 		JOptionPane.showMessageDialog(parent,
 			"Another device is signing in to this account.\n\n"
 				+ "Code: " + code + "\n\n"
-				+ "Type it there to allow it. If this wasn't you, ignore this — nothing happens without "
+				+ "Type it there to allow it. If this wasn't you, ignore it: nothing happens without "
 				+ "the code, and this device keeps working either way.",
 			"OSParty device code", JOptionPane.INFORMATION_MESSAGE);
 	}

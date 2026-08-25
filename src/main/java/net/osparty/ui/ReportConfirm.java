@@ -12,7 +12,7 @@ final class ReportConfirm
 	{
 		String who = ConfirmDialog.escape(name == null ? "this player" : name);
 		String body = "Report <b>" + who + "</b>'s advertisement?<br><br>"
-			+ "Use this for adverts that don't belong on the board — boosting or account services, "
+			+ "Use this for adverts that don't belong on the board: boosting or account services, "
 			+ "gold selling, scams, or offensive content."
 			+ "<ul style='margin-top:6px;margin-left:14px'>"
 			+ "<li>A moderator reviews the advert itself.</li>"

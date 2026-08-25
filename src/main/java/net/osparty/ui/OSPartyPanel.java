@@ -393,7 +393,7 @@ public class OSPartyPanel extends PluginPanel
 			BorderFactory.createEmptyBorder(6, 6, 6, 6)));
 
 		JLabel message = new JLabel("<html><body style='width:120px'>"
-			+ "Not signed in on this device — you can't host parties as this character."
+			+ "Not signed in on this device, so you can't host parties as this character."
 			+ "</body></html>");
 		message.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		message.setFont(FontManager.getRunescapeSmallFont());

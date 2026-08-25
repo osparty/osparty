@@ -289,7 +289,7 @@ public class PartyHistoryServiceTest
 		history.record(p, true);
 
 		assertTrue(history.closeParty("1", 9_999L));
-		assertFalse("already ended — nothing present to stamp", history.closeParty("1", 12_345L));
+		assertFalse("already ended, nothing present to stamp", history.closeParty("1", 12_345L));
 		assertFalse("unknown party id ignored", history.closeParty("nope", 9_999L));
 
 		// A closed row persists as ended across a reopen.
