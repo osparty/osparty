@@ -249,8 +249,8 @@ class FavoritesPanel extends PartyCardPanel
 			{
 				continue;
 			}
-			// Friends are only ever known by name: the list comes from the client, which has no hashes.
-			List<String> friended = matches(p, (hash, name) -> friends.contains(PlayerFlagService.normalize(name)));
+			// Friends are only ever known by name: the list comes from the client, which has no player ids.
+			List<String> friended = matches(p, (id, name) -> friends.contains(PlayerFlagService.normalize(name)));
 			if (!friended.isEmpty())
 			{
 				friendParties.add(p);
@@ -290,10 +290,10 @@ class FavoritesPanel extends PartyCardPanel
 	 * whole party rather than the host alone: a friend or favourite sitting in someone else's party is
 	 * exactly as worth knowing about, and it is the only way to find a party they didn't advertise.
 	 */
-	static List<String> matches(Advertisement ad, BiPredicate<Long, String> flagged)
+	static List<String> matches(Advertisement ad, BiPredicate<String, String> flagged)
 	{
 		List<String> names = new ArrayList<>();
-		if (ad.getHost() != null && flagged.test(ad.getHostAccountHash(), ad.getHost()))
+		if (ad.getHost() != null && flagged.test(ad.getHostPlayerId(), ad.getHost()))
 		{
 			names.add(ad.getHost());
 		}
@@ -308,7 +308,7 @@ class FavoritesPanel extends PartyCardPanel
 			{
 				continue;
 			}
-			if (flagged.test(member.getAccountHash(), member.getName()))
+			if (flagged.test(member.getPlayerId(), member.getName()))
 			{
 				names.add(member.getName());
 			}

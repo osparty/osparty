@@ -21,12 +21,12 @@ public class Advertisement
 	private String host;
 
 	/**
-	 * The current host's account hash as the server reports it, or 0 from a server that predates the
-	 * field. Read it through {@link #getHostAccountHash()}, never directly: a host transfer rewrites
+	 * The current host's public id as the server reports it, or null from a server that predates the
+	 * field. Read it through {@link #getHostPlayerId()}, never directly: a host transfer rewrites
 	 * {@code host} without touching the member list, so the old fallback of member zero goes stale the
 	 * moment a party changes hands.
 	 */
-	private long hostAccountHash;
+	private String hostPlayerId;
 
 	private String description;
 	private int size;
@@ -50,22 +50,22 @@ public class Advertisement
 	 */
 	private String passphrase;
 
-	/** Host is the first entry. Each carries the member's name plus stable accountHash. */
+	/** Host is the first entry. Each carries the member's name plus its public id. */
 	private List<Member> members;
 
 	/**
-	 * @return the host's accountHash, or {@code 0} when unknown (older host client, or legacy/seed ad).
+	 * @return the host's public id, or {@code null} when unknown (older server, or legacy/seed ad).
 	 * Used for block/favourite matching. Falls back to member zero only for a server that predates
-	 * {@link #hostAccountHash}, where it is the best guess available; member zero is wrong after a host
-	 * transfer, which is why the server sends the hash itself.
+	 * {@link #hostPlayerId}, where it is the best guess available; member zero is wrong after a host
+	 * transfer, which is why the server sends the id itself.
 	 */
-	public long getHostAccountHash()
+	public String getHostPlayerId()
 	{
-		if (hostAccountHash != 0L)
+		if (hostPlayerId != null && !hostPlayerId.isEmpty())
 		{
-			return hostAccountHash;
+			return hostPlayerId;
 		}
-		return members == null || members.isEmpty() ? 0L : members.get(0).getAccountHash();
+		return members == null || members.isEmpty() || members.get(0) == null ? null : members.get(0).getPlayerId();
 	}
 
 	private int minKillCount;

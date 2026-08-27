@@ -143,7 +143,7 @@ public class AccountRecoveryController
 		}
 		// The banner outlives both of these -- someone can log out, or drop offline, while it is still up --
 		// and in either case retryAuth would go nowhere and the button would look broken.
-		if (!net.osparty.store.PlayerFlag.isKnown(accountHash.getAsLong()))
+		if (!net.osparty.store.AccountHash.isKnown(accountHash.getAsLong()))
 		{
 			JOptionPane.showMessageDialog(parent, "Log in to your OSRS account first.", "OSParty",
 				JOptionPane.INFORMATION_MESSAGE);

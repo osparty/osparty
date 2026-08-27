@@ -347,8 +347,9 @@ public final class AccountRecoveryDialog extends JDialog
 
 	private JPanel buttonRow(Runnable onRetry)
 	{
-		JPanel row = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 6));
-		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		// Shares a BoxLayout column with the left-aligned status line: a plain JPanel's centre alignment
+		// would drag that line's start to the middle of the dialog, the same way it did under Create.
+		JPanel row = PanelWidgets.cappedRow(new FlowLayout(FlowLayout.RIGHT, 6, 6));
 
 		JButton retry = new JButton("Try again");
 		retry.setFont(FontManager.getRunescapeSmallFont());

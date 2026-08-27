@@ -23,7 +23,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
@@ -433,8 +432,8 @@ public class PartyChatTest
 	@Test
 	public void aBlockedPeerIsNotHeard()
 	{
-		when(liveParty.accountHashForMember(7)).thenReturn(123L);
-		when(blockList.isBlocked(123L, "Bob")).thenReturn(true);
+		when(liveParty.playerIdForMember(7)).thenReturn("BOB0-0000-0123");
+		when(blockList.isBlocked("BOB0-0000-0123", "Bob")).thenReturn(true);
 
 		chat.onPartyChatEvent(new PartyChatEvent(7, "Bob", AccountType.NORMAL, "gz"));
 
@@ -448,7 +447,7 @@ public class PartyChatTest
 
 		chat.onPartyChatEvent(new PartyChatEvent(1, "Me", AccountType.NORMAL, "gz"));
 
-		verify(blockList, never()).isBlocked(anyLong(), any());
+		verify(blockList, never()).isBlocked(any(), any());
 		verify(client).addChatMessage(ChatMessageType.FRIENDSCHAT, "Me", "gz", "OSParty");
 	}
 

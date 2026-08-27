@@ -76,7 +76,7 @@ public class CredentialStore
 	/** The credential for {@code accountHash}, or null when this machine has never enrolled that character. */
 	public synchronized String get(long accountHash)
 	{
-		return PlayerFlag.isKnown(accountHash) ? tokens.get(accountHash) : null;
+		return AccountHash.isKnown(accountHash) ? tokens.get(accountHash) : null;
 	}
 
 	/**
@@ -87,7 +87,7 @@ public class CredentialStore
 	 */
 	public synchronized void put(long accountHash, String token)
 	{
-		if (!PlayerFlag.isKnown(accountHash) || token == null || token.isEmpty())
+		if (!AccountHash.isKnown(accountHash) || token == null || token.isEmpty())
 		{
 			return;
 		}

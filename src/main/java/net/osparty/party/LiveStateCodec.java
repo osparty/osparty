@@ -24,15 +24,16 @@ final class LiveStateCodec {
 	 * peer reads off the wire, so they are what cannot move; the field names on {@link PlayerUpdate} can.
 	 */
 	static final Map<String, String> TO_WIRE = Map.ofEntries(
-		Map.entry("name", "n"), Map.entry("accountHash", "ah"), Map.entry("combatLevel", "cl"),
+		Map.entry("name", "n"), Map.entry("combatLevel", "cl"),
 		Map.entry("equipment", "eq"), Map.entry("inventory", "iv"), Map.entry("inventoryQuantities", "iq"),
 		Map.entry("runePouch", "rp"), Map.entry("runePouchAmounts", "ra"), Map.entry("runePouchNames", "rn"),
 		Map.entry("stats", "sk"), Map.entry("currentHp", "hp"), Map.entry("maxHp", "mh"),
 		Map.entry("currentPrayer", "pr"), Map.entry("maxPrayer", "mp"), Map.entry("specialPercent", "sp"),
-		Map.entry("runEnergy", "re"), Map.entry("spellbook", "sb"), Map.entry("accountType", "at"),
-		Map.entry("role", "ro"), Map.entry("learner", "ln"), Map.entry("teacher", "te"),
-		Map.entry("invited", "in"), Map.entry("pbSeconds", "pb"), Map.entry("world", "wd"),
-		Map.entry("friendsChatOwner", "fc"), Map.entry("hideInventory", "hi"), Map.entry("hideGear", "hg"));
+		Map.entry("runEnergy", "re"), Map.entry("vengeance", "vg"), Map.entry("spellbook", "sb"),
+		Map.entry("accountType", "at"), Map.entry("role", "ro"), Map.entry("learner", "ln"),
+		Map.entry("teacher", "te"), Map.entry("invited", "in"), Map.entry("pbSeconds", "pb"),
+		Map.entry("world", "wd"), Map.entry("friendsChatOwner", "fc"), Map.entry("hideInventory", "hi"),
+		Map.entry("hideGear", "hg"));
 
 	/** The same the other way, for reading a peer's frame back into a {@link PlayerUpdate}. */
 	static final Map<String, String> FROM_WIRE = TO_WIRE.entrySet().stream()

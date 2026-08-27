@@ -40,6 +40,7 @@ import net.osparty.ui.PlayerMarkerOverlay;
 import net.osparty.ui.ReadyCheckOverlay;
 import net.osparty.ui.PingArrowOverlay;
 import net.osparty.ui.TilePingOverlay;
+import net.osparty.ui.VengeanceOverlay;
 import com.google.inject.Provides;
 import java.awt.BasicStroke;
 import java.awt.Color;
@@ -72,7 +73,6 @@ import net.runelite.api.MenuEntry;
 import net.runelite.api.NameableContainer;
 import net.runelite.api.Player;
 import net.runelite.api.Skill;
-import net.runelite.api.SoundEffectID;
 import net.runelite.api.Tile;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.FakeXpDrop;
@@ -98,7 +98,6 @@ import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.events.ChatboxInput;
 import net.runelite.client.events.ConfigChanged;
-import net.runelite.client.audio.AudioPlayer;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.input.KeyManager;
 import net.runelite.client.util.*;
@@ -120,6 +119,7 @@ import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.ui.overlay.infobox.InfoBoxManager;
 import net.osparty.api.PartyInvite;
+import net.osparty.enums.EventSound;
 import net.osparty.enums.InviteDisplay;
 
 @Slf4j
@@ -173,7 +173,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private Gson gson;
 
 	@Inject
-	private AudioPlayer audioPlayer;
+	private PartySounds partySounds;
 
 	@Inject
 	private KeyManager keyManager;
@@ -239,10 +239,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private volatile boolean panelActive;
 	private final Map<String, PartyInvite> activeInvites = new ConcurrentHashMap<>();
 	private static final long INVITE_COOLDOWN_MS = 30_000;
-	private static final String SOUND_READY_CHECK = "/net/osparty/sounds/readycheck.wav";
-	private static final String SOUND_ALL_READY = "/net/osparty/sounds/ready.wav";
-	private static final String SOUND_KICKED = "/net/osparty/sounds/kicked.wav";
-	private static final String SOUND_FRIENDS_CHAT = "/net/osparty/sounds/friendschatsound.wav";
 	private final Map<String, Long> lastInviteAt = new ConcurrentHashMap<>();
 	/** The in-game invite or match card while it is up, so accepting turns its page instead of reopening. */
 	private PartyPrompt partyCard;
@@ -260,6 +256,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private PlayerMarkerOverlay playerMarkerOverlay;
 
 	private PartyNameOverlay partyNameOverlay;
+	private VengeanceOverlay vengeanceOverlay;
 	private DefenceInfoBox defenceBox;
 	private volatile boolean pingHotkeyDown;
 	private volatile String playerName;
@@ -355,34 +352,29 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			partyService);
 		overlayManager.add(partyNameOverlay);
 
+		vengeanceOverlay = new VengeanceOverlay(client, liveParty, config, spriteManager);
+		overlayManager.add(vengeanceOverlay);
+
 		keyManager.registerKeyListener(pingHotkeyListener);
 
 		// Ready-check notifications: chat pings and an optional all-ready sound.
 		liveParty.setOnReadyCheckStarted(starter -> {
 			chat(starter + " started a ready check - ready up in the OSParty panel.", true);
 			desktopNotify(starter + " started a ready check.");
-			if (config.readyCheckSound())
-			{
-				playResourceSound(SOUND_READY_CHECK);
-			}
+			partySounds.play(EventSound.READY_CHECK_STARTED);
 		});
 		liveParty.setOnAllReady(() -> {
 			Activity activity = Activity.fromId(liveParty.currentActivityId());
 			String name = activity != null ? activity.getDisplayName() : "the activity";
 			chat("Everyone is ready for " + name + "!", true);
 			desktopNotify("Everyone is ready for " + name + "!");
-			playReadySound();
+			partySounds.play(EventSound.ALL_READY);
 		});
 		liveParty.setOnReadyExpired(() -> chat("Ready check expired.", true));
-		liveParty.setOnKicked(() -> {
-			if (config.kickSound())
-			{
-				playResourceSound(SOUND_KICKED);
-			}
-		});
+		liveParty.setOnKicked(() -> partySounds.play(EventSound.KICKED));
 		// A ping we can't see isn't worth a sound, so skip anything off-plane or outside the scene.
 		liveParty.setOnPingReceived(point -> {
-			if (!config.pings() || !config.pingSound() || point == null)
+			if (!config.pings() || point == null)
 			{
 				return;
 			}
@@ -390,7 +382,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 				if (point.getPlane() == client.getPlane()
 					&& WorldPoint.isInScene(client, point.getX(), point.getY()))
 				{
-					client.playSoundEffect(SoundEffectID.SMITH_ANVIL_TINK);
+					partySounds.play(EventSound.PING);
 				}
 			});
 		});
@@ -404,7 +396,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		worldPinger = new WorldPinger();
 
 		// A player can't block themselves.
-		blockListService.setSelf(this::getAccountHash, this::getSelfName);
+		blockListService.setSelf(this::getPlayerId, this::getSelfName);
 
 		panel = new OSPartyPanel(boardService, config, this::getPlayerName, this,
 			this::getFriendsChatOwner, this::getCurrentWorld, itemManager, liveParty, runeWatchService,
@@ -481,6 +473,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		overlayManager.remove(defenceOverlay);
 		overlayManager.remove(playerMarkerOverlay);
 		overlayManager.remove(partyNameOverlay);
+		overlayManager.remove(vengeanceOverlay);
 		if (defenceBox != null)
 		{
 			infoBoxManager.removeInfoBox(defenceBox);
@@ -500,6 +493,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		defenceOverlay = null;
 		playerMarkerOverlay = null;
 		partyNameOverlay = null;
+		vengeanceOverlay = null;
 		panel = null;
 		navButton = null;
 		navButtonAlert = null;
@@ -810,9 +804,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		event.consume();
 
 		WorldPoint point = selectedSceneTile.getWorldLocation();
-		if (point != null && liveParty.sendPing(point, config.pingColor()) && config.pingSound())
+		if (point != null && liveParty.sendPing(point, config.pingColor()))
 		{
-			client.playSoundEffect(SoundEffectID.SMITH_ANVIL_TINK);
+			partySounds.play(EventSound.PING);
 		}
 	}
 
@@ -856,10 +850,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			joinPromptOverlay.show(host, title, detail, config.fcRequestDurationSecs() * 1000L);
 			chat(host + " - " + detail, true);
 			desktopNotify(host + ": " + detail);
-			if (config.friendsChatRequestSound())
-			{
-				playResourceSound(SOUND_FRIENDS_CHAT);
-			}
+			partySounds.play(EventSound.FRIENDS_CHAT_REQUEST);
 		}
 	}
 
@@ -980,6 +971,15 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	public long getAccountHash()
 	{
 		return accountHash;
+	}
+
+	/**
+	 * The local player's public id, or null when not seated in a party. The server derives it from the
+	 * account hash and hands it back on the roster; it is what other players know us by.
+	 */
+	public String getPlayerId()
+	{
+		return liveParty.localPlayerId();
 	}
 
 
@@ -1207,26 +1207,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			return;
 		}
 		clientThread.invoke(() -> cards.dismiss(memberId));
-	}
-
-	private void playReadySound()
-	{
-		if (config.readyCheckSound())
-		{
-			playResourceSound(SOUND_ALL_READY);
-		}
-	}
-
-	private void playResourceSound(String resource)
-	{
-		try
-		{
-			audioPlayer.play(getClass(), resource, 0f);
-		}
-		catch (Exception e)
-		{
-			log.warn("OSParty: failed to play sound '{}'", resource, e);
-		}
 	}
 
 	/**

@@ -144,8 +144,8 @@ public class KillcountService
 			}
 		}
 
-		HiscoreSkill skill = skillFor(activity);
-		if (skill == null)
+		List<HiscoreSkill> skills = skillsFor(activity);
+		if (skills.isEmpty())
 		{
 			// Activity has no hiscore killcount (minigames etc.).
 			complete(key, new Killcount(-1, -1, false));
@@ -164,7 +164,7 @@ public class KillcountService
 					{
 						if (!unavailable)
 						{
-							kc = count(result, skill);
+							kc = count(result, skills);
 							HiscoreSkill hardSkill = hardSkillFor(activity);
 							if (hardSkill != null)
 							{
@@ -215,51 +215,77 @@ public class KillcountService
 		return s == null ? -1 : s.getLevel();
 	}
 
+	/**
+	 * The activity's killcount over every hiscore entry it spans: unranked entries count as nothing,
+	 * and only a player unranked on all of them reads as unknown ({@code -1}).
+	 */
+	private static int count(HiscoreResult result, List<HiscoreSkill> skills)
+	{
+		int total = -1;
+		for (HiscoreSkill skill : skills)
+		{
+			int kc = count(result, skill);
+			if (kc >= 0)
+			{
+				total = Math.max(total, 0) + kc;
+			}
+		}
+		return total;
+	}
+
 	private static String key(String rsn, Activity activity)
 	{
 		return rsn.replace('\u00A0', ' ').trim().toLowerCase() + "|" + activity.getId();
 	}
 
-	private static HiscoreSkill skillFor(Activity activity)
+	/**
+	 * The hiscore entries behind an activity's killcount: one for almost everything, empty for the
+	 * minigames the hiscores keep no score for, and the three kings for Dagannoth Kings, since a trip
+	 * there is all of them and no single one says how much of it someone has done.
+	 */
+	private static List<HiscoreSkill> skillsFor(Activity activity)
 	{
 		switch (activity)
 		{
 			case CHAMBERS_OF_XERIC:
-				return HiscoreSkill.CHAMBERS_OF_XERIC;
+				return List.of(HiscoreSkill.CHAMBERS_OF_XERIC);
 			case THEATRE_OF_BLOOD:
-				return HiscoreSkill.THEATRE_OF_BLOOD;
+				return List.of(HiscoreSkill.THEATRE_OF_BLOOD);
 			case TOMBS_OF_AMASCUT:
-				return HiscoreSkill.TOMBS_OF_AMASCUT;
+				return List.of(HiscoreSkill.TOMBS_OF_AMASCUT);
 			case NEX:
-				return HiscoreSkill.NEX;
+				return List.of(HiscoreSkill.NEX);
 			case NIGHTMARE:
-				return HiscoreSkill.NIGHTMARE;
+				return List.of(HiscoreSkill.NIGHTMARE);
 			case CORPOREAL_BEAST:
-				return HiscoreSkill.CORPOREAL_BEAST;
+				return List.of(HiscoreSkill.CORPOREAL_BEAST);
+			case DAGANNOTH_KINGS:
+				return List.of(HiscoreSkill.DAGANNOTH_PRIME, HiscoreSkill.DAGANNOTH_REX,
+					HiscoreSkill.DAGANNOTH_SUPREME);
 			case ZALCANO:
-				return HiscoreSkill.ZALCANO;
+				return List.of(HiscoreSkill.ZALCANO);
 			case HUEYCOATL:
-				return HiscoreSkill.THE_HUEYCOATL;
+				return List.of(HiscoreSkill.THE_HUEYCOATL);
 			case YAMA:
-				return HiscoreSkill.YAMA;
+				return List.of(HiscoreSkill.YAMA);
 			case ROYAL_TITANS:
-				return HiscoreSkill.THE_ROYAL_TITANS;
+				return List.of(HiscoreSkill.THE_ROYAL_TITANS);
 			case KREEARRA:
-				return HiscoreSkill.KREEARRA;
+				return List.of(HiscoreSkill.KREEARRA);
 			case GENERAL_GRAARDOR:
-				return HiscoreSkill.GENERAL_GRAARDOR;
+				return List.of(HiscoreSkill.GENERAL_GRAARDOR);
 			case KRIL_TSUTSAROTH:
-				return HiscoreSkill.KRIL_TSUTSAROTH;
+				return List.of(HiscoreSkill.KRIL_TSUTSAROTH);
 			case COMMANDER_ZILYANA:
-				return HiscoreSkill.COMMANDER_ZILYANA;
+				return List.of(HiscoreSkill.COMMANDER_ZILYANA);
 			case WINTERTODT:
-				return HiscoreSkill.WINTERTODT;
+				return List.of(HiscoreSkill.WINTERTODT);
 			case GUARDIANS_OF_THE_RIFT:
 				// Scored as rifts closed rather than kills; the hiscores carry it as an activity, whose
 				// score lands in the same field a boss killcount does.
-				return HiscoreSkill.RIFTS_CLOSED;
+				return List.of(HiscoreSkill.RIFTS_CLOSED);
 			default:
-				return null; // BA, Volcanic Mine and Castle Wars have no killcount
+				return List.of(); // BA, Volcanic Mine and Castle Wars have no killcount
 		}
 	}
 

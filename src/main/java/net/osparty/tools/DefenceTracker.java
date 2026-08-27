@@ -15,6 +15,7 @@ import net.runelite.api.Client;
 import net.runelite.api.NPC;
 import net.runelite.api.Player;
 import net.runelite.api.gameval.VarbitID;
+import net.runelite.client.util.Text;
 
 /**
  * Tracks the live defence of the monster a party is draining with defence-lowering
@@ -100,6 +101,8 @@ public class DefenceTracker
 	public static class DefenceState
 	{
 		int npcIndex;
+		/** The monster's name without colour tags, for the info box tooltip. */
+		String name;
 		long current;
 		long min;
 		long base;
@@ -109,6 +112,9 @@ public class DefenceTracker
 		/** The magic-defence bonus itself, which is what the Eye of ayak drains. */
 		long magicDef;
 		long magicBaseDef;
+		/** The Magic level, which the accursed sceptre and Seercull drain. */
+		long magicLevel;
+		long magicBaseLevel;
 	}
 
 	/** One defence-draining special attack landed on an NPC, from any party member. */
@@ -485,8 +491,8 @@ public class DefenceTracker
 			* (magicDefBonus + MAGIC_ROLL_BONUS_OFFSET);
 		long baseRoll = (MAGIC_ROLL_LEVEL_OFFSET + (magicUsesDefence ? bossStartDef : magicStartLevel))
 			* (magicStartDefBonus + MAGIC_ROLL_BONUS_OFFSET);
-		return new DefenceState(bossIndex, bossDef, minDef, bossStartDef, roll, baseRoll,
-			magicDefBonus, magicStartDefBonus);
+		return new DefenceState(bossIndex, Text.removeTags(bossName), bossDef, minDef, bossStartDef, roll, baseRoll,
+			magicDefBonus, magicStartDefBonus, magicLevel, magicStartLevel);
 	}
 
 	public void reset()

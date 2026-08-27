@@ -198,9 +198,9 @@ public class BoardApiClient implements BoardService
 	}
 
 	@Override
-	public void kickVoiceMember(String adId, String hostKey, long accountHash)
+	public void kickVoiceMember(String adId, String hostKey, String playerId)
 	{
-		socket.kickVoiceMember(adId, hostKey, accountHash);
+		socket.kickVoiceMember(adId, hostKey, playerId);
 	}
 
 	@Override

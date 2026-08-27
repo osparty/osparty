@@ -62,7 +62,7 @@ public interface BoardService
 	/**
 	 * Report live occupancy/world/layout/roles for the hosted ad; only genuine changes are sent. A
 	 * non-positive/null/blank field means "unknown" and is left unchanged. {@code members} is the live
-	 * roster (host first, with accountHashes) for block/favourite matching. {@code hostKey} authorises it.
+	 * roster (host first, each by public id) for block/favourite matching. {@code hostKey} authorises it.
 	 */
 	void heartbeat(String adId, int size, int world, String layout, String roles, List<Member> members,
 		String hostKey, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError);
@@ -117,10 +117,10 @@ public interface BoardService
 	void setBadgeVisibility(long accountHash, boolean visible, Consumer<DiscordLinkStatus> onResult);
 
 	/**
-	 * Host action: disconnect a kicked member from the party's voice channel. Fire-and-forget; no-ops
-	 * unless they're linked and in that channel. {@code hostKey} authorises it.
+	 * Host action: disconnect a kicked member (named by public id) from the party's voice channel.
+	 * Fire-and-forget; no-ops unless they're linked and in that channel. {@code hostKey} authorises it.
 	 */
-	void kickVoiceMember(String adId, String hostKey, long accountHash);
+	void kickVoiceMember(String adId, String hostKey, String playerId);
 
 	void reportAd(String adId);
 

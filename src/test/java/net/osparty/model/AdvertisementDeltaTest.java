@@ -6,11 +6,12 @@ import java.util.Collections;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /**
  * Field names on both models are the wire, so a field the server sends and this side never declares is
- * dropped in silence. These cover the ones that used to be: the host's account hash, which a transfer
+ * dropped in silence. These cover the ones that used to be: the host's public id, which a transfer
  * moves without touching the member list, and the delta-only fields the merge had no home for.
  */
 public class AdvertisementDeltaTest
@@ -18,53 +19,53 @@ public class AdvertisementDeltaTest
 	private final Gson gson = new Gson();
 
 	@Test
-	public void readsHostAccountHashOffTheWireRatherThanTheRoster()
+	public void readsHostPlayerIdOffTheWireRatherThanTheRoster()
 	{
 		Advertisement ad = gson.fromJson(
-			"{\"id\":\"p1\",\"host\":\"NewHost\",\"hostAccountHash\":222,"
-				+ "\"members\":[{\"name\":\"OldHost\",\"accountHash\":111}]}",
+			"{\"id\":\"p1\",\"host\":\"NewHost\",\"hostPlayerId\":\"NEW0-HOST-0000\","
+				+ "\"members\":[{\"name\":\"OldHost\",\"playerId\":\"OLD0-HOST-0000\"}]}",
 			Advertisement.class);
 
-		assertEquals(222L, ad.getHostAccountHash());
+		assertEquals("NEW0-HOST-0000", ad.getHostPlayerId());
 	}
 
-	/** A server that predates the field sends no key, and member zero is the only guess available. */
+	/** A server that predates the field sends no id, and member zero is the only guess available. */
 	@Test
-	public void fallsBackToMemberZeroWhenTheServerSendsNoHash()
+	public void fallsBackToMemberZeroWhenTheServerSendsNoId()
 	{
 		Advertisement ad = gson.fromJson(
-			"{\"id\":\"p1\",\"host\":\"Host\",\"members\":[{\"name\":\"Host\",\"accountHash\":111}]}",
+			"{\"id\":\"p1\",\"host\":\"Host\",\"members\":[{\"name\":\"Host\",\"playerId\":\"HOST-0000-0000\"}]}",
 			Advertisement.class);
 
-		assertEquals(111L, ad.getHostAccountHash());
+		assertEquals("HOST-0000-0000", ad.getHostPlayerId());
 	}
 
 	@Test
-	public void hasNoHashWhenThereIsNothingToReadItFrom()
+	public void hasNoIdWhenThereIsNothingToReadItFrom()
 	{
 		Advertisement ad = new Advertisement();
-		assertEquals(0L, ad.getHostAccountHash());
+		assertNull(ad.getHostPlayerId());
 	}
 
 	/**
 	 * The transfer case end to end: the roster still opens with the outgoing host, so a merge that
-	 * dropped the hash would leave block and favourite matching pointed at the wrong player.
+	 * dropped the id would leave block and favourite matching pointed at the wrong player.
 	 */
 	@Test
-	public void mergingATransferMovesTheHashOffTheOutgoingHost()
+	public void mergingATransferMovesTheIdOffTheOutgoingHost()
 	{
 		Advertisement ad = new Advertisement();
 		ad.setId("p1");
 		ad.setHost("OldHost");
-		ad.setHostAccountHash(111L);
-		ad.setMembers(Collections.singletonList(new Member("OldHost", 111L)));
+		ad.setHostPlayerId("OLD0-HOST-0000");
+		ad.setMembers(Collections.singletonList(new Member("OldHost", "OLD0-HOST-0000")));
 
 		AdvertisementDelta delta = gson.fromJson(
-			"{\"id\":\"p1\",\"host\":\"NewHost\",\"hostAccountHash\":222}", AdvertisementDelta.class);
+			"{\"id\":\"p1\",\"host\":\"NewHost\",\"hostPlayerId\":\"NEW0-HOST-0000\"}", AdvertisementDelta.class);
 		delta.applyTo(ad);
 
 		assertEquals("NewHost", ad.getHost());
-		assertEquals(222L, ad.getHostAccountHash());
+		assertEquals("NEW0-HOST-0000", ad.getHostPlayerId());
 	}
 
 	@Test
@@ -91,7 +92,7 @@ public class AdvertisementDeltaTest
 	{
 		Advertisement ad = new Advertisement();
 		ad.setId("p1");
-		ad.setHostAccountHash(111L);
+		ad.setHostPlayerId("HOST-0000-0000");
 		ad.setNode("pod-a");
 		ad.setHostRole("mage");
 		ad.setLearner(true);
@@ -100,7 +101,7 @@ public class AdvertisementDeltaTest
 		delta.applyTo(ad);
 
 		assertEquals(4, ad.getSize());
-		assertEquals(111L, ad.getHostAccountHash());
+		assertEquals("HOST-0000-0000", ad.getHostPlayerId());
 		assertEquals("pod-a", ad.getNode());
 		assertEquals("mage", ad.getHostRole());
 		assertTrue(ad.isLearner());

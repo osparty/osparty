@@ -107,7 +107,7 @@ class SearchPanel extends PartyCardPanel
 			Activity.KREEARRA, Activity.GENERAL_GRAARDOR, Activity.KRIL_TSUTSAROTH,
 			Activity.COMMANDER_ZILYANA, Activity.NEX),
 		new ActivityGroup("Other",
-			Activity.NIGHTMARE, Activity.CORPOREAL_BEAST, Activity.BARBARIAN_ASSAULT,
+			Activity.NIGHTMARE, Activity.CORPOREAL_BEAST, Activity.DAGANNOTH_KINGS, Activity.BARBARIAN_ASSAULT,
 			Activity.ZALCANO, Activity.HUEYCOATL, Activity.YAMA, Activity.ROYAL_TITANS,
 			Activity.VOLCANIC_MINE, Activity.CASTLE_WARS, Activity.GUARDIANS_OF_THE_RIFT,
 			Activity.WINTERTODT),
@@ -2109,11 +2109,11 @@ class SearchPanel extends PartyCardPanel
 		if (favoritesService != null)
 		{
 			sb.append('v').append(favoritesService.hasAnyFavorite(ad) ? '1' : '0')
-				.append(favoritesService.isFavorite(ad.getHostAccountHash(), ad.getHost()) ? 'H' : '_');
+				.append(favoritesService.isFavorite(ad.getHostPlayerId(), ad.getHost()) ? 'H' : '_');
 		}
 		if (blockListService != null)
 		{
-			sb.append('b').append(blockListService.isBlocked(ad.getHostAccountHash(), ad.getHost()) ? '1' : '0');
+			sb.append('b').append(blockListService.isBlocked(ad.getHostPlayerId(), ad.getHost()) ? '1' : '0');
 		}
 		return sb.toString();
 	}
@@ -2128,7 +2128,7 @@ class SearchPanel extends PartyCardPanel
 		StringBuilder sb = new StringBuilder();
 		for (Advertisement p : ads)
 		{
-			if (blockListService.isBlocked(p.getHostAccountHash(), p.getHost()))
+			if (blockListService.isBlocked(p.getHostPlayerId(), p.getHost()))
 			{
 				sb.append(p.getId()).append(',');
 			}

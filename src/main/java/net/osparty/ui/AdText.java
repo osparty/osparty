@@ -64,21 +64,21 @@ final class AdText
 	}
 
 	/**
-	 * Badges for the ad member matching {@code hash}, then {@code name}, or {@code null}. Never match
+	 * Badges for the ad member matching {@code playerId}, then {@code name}, or {@code null}. Never match
 	 * on list position: a host transfer rewrites the host without touching the member list, so member
 	 * zero is the outgoing host from the moment a party changes hands.
 	 */
-	static List<String> badgesFor(List<Member> members, long hash, String name)
+	static List<String> badgesFor(List<Member> members, String playerId, String name)
 	{
 		if (members == null)
 		{
 			return null;
 		}
-		if (hash != 0)
+		if (playerId != null && !playerId.isEmpty())
 		{
 			for (Member member : members)
 			{
-				if (member != null && member.getAccountHash() == hash)
+				if (member != null && playerId.equals(member.getPlayerId()))
 				{
 					return member.getBadges();
 				}

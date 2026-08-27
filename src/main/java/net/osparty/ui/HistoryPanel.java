@@ -445,11 +445,11 @@ class HistoryPanel extends JPanel
 		{
 			return null;
 		}
-		final long hash = m.getAccountHash();
+		final String playerId = m.getPlayerId();
 		final String name = m.getName();
-		final boolean self = blockListService.isSelf(hash, name);
-		boolean isFavorite = favoritesService.isFavorite(hash, name);
-		boolean isBlocked = blockListService.isBlocked(hash, name);
+		final boolean self = blockListService.isSelf(playerId, name);
+		boolean isFavorite = favoritesService.isFavorite(playerId, name);
+		boolean isBlocked = blockListService.isBlocked(playerId, name);
 
 		JPanel actions = new JPanel();
 		actions.setLayout(new BoxLayout(actions, BoxLayout.X_AXIS));
@@ -474,10 +474,10 @@ class HistoryPanel extends JPanel
 
 		fav.addActionListener(e ->
 		{
-			favoritesService.toggle(hash, name);
-			if (!isFavorite && blockListService.isBlocked(hash, name))
+			favoritesService.toggle(playerId, name);
+			if (!isFavorite && blockListService.isBlocked(playerId, name))
 			{
-				blockListService.toggle(hash, name);
+				blockListService.toggle(playerId, name);
 			}
 			flagsChanged();
 		});
@@ -488,10 +488,10 @@ class HistoryPanel extends JPanel
 			{
 				return;
 			}
-			blockListService.toggle(hash, name);
-			if (!isBlocked && favoritesService.isFavorite(hash, name))
+			blockListService.toggle(playerId, name);
+			if (!isBlocked && favoritesService.isFavorite(playerId, name))
 			{
-				favoritesService.toggle(hash, name);
+				favoritesService.toggle(playerId, name);
 			}
 			flagsChanged();
 		});

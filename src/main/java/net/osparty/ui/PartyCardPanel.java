@@ -681,8 +681,8 @@ abstract class PartyCardPanel extends JPanel
 		}
 
 		// Blocked hosts (only shown when "Show blocked parties" is on) are greyed to mark them.
-		long hostHash = ad.getHostAccountHash();
-		boolean hostBlocked = blockListService != null && blockListService.isBlocked(hostHash, ad.getHost());
+		String hostId = ad.getHostPlayerId();
+		boolean hostBlocked = blockListService != null && blockListService.isBlocked(hostId, ad.getHost());
 		if (hostBlocked)
 		{
 			hostLabel.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
@@ -857,22 +857,22 @@ abstract class PartyCardPanel extends JPanel
 		{
 			return null;
 		}
-		final long hostHash = ad.getHostAccountHash();
-		// Hash-based self-check: the name-based isOwnParty missed our own ad when the stored host name
+		final String hostId = ad.getHostPlayerId();
+		// Id-based self-check: the name-based isOwnParty missed our own ad when the stored host name
 		// differed slightly, which let us favourite ourselves. Fall back to it when there's no service.
-		boolean self = blockListService != null ? blockListService.isSelf(hostHash, host) : isOwnParty(ad);
+		boolean self = blockListService != null ? blockListService.isSelf(hostId, host) : isOwnParty(ad);
 		JPopupMenu menu = new JPopupMenu();
 		boolean any = false;
 
 		if (favoritesService != null)
 		{
-			boolean fav = favoritesService.isFavorite(hostHash, host);
+			boolean fav = favoritesService.isFavorite(hostId, host);
 			// You can't favourite yourself; only offer the item to REMOVE a self-favourite you already have.
 			if (!self || fav)
 			{
 				JMenuItem favItem = new JMenuItem(fav ? "Remove host from Favorites" : "Add host to Favorites");
 				favItem.addActionListener(e -> {
-					favoritesService.toggle(hostHash, host);
+					favoritesService.toggle(hostId, host);
 					onFavoriteToggled(ad);
 					onFavoriteChanged.run();
 				});
@@ -884,10 +884,10 @@ abstract class PartyCardPanel extends JPanel
 		// You can't block yourself, so don't offer it on your own ad.
 		if (blockListService != null && !self)
 		{
-			boolean blocked = blockListService.isBlocked(hostHash, host);
+			boolean blocked = blockListService.isBlocked(hostId, host);
 			JMenuItem blockItem = new JMenuItem(blocked ? "Unblock host" : "Block host");
 			blockItem.addActionListener(e -> {
-				if (!BlockConfirm.toggle(this, blockListService, favoritesService, hostHash, host))
+				if (!BlockConfirm.toggle(this, blockListService, favoritesService, hostId, host))
 				{
 					return;
 				}
@@ -932,7 +932,7 @@ abstract class PartyCardPanel extends JPanel
 			return null;
 		}
 		List<DiscordBadge> badges = DiscordBadge.fromWire(
-			AdText.badgesFor(ad.getMembers(), ad.getHostAccountHash(), ad.getHost()));
+			AdText.badgesFor(ad.getMembers(), ad.getHostPlayerId(), ad.getHost()));
 		JPanel row = null;
 		for (DiscordBadge badge : badges)
 		{

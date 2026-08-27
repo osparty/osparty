@@ -3,7 +3,11 @@ package net.osparty;
 import java.awt.Color;
 
 import net.osparty.enums.BlockedApplicantAction;
+import net.osparty.enums.DefenceDrainFormat;
+import net.osparty.enums.DefenceInfoBoxValue;
 import net.osparty.enums.DefenceOverlayPosition;
+import net.osparty.enums.DefenceThresholdUnit;
+import net.osparty.enums.DefenceValueFormat;
 import net.osparty.enums.MagicDefenceDisplay;
 import net.osparty.enums.PartyChatChannel;
 import net.osparty.enums.SceneFontSize;
@@ -14,6 +18,7 @@ import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigSection;
 import net.runelite.client.config.Keybind;
 import net.runelite.client.config.Range;
+import net.runelite.client.config.Units;
 
 @ConfigGroup(OSPartyConfig.GROUP)
 public interface OSPartyConfig extends Config
@@ -78,7 +83,7 @@ public interface OSPartyConfig extends Config
 
 	@ConfigSection(
 		name = "Player markers",
-		description = "Names above party members, plus the icons and tile markers for learners and teachers.",
+		description = "Names and Vengeance icons on party members in the scene, plus the icons and tile markers for learners and teachers.",
 		position = 8,
 		closedByDefault = true
 	)
@@ -306,6 +311,22 @@ public interface OSPartyConfig extends Config
 	}
 
 	// ---- Event sounds ----
+
+	String SOUND_VOLUME = "soundVolume";
+
+	@ConfigItem(
+		keyName = SOUND_VOLUME,
+		name = "Volume",
+		description = "How loud OSParty's own sounds play. The map ping is the game's anvil sound and follows the game's sound-effect volume instead.",
+		position = 0,
+		section = SOUNDS
+	)
+	@Range(max = 100)
+	@Units(Units.PERCENT)
+	default int soundVolume()
+	{
+		return 100;
+	}
 
 	@ConfigItem(
 		keyName = "readyCheckSound",
@@ -591,6 +612,18 @@ public interface OSPartyConfig extends Config
 		return new Color(255, 152, 31);
 	}
 
+	@ConfigItem(
+		keyName = "vengeanceIcons",
+		name = "Vengeance icons",
+		description = "Show the Vengeance spell icon on party members in the scene while they have it active.",
+		position = 8,
+		section = MARKERS
+	)
+	default boolean vengeanceIcons()
+	{
+		return true;
+	}
+
 	// ---- Defence tracker ----
 
 	@ConfigItem(
@@ -617,11 +650,25 @@ public interface OSPartyConfig extends Config
 		return DefenceOverlayPosition.ABOVE_HP_BAR;
 	}
 
+	@Range(min = -200, max = 200)
+	@Units(Units.PIXELS)
+	@ConfigItem(
+		keyName = "defenceHpBarYOffset",
+		name = "Vertical nudge",
+		description = "Shift the scene defence display up by this many pixels from the chosen position (negative to shift it down).",
+		position = 3,
+		section = DEFENCE
+	)
+	default int defenceHpBarYOffset()
+	{
+		return 0;
+	}
+
 	@ConfigItem(
 		keyName = "defenceInfoBox",
 		name = "Show in status bar",
 		description = "Display the monster's live defence as an info box in the status/info-box bar. Can be used together with, or instead of, the HP-bar display.",
-		position = 3,
+		position = 4,
 		section = DEFENCE
 	)
 	default boolean defenceInfoBox()
@@ -630,10 +677,22 @@ public interface OSPartyConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "defenceInfoBoxValue",
+		name = "Status bar shows",
+		description = "Which number the info box shows: the current defence, the percent remaining, or the amount drained. Hover it for the full breakdown.",
+		position = 5,
+		section = DEFENCE
+	)
+	default DefenceInfoBoxValue defenceInfoBoxValue()
+	{
+		return DefenceInfoBoxValue.CURRENT;
+	}
+
+	@ConfigItem(
 		keyName = "defenceAlwaysShow",
 		name = "Show before any spec",
 		description = "Show the defence of the monster you're attacking straight away, at its starting level, instead of waiting for the first defence-draining special attack to land.",
-		position = 4,
+		position = 6,
 		section = DEFENCE
 	)
 	default boolean defenceAlwaysShow()
@@ -642,13 +701,73 @@ public interface OSPartyConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "defenceValueFormat",
+		name = "Defence shown as",
+		description = "How a level is written on the scene: the current value (142), current over starting (142/200), the percent remaining (71%), or current with the percent (142 (71%)). Also applies to the magic-defence bonus and Magic level readouts.",
+		position = 7,
+		section = DEFENCE
+	)
+	default DefenceValueFormat defenceValueFormat()
+	{
+		return DefenceValueFormat.CURRENT;
+	}
+
+	@ConfigItem(
+		keyName = "defenceDrainFormat",
+		name = "Drain shown as",
+		description = "What follows the down arrow: the amount drained so far, the percent drained, or nothing.",
+		position = 8,
+		section = DEFENCE
+	)
+	default DefenceDrainFormat defenceDrainFormat()
+	{
+		return DefenceDrainFormat.AMOUNT;
+	}
+
+	@ConfigItem(
 		keyName = "defenceShowFullLevel",
 		name = "Show full level",
-		description = "For monsters with a minimum defence, show the full level instead of the amount above the minimum.",
-		position = 5,
+		description = "For monsters with a minimum defence, show the full level instead of the amount above the minimum. Percentages follow the same choice.",
+		position = 9,
 		section = DEFENCE
 	)
 	default boolean defenceShowFullLevel()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "defenceShowIcons",
+		name = "Show skill icons",
+		description = "Draw the Defence and Magic skill icons in front of the scene readouts.",
+		position = 10,
+		section = DEFENCE
+	)
+	default boolean defenceShowIcons()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "defenceFontSize",
+		name = "Scene text size",
+		description = "Font size for the on-scene defence display.",
+		position = 11,
+		section = DEFENCE
+	)
+	default SceneFontSize defenceFontSize()
+	{
+		return SceneFontSize.SMALL;
+	}
+
+	@ConfigItem(
+		keyName = "defenceTextPlate",
+		name = "Scene text background",
+		description = "Draw a translucent plate behind the scene defence text for legibility.",
+		position = 12,
+		section = DEFENCE
+	)
+	default boolean defenceTextPlate()
 	{
 		return false;
 	}
@@ -657,8 +776,8 @@ public interface OSPartyConfig extends Config
 	@ConfigItem(
 		keyName = "defenceLowThreshold",
 		name = "Low defence threshold",
-		description = "Defence at or below this (above the minimum) is shown in the low-defence colour.",
-		position = 6,
+		description = "Defence at or below this (above the minimum) is shown in the low-defence colour. Read in levels or as a percent, per the next setting.",
+		position = 13,
 		section = DEFENCE
 	)
 	default int defenceLowThreshold()
@@ -666,12 +785,24 @@ public interface OSPartyConfig extends Config
 		return 10;
 	}
 
+	@ConfigItem(
+		keyName = "defenceLowThresholdUnit",
+		name = "Threshold unit",
+		description = "Read the low defence threshold as a number of levels, or as a percent of the defence that can be drained (holds up in Chambers of Xeric, where starting levels scale with party size).",
+		position = 14,
+		section = DEFENCE
+	)
+	default DefenceThresholdUnit defenceLowThresholdUnit()
+	{
+		return DefenceThresholdUnit.LEVELS;
+	}
+
 	@Alpha
 	@ConfigItem(
 		keyName = "defenceHighColor",
 		name = "High defence colour",
 		description = "Colour when defence is above the low threshold.",
-		position = 7,
+		position = 15,
 		section = DEFENCE
 	)
 	default Color defenceHighColor()
@@ -684,7 +815,7 @@ public interface OSPartyConfig extends Config
 		keyName = "defenceLowColor",
 		name = "Low defence colour",
 		description = "Colour when defence is at or below the low threshold.",
-		position = 8,
+		position = 16,
 		section = DEFENCE
 	)
 	default Color defenceLowColor()
@@ -697,7 +828,7 @@ public interface OSPartyConfig extends Config
 		keyName = "defenceCappedColor",
 		name = "Capped defence colour",
 		description = "Colour when defence is fully drained (at the monster's minimum).",
-		position = 9,
+		position = 17,
 		section = DEFENCE
 	)
 	default Color defenceCappedColor()
@@ -705,35 +836,24 @@ public interface OSPartyConfig extends Config
 		return Color.GREEN;
 	}
 
+	@Alpha
 	@ConfigItem(
-		keyName = "defenceFontSize",
-		name = "Scene text size",
-		description = "Font size for the on-scene defence display.",
-		position = 10,
+		keyName = "defenceDrainColor",
+		name = "Drain colour",
+		description = "Colour of the down arrow and the drained amount after it.",
+		position = 18,
 		section = DEFENCE
 	)
-	default SceneFontSize defenceFontSize()
+	default Color defenceDrainColor()
 	{
-		return SceneFontSize.SMALL;
-	}
-
-	@ConfigItem(
-		keyName = "defenceTextPlate",
-		name = "Scene text background",
-		description = "Draw a translucent plate behind the scene defence text for legibility.",
-		position = 11,
-		section = DEFENCE
-	)
-	default boolean defenceTextPlate()
-	{
-		return false;
+		return new Color(255, 80, 80);
 	}
 
 	@ConfigItem(
 		keyName = "magicDefence",
 		name = "Show magic defence",
 		description = "Also show the monster's live magic defence as the party drains it with the accursed sceptre, Seercull, or Eye of ayak.",
-		position = 12,
+		position = 19,
 		section = DEFENCE
 	)
 	default boolean magicDefence()
@@ -744,8 +864,8 @@ public interface OSPartyConfig extends Config
 	@ConfigItem(
 		keyName = "magicDefenceDisplay",
 		name = "Magic defence as",
-		description = "Show the magic-defence bonus (the number the Eye of ayak drains), the percentage of the starting magic-defence roll (which also reflects Magic level drains), or both.",
-		position = 13,
+		description = "Show the magic-defence bonus (the number the Eye of ayak drains), the Magic level (drained by the accursed sceptre and Seercull), the percentage of the starting magic-defence roll (which reflects both), or bonus and percentage together.",
+		position = 20,
 		section = DEFENCE
 	)
 	default MagicDefenceDisplay magicDefenceDisplay()
@@ -753,12 +873,24 @@ public interface OSPartyConfig extends Config
 		return MagicDefenceDisplay.BONUS;
 	}
 
+	@ConfigItem(
+		keyName = "magicDefenceSameRow",
+		name = "Magic defence on same row",
+		description = "Draw the magic-defence readout beside the Defence readout instead of on a second line.",
+		position = 21,
+		section = DEFENCE
+	)
+	default boolean magicDefenceSameRow()
+	{
+		return false;
+	}
+
 	@Alpha
 	@ConfigItem(
 		keyName = "magicDefenceColor",
 		name = "Magic defence colour",
 		description = "Colour of the magic-defence readout.",
-		position = 14,
+		position = 22,
 		section = DEFENCE
 	)
 	default Color magicDefenceColor()
@@ -770,7 +902,7 @@ public interface OSPartyConfig extends Config
 		keyName = "defenceOutsideParty",
 		name = "Track outside a party",
 		description = "Keep tracking your own defence drains when you aren't in a party. Turn this off to only show the defence tracker during party content.",
-		position = 15,
+		position = 23,
 		section = DEFENCE
 	)
 	default boolean defenceOutsideParty()

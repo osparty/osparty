@@ -11,13 +11,13 @@ public interface PartyStore
 	List<PlayerFlag> loadFlags(FlagKind kind);
 
 	/**
-	 * Insert or update a flag. When {@code flag.hasKnownHash()} the row is keyed by
-	 * (kind, accountHash) and any pre-existing name-only row for the same username is
-	 * removed (hash backfill). Otherwise it is keyed by (kind, normalised username).
+	 * Insert or update a flag. When {@code flag.hasKnownId()} the row is keyed by
+	 * (kind, playerId) and any pre-existing name-only row for the same username is
+	 * removed (id backfill). Otherwise it is keyed by (kind, normalised username).
 	 */
 	void upsertFlag(FlagKind kind, PlayerFlag flag);
 
-	/** Remove a flag by hash when known, otherwise by normalised username. */
+	/** Remove a flag by id when known, otherwise by normalised username. */
 	void removeFlag(FlagKind kind, PlayerFlag flag);
 
 	/** Release any resources held by the implementation. Safe to call more than once. */

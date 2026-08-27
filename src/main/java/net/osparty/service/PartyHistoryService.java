@@ -26,7 +26,8 @@ import net.runelite.client.RuneLite;
 public class PartyHistoryService
 {
 	private static final String FILE_NAME = "history.json";
-	private static final int SCHEMA_VERSION = 2;
+	/** v3 dropped {@code accountHash} from members; a v2 file is rewritten without it on load. */
+	private static final int SCHEMA_VERSION = 3;
 	/** Absolute ceiling regardless of config, so a bad value can't grow the file unboundedly. */
 	private static final int MAX_LIMIT = 500;
 
@@ -175,7 +176,7 @@ public class PartyHistoryService
 			int idx = indexOfMember(stored, matched, lm);
 			if (idx < 0)
 			{
-				stored.add(new HistoryMember(lm.getName(), 0L, now, 0, lm.getPlayerId()));
+				stored.add(new HistoryMember(lm.getName(), now, 0, lm.getPlayerId()));
 				matched.set(stored.size() - 1); // a joiner appended this pass is present, not a leaver
 				changed = true;
 				continue;
@@ -276,11 +277,10 @@ public class PartyHistoryService
 		{
 			if (m != null)
 			{
-				// The board ad's member list carries a playerId directly now, so this is usually already
+				// The board ad's member list carries a playerId directly, so this is usually already
 				// populated; mergeRoster still backfills it from the live roster for a party snapshotted
-				// from an older server, or one where it hasn't synced yet. accountHash is deliberately not
-				// read here even though the wire form still carries it -- see HistoryMember's class doc.
-				out.add(new HistoryMember(m.getName(), 0L, now, 0, m.getPlayerId()));
+				// from an older server, or one where it hasn't synced yet.
+				out.add(new HistoryMember(m.getName(), now, 0, m.getPlayerId()));
 			}
 		}
 		return out;
@@ -349,7 +349,6 @@ public class PartyHistoryService
 	{
 		entries.clear();
 		Data data = store.read();
-		boolean scrubbed = false;
 		if (data != null && data.entries != null)
 		{
 			for (PartyHistoryEntry e : data.entries)
@@ -357,18 +356,17 @@ public class PartyHistoryService
 				if (e != null)
 				{
 					migrate(e);
-					scrubbed |= scrubAccountHash(e);
 					entries.add(e);
 				}
 			}
 		}
 		// Honour a limit that may have been lowered since the file was written.
 		trim();
-		if (scrubbed)
+		if (data != null && data.version < SCHEMA_VERSION)
 		{
-			// Rewrite immediately rather than waiting for the next party: the whole point is that the raw
-			// hash stops sitting on disk, and a user who never parties again would otherwise keep it there
-			// forever despite this running.
+			// Rewrite immediately rather than waiting for the next party: a v2 file carries the raw account
+			// hash of everyone in it, and the whole point is that it stops sitting on disk. A user who never
+			// parties again would otherwise keep it there forever despite this running.
 			save();
 		}
 	}
@@ -388,33 +386,6 @@ public class PartyHistoryService
 				m.setJoinedAt(entry.getJoinedAt());
 			}
 		}
-	}
-
-	/**
-	 * Clear {@link HistoryMember#getAccountHash()} on every row that still has one, for a file written
-	 * before {@link HistoryMember#getPlayerId()} existed. The raw account hash of everyone in the party
-	 * never needed to sit on disk indefinitely, and this is what removes it from files that predate the
-	 * field that replaced it -- new rows never carry one in the first place.
-	 *
-	 * @return whether anything was cleared, so the caller knows to resave.
-	 */
-	private static boolean scrubAccountHash(PartyHistoryEntry entry)
-	{
-		List<HistoryMember> members = entry.getMembers();
-		if (members == null)
-		{
-			return false;
-		}
-		boolean changed = false;
-		for (HistoryMember m : members)
-		{
-			if (m != null && m.getAccountHash() != 0)
-			{
-				m.setAccountHash(0);
-				changed = true;
-			}
-		}
-		return changed;
 	}
 
 	private void save()

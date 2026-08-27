@@ -13,20 +13,24 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * One party member: the display {@code name}, the stable {@code accountHash} (used for block /
- * favourite matching where nothing better is available), and {@code playerId} — the account's public,
- * non-reversible id, safe to persist or show and stable across a rename, unlike {@code accountHash}.
- * {@code accountHash} is {@code 0} and {@code playerId} is {@code null} when the source didn't send one:
- * an older client, or a wire shape (the board ad's member list) that doesn't yet carry it.
+ * One party member: the display {@code name} and {@code playerId} — the account's public,
+ * non-reversible id, safe to persist or show and stable across a rename. {@code playerId} is
+ * {@code null} when the source didn't send one: a server or client old enough to predate it.
+ *
+ * <p>No account hash, deliberately. It used to ride here, and it is the thing a client asserts to
+ * claim an identity — so every ad and roster handed everyone the one input needed to impersonate
+ * anyone in it. Block and favourite matching, history and voice kicks all key on the id now; the
+ * server keeps the hash to itself and derives the id for us.
  *
  * <p>{@code badges} are server-asserted Discord-role badges (e.g. {@code "developer"}) the
  * API stamps onto broadcast ads for linked members; {@code null} when the member has none.
  * Unknown badge strings from newer servers are kept as-is here and simply not rendered.
  *
  * <p>The {@link MemberAdapter} lets us tolerate the legacy wire form where a member was a
- * bare JSON string ({@code "Alice"}) rather than an object — it deserialises that to a
- * hash-less member. The annotation binds the adapter to the type, so it works even through
- * RuneLite's shared Gson instance.
+ * bare JSON string ({@code "Alice"}) rather than an object — it deserialises that to an
+ * id-less member — and skips the {@code accountHash} an older server still sends. The
+ * annotation binds the adapter to the type, so it works even through RuneLite's shared Gson
+ * instance.
  */
 @Data
 @NoArgsConstructor
@@ -35,18 +39,17 @@ import lombok.NoArgsConstructor;
 public class Member
 {
 	private String name;
-	private long accountHash;
 	private List<String> badges;
 	private String playerId;
 
-	public Member(String name, long accountHash)
+	public Member(String name)
 	{
-		this(name, accountHash, null, null);
+		this(name, null, null);
 	}
 
-	public Member(String name, long accountHash, List<String> badges)
+	public Member(String name, String playerId)
 	{
-		this(name, accountHash, badges, null);
+		this(name, null, playerId);
 	}
 
 	public static final class MemberAdapter extends TypeAdapter<Member>
@@ -61,7 +64,10 @@ public class Member
 			}
 			out.beginObject();
 			out.name("name").value(value.name);
-			out.name("accountHash").value(value.accountHash);
+			if (value.playerId != null && !value.playerId.isEmpty())
+			{
+				out.name("playerId").value(value.playerId);
+			}
 			if (value.badges != null && !value.badges.isEmpty())
 			{
 				out.name("badges");
@@ -84,13 +90,12 @@ public class Member
 				in.nextNull();
 				return null;
 			}
-			// Legacy shape: a bare name string with no hash.
+			// Legacy shape: a bare name string.
 			if (token == JsonToken.STRING)
 			{
-				return new Member(in.nextString(), 0L);
+				return new Member(in.nextString());
 			}
 			String name = null;
-			long accountHash = 0L;
 			List<String> badges = null;
 			String playerId = null;
 			in.beginObject();
@@ -100,9 +105,6 @@ public class Member
 				{
 					case "name":
 						name = in.nextString();
-						break;
-					case "accountHash":
-						accountHash = in.nextLong();
 						break;
 					case "badges":
 						if (in.peek() == JsonToken.NULL)
@@ -127,11 +129,12 @@ public class Member
 						playerId = in.nextString();
 						break;
 					default:
+						// Includes accountHash from a server that still sends it: read past, never kept.
 						in.skipValue();
 				}
 			}
 			in.endObject();
-			return new Member(name, accountHash, badges, playerId);
+			return new Member(name, badges, playerId);
 		}
 	}
 }

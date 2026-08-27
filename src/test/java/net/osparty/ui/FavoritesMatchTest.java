@@ -24,18 +24,18 @@ public class FavoritesMatchTest
 		Member[] listed = new Member[members.length];
 		for (int i = 0; i < members.length; i++)
 		{
-			// Hash-less, as an older client reports them: matching then falls back to the name.
-			listed[i] = new Member(members[i], 0L);
+			// Id-less, as an older server reports them: matching then falls back to the name.
+			listed[i] = new Member(members[i]);
 		}
 		ad.setMembers(List.of(listed));
 		return ad;
 	}
 
-	/** Friends are known by name only: the client's list carries no account hashes. */
+	/** Friends are known by name only: the client's list carries no player ids. */
 	private static List<String> matching(Advertisement ad, String... flaggedNames)
 	{
 		Set<String> flagged = Set.of(flaggedNames);
-		BiPredicate<Long, String> byName = (hash, name) -> flagged.contains(PlayerFlagService.normalize(name));
+		BiPredicate<String, String> byName = (id, name) -> flagged.contains(PlayerFlagService.normalize(name));
 		return FavoritesPanel.matches(ad, byName);
 	}
 

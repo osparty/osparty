@@ -240,7 +240,7 @@ public class PartyChat
 			return;
 		}
 		if (!liveParty.isForLocalMember(event.getMemberId())
-			&& blockList.isBlocked(liveParty.accountHashForMember(event.getMemberId()), event.getName()))
+			&& blockList.isBlocked(liveParty.playerIdForMember(event.getMemberId()), event.getName()))
 		{
 			return;
 		}

@@ -85,8 +85,9 @@ activities:
 
 - **Raids:** Chambers of Xeric (CoX) · Theatre of Blood · Tombs of Amascut
 - **Godwars:** Kree'arra · General Graardor · K'ril Tsutsaroth · Commander Zilyana · Nex
-- **Other:** The Nightmare · Corporeal Beast · Barbarian Assault\* · Zalcano · The Hueycoatl ·
-  Yama · Royal Titans · Volcanic Mine\* · Castle Wars\* · Guardians of the Rift · Wintertodt
+- **Other:** The Nightmare · Corporeal Beast · Dagannoth Kings · Barbarian Assault\* · Zalcano ·
+  The Hueycoatl · Yama · Royal Titans · Volcanic Mine\* · Castle Wars\* · Guardians of the Rift ·
+  Wintertodt
 
 \* No hiscore kill count exists for Barbarian Assault, Volcanic Mine or Castle Wars, so there's
 no min-KC bar to set for these three.
@@ -234,15 +235,18 @@ toggles, and each role's tile colour is configurable — see the Player markers 
   optional arrow at the screen edge for off-screen ones.
 - **Party member names** — draws every party member's name above their head. If you also run
   RuneLite's Player Indicators plugin, OSParty defers to it instead of drawing over the top.
+- **Vengeance icons** — a party member with Vengeance up gets the spell's icon on their model in
+  the scene, and next to their vitals on the Party tab, until a hit spends it.
 - **Defence tracker** — while the party drains a boss's defence with special attacks, shows its
   live defence next to the overhead HP bar and/or as a status-bar info box. This is entirely
   self-contained: it watches your special attack energy drop, works out which weapon you used
   and its projectile delay, and matches the resulting hitsplat — it does not use, enable or
   depend on RuneLite's Special Attack Counter plugin, or any other plugin. It also tracks magic
   defence draining from the accursed sceptre, Seercull and Eye of ayak, plus BGS overkill and any
-  physical special that spills into magic defence (Ice Demon, Verzik). By default it keeps
-  tracking outside a party too — turn that off in settings if you only want it during party
-  content.
+  physical special that spills into magic defence (Ice Demon, Verzik). The readout is yours to
+  shape: current level, current over starting (`142/200`), a percentage, or both, with the drain
+  after the arrow as an amount or a percent — or hidden. By default it keeps tracking outside a
+  party too — turn that off in settings if you only want it during party content.
 
   ![Defence tracker next to a boss's HP bar](docs/images/defence.png)
 
@@ -383,6 +387,7 @@ All off by default.
 | Learner colour | Colour of the learner tile marker. |
 | Party member names | Draw every party member's name above their head in the scene. |
 | Party name colour | Colour of the name drawn above party members. |
+| Vengeance icons | Show the Vengeance spell icon on party members in the scene while they have it active. |
 
 ### Defence tracker
 
@@ -390,17 +395,25 @@ All off by default.
 |---|---|
 | Show next to HP bar | Show a monster's live defence on the scene, next to its health bar. |
 | HP-bar position | Where the scene defence display sits relative to the monster. |
+| Vertical nudge | Shift the scene display up (or down, if negative) by a number of pixels. |
 | Show in status bar | Also show the monster's live defence as an info box in the status bar. |
+| Status bar shows | Whether the info box shows the current defence, the percent remaining, or the amount drained; hovering it gives the full breakdown. |
 | Show before any spec | Show defence at its starting level immediately, instead of waiting for the first drain. |
+| Defence shown as | Write levels as the current value (`142`), current over starting (`142/200`), the percent remaining (`71%`), or current with the percent (`142 (71%)`). |
+| Drain shown as | What follows the down arrow: the amount drained, the percent drained, or nothing. |
 | Show full level | For monsters with a defence floor, show the full level rather than the amount above it. |
+| Show skill icons | Draw the Defence and Magic icons in front of the scene readouts. |
+| Scene text size | Font size for the on-scene defence display. |
+| Scene text background | Draw a translucent plate behind the scene text for legibility. |
 | Low defence threshold | Defence at or below this (above the floor) uses the low-defence colour. |
+| Threshold unit | Read the threshold as levels, or as a percent of what can be drained. |
 | High defence colour | Colour when defence is above the low threshold. |
 | Low defence colour | Colour when defence is at or below the low threshold. |
 | Capped defence colour | Colour when defence is fully drained. |
-| Scene text size | Font size for the on-scene defence display. |
-| Scene text background | Draw a translucent plate behind the scene text for legibility. |
+| Drain colour | Colour of the down arrow and drained amount. |
 | Show magic defence | Also show magic defence draining from the accursed sceptre, Seercull or Eye of ayak. |
-| Magic defence as | Show the magic-defence bonus, the percentage of the starting roll, or both. |
+| Magic defence as | Show the magic-defence bonus, the Magic level, the percentage of the starting roll, or bonus and percentage. |
+| Magic defence on same row | Put the magic readout beside the Defence readout instead of under it. |
 | Magic defence colour | Colour of the magic-defence readout. |
 | Track outside a party | Keep tracking defence drains outside a party too (on by default). |
 

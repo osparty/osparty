@@ -191,14 +191,15 @@ public interface LivePartyBackend
 
 	boolean isPendingApplicant(long memberId);
 
-	long accountHashForMember(long memberId);
-
 	/**
 	 * The public, non-reversible id the server derived for this member's account -- stable across a rename,
-	 * and safe to persist or show, unlike {@link #accountHashForMember}. Null when the roster has no entry
-	 * for the member (not yet seated) or the entry predates this field.
+	 * and safe to persist or show. Null when the roster has no entry for the member (not yet seated) or the
+	 * entry predates this field. The only identity the plugin ever holds for another player.
 	 */
 	String playerIdForMember(long memberId);
+
+	/** {@link #playerIdForMember} for the local player; null when not seated in a party. */
+	String localPlayerId();
 
 	List<Member> rosterMembers();
 

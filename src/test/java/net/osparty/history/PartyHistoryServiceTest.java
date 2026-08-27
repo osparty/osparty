@@ -147,18 +147,18 @@ public class PartyHistoryServiceTest
 	{
 		PartyHistoryService history = open();
 		Advertisement p = ad("1", "cox", "Alice");
-		p.setMembers(Arrays.asList(new Member("Alice", 1L)));
+		p.setMembers(Arrays.asList(new Member("Alice", "pid-alice")));
 		history.record(p, true);
 
 		// Bob joins.
-		assertTrue(history.updateRoster("1", Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L))));
+		assertTrue(history.updateRoster("1", Arrays.asList(new Member("Alice", "pid-alice"), new Member("Bob", "pid-bob"))));
 		PartyHistoryEntry entry = history.list().get(0);
 		assertEquals("both present", 2, entry.getSize());
 		assertEquals(2, entry.getMembers().size());
 		assertTrue(byName(entry, "Bob").isPresent());
 
 		// Bob leaves: kept in the list, flagged, and no longer counted in size.
-		assertTrue(history.updateRoster("1", Arrays.asList(new Member("Alice", 1L))));
+		assertTrue(history.updateRoster("1", Arrays.asList(new Member("Alice", "pid-alice"))));
 		entry = history.list().get(0);
 		assertEquals("only Alice present", 1, entry.getSize());
 		assertEquals("Bob is retained, not removed", 2, entry.getMembers().size());
@@ -173,13 +173,13 @@ public class PartyHistoryServiceTest
 	{
 		PartyHistoryService history = open();
 		Advertisement p = ad("1", "cox", "Alice");
-		p.setMembers(Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L)));
+		p.setMembers(Arrays.asList(new Member("Alice", "pid-alice"), new Member("Bob", "pid-bob")));
 		history.record(p, true);
 
-		history.updateRoster("1", Arrays.asList(new Member("Alice", 1L)));      // Bob leaves
+		history.updateRoster("1", Arrays.asList(new Member("Alice", "pid-alice")));      // Bob leaves
 		assertFalse(byName(history.list().get(0), "Bob").isPresent());
 
-		history.updateRoster("1", Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L))); // Bob rejoins
+		history.updateRoster("1", Arrays.asList(new Member("Alice", "pid-alice"), new Member("Bob", "pid-bob"))); // Bob rejoins
 		HistoryMember bob = byName(history.list().get(0), "Bob");
 		assertTrue("rejoin clears the left flag", bob.isPresent());
 		assertEquals("leftAt reset", 0, bob.getLeftAt());
@@ -191,12 +191,12 @@ public class PartyHistoryServiceTest
 		PartyHistoryService history = open();
 		Advertisement p = ad("1", "cox", "Alice");
 		// Bob's playerId not yet synced.
-		p.setMembers(Arrays.asList(new Member("Alice", 0L, null, "pid-alice"), new Member("Bob", 0L, null, null)));
+		p.setMembers(Arrays.asList(new Member("Alice", "pid-alice"), new Member("Bob")));
 		history.record(p, true);
 
 		// Same Bob, now with a resolved id — matched by name, not recorded as a second member.
 		history.updateRoster("1",
-			Arrays.asList(new Member("Alice", 0L, null, "pid-alice"), new Member("Bob", 0L, null, "pid-bob")));
+			Arrays.asList(new Member("Alice", "pid-alice"), new Member("Bob", "pid-bob")));
 		PartyHistoryEntry entry = history.list().get(0);
 		assertEquals("no duplicate Bob", 2, entry.getMembers().size());
 		assertEquals("id upgraded", "pid-bob", byName(entry, "Bob").getPlayerId());
@@ -204,11 +204,11 @@ public class PartyHistoryServiceTest
 
 	/**
 	 * A row from before {@code playerId} existed still carries {@code accountHash} on disk. Opening the
-	 * service must clear it immediately, in the same file, rather than only once something happens to
-	 * rewrite the row later.
+	 * service must drop it immediately, in the same file, rather than only once something happens to
+	 * rewrite the row later -- and keep everything else about the row.
 	 */
 	@Test
-	public void openingTheServiceScrubsAccountHashFromAnOldFile() throws Exception
+	public void openingTheServiceDropsAccountHashFromAnOldFile() throws Exception
 	{
 		File historyFile = new File(dir, "history.json");
 		Files.writeString(historyFile.toPath(), "{"
@@ -220,10 +220,12 @@ public class PartyHistoryServiceTest
 			+ "}]}");
 
 		PartyHistoryEntry inMemory = open().list().get(0);
-		assertEquals("cleared in memory on load", 0L, byName(inMemory, "Alice").getAccountHash());
+		assertTrue("row kept", byName(inMemory, "Alice").isPresent());
+		assertEquals(1000, byName(inMemory, "Alice").getJoinedAt());
 
 		String onDisk = Files.readString(historyFile.toPath());
-		assertFalse("cleared on disk, not just in memory", onDisk.contains("424242"));
+		assertFalse("hash gone from disk on open", onDisk.contains("424242"));
+		assertTrue("rewritten at the current schema", onDisk.contains("\"version\": 3"));
 	}
 
 	@Test
@@ -231,7 +233,7 @@ public class PartyHistoryServiceTest
 	{
 		PartyHistoryService history = open();
 		Advertisement p = ad("1", "cox", "Alice");
-		List<Member> roster = Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L));
+		List<Member> roster = Arrays.asList(new Member("Alice", "pid-alice"), new Member("Bob", "pid-bob"));
 		p.setMembers(roster);
 		history.record(p, true);
 
@@ -251,10 +253,10 @@ public class PartyHistoryServiceTest
 	{
 		PartyHistoryService history = open();
 		Advertisement p = ad("1", "cox", "Alice");
-		p.setMembers(Arrays.asList(new Member("Alice", 1L)));
+		p.setMembers(Arrays.asList(new Member("Alice", "pid-alice")));
 		history.record(p, true);
-		history.updateRoster("1", Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L)));
-		history.updateRoster("1", Arrays.asList(new Member("Alice", 1L))); // Bob leaves
+		history.updateRoster("1", Arrays.asList(new Member("Alice", "pid-alice"), new Member("Bob", "pid-bob")));
+		history.updateRoster("1", Arrays.asList(new Member("Alice", "pid-alice"))); // Bob leaves
 
 		PartyHistoryEntry reloaded = open().list().get(0);
 		assertEquals("left member persisted", 2, reloaded.getMembers().size());
@@ -267,9 +269,9 @@ public class PartyHistoryServiceTest
 	{
 		PartyHistoryService history = open();
 		Advertisement p = ad("1", "cox", "Alice");
-		p.setMembers(Arrays.asList(new Member("Alice", 1L), new Member("Bob", 2L)));
+		p.setMembers(Arrays.asList(new Member("Alice", "pid-alice"), new Member("Bob", "pid-bob")));
 		history.record(p, true);
-		history.updateRoster("1", Arrays.asList(new Member("Alice", 1L))); // Bob leaves early
+		history.updateRoster("1", Arrays.asList(new Member("Alice", "pid-alice"))); // Bob leaves early
 
 		long bobLeftAt = byName(history.list().get(0), "Bob").getLeftAt();
 
@@ -285,7 +287,7 @@ public class PartyHistoryServiceTest
 	{
 		PartyHistoryService history = open();
 		Advertisement p = ad("1", "cox", "Alice");
-		p.setMembers(Arrays.asList(new Member("Alice", 1L)));
+		p.setMembers(Arrays.asList(new Member("Alice", "pid-alice")));
 		history.record(p, true);
 
 		assertTrue(history.closeParty("1", 9_999L));

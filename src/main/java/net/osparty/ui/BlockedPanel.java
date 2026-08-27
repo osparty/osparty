@@ -125,7 +125,7 @@ class BlockedPanel extends JPanel
 		unblock.setMargin(new java.awt.Insets(1, 6, 1, 6));
 		unblock.addActionListener(e ->
 		{
-			blockListService.toggle(flag.getAccountHash(), flag.getUsername());
+			blockListService.toggle(flag.getPlayerId(), flag.getUsername());
 			SwingUtilities.invokeLater(() ->
 			{
 				render();

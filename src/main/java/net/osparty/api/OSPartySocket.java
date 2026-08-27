@@ -687,13 +687,13 @@ public class OSPartySocket extends WebSocketListener
 	}
 
 	/** Host action: ask the backend bot to disconnect a kicked member from the party's voice channel. */
-	public void kickVoiceMember(String id, String key, long accountHash)
+	public void kickVoiceMember(String id, String key, String playerId)
 	{
-		if (id == null || !connected)
+		if (id == null || playerId == null || !connected)
 		{
 			return;
 		}
-		send(gson.toJson(new KickVoiceFrame(id, key, accountHash)));
+		send(gson.toJson(new KickVoiceFrame(id, key, playerId)));
 	}
 
 	public void reportAd(String id)
@@ -1243,7 +1243,7 @@ public class OSPartySocket extends WebSocketListener
 	private void handleAuthIssued(String token, List<String> recoveryCodes)
 	{
 		long account = accountHash;
-		if (token == null || token.isEmpty() || !net.osparty.store.PlayerFlag.isKnown(account))
+		if (token == null || token.isEmpty() || !net.osparty.store.AccountHash.isKnown(account))
 		{
 			return;
 		}
@@ -1396,7 +1396,7 @@ public class OSPartySocket extends WebSocketListener
 	public void retryAuth()
 	{
 		long account = accountHash;
-		if (!connected || !net.osparty.store.PlayerFlag.isKnown(account))
+		if (!connected || !net.osparty.store.AccountHash.isKnown(account))
 		{
 			return;
 		}
@@ -1412,7 +1412,7 @@ public class OSPartySocket extends WebSocketListener
 	public void requestCouplingCode()
 	{
 		long account = accountHash;
-		if (!connected || !net.osparty.store.PlayerFlag.isKnown(account))
+		if (!connected || !net.osparty.store.AccountHash.isKnown(account))
 		{
 			return;
 		}
@@ -1450,7 +1450,7 @@ public class OSPartySocket extends WebSocketListener
 	public void redeemRecoveryCode(String code)
 	{
 		long account = accountHash;
-		if (!connected || code == null || !net.osparty.store.PlayerFlag.isKnown(account))
+		if (!connected || code == null || !net.osparty.store.AccountHash.isKnown(account))
 		{
 			return;
 		}
@@ -1479,7 +1479,7 @@ public class OSPartySocket extends WebSocketListener
 	public void startDiscordRecovery()
 	{
 		long account = accountHash;
-		if (!connected || !net.osparty.store.PlayerFlag.isKnown(account))
+		if (!connected || !net.osparty.store.AccountHash.isKnown(account))
 		{
 			return;
 		}
@@ -2133,19 +2133,22 @@ public class OSPartySocket extends WebSocketListener
 		}
 	}
 
-	/** Host-authorised kick of a member from the party's voice channel, by their accountHash. */
+	/**
+	 * Host-authorised kick of a member from the party's voice channel, by their public id -- the only
+	 * identity this client holds for another player; the server maps it back to the account itself.
+	 */
 	private static final class KickVoiceFrame
 	{
 		final String type = "kickVoiceMember";
 		final String id;
 		final String key;
-		final long accountHash;
+		final String playerId;
 
-		KickVoiceFrame(String id, String key, long accountHash)
+		KickVoiceFrame(String id, String key, String playerId)
 		{
 			this.id = id;
 			this.key = key;
-			this.accountHash = accountHash;
+			this.playerId = playerId;
 		}
 	}
 

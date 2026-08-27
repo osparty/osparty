@@ -42,18 +42,18 @@ final class BlockConfirm
 	 * @return true when the state changed, false when the user cancelled the confirmation.
 	 */
 	static boolean toggle(Component parent, BlockListService blockList, FavoritesService favorites,
-		long hash, String rsn)
+		String playerId, String rsn)
 	{
-		boolean wasBlocked = blockList.isBlocked(hash, rsn);
+		boolean wasBlocked = blockList.isBlocked(playerId, rsn);
 		// Confirm the consequences before blocking, but let unblocking happen instantly.
 		if (!wasBlocked && !confirm(parent, rsn))
 		{
 			return false;
 		}
-		blockList.toggle(hash, rsn);
-		if (!wasBlocked && favorites != null && favorites.isFavorite(hash, rsn))
+		blockList.toggle(playerId, rsn);
+		if (!wasBlocked && favorites != null && favorites.isFavorite(playerId, rsn))
 		{
-			favorites.toggle(hash, rsn); // blocking and favouriting are mutually exclusive
+			favorites.toggle(playerId, rsn); // blocking and favouriting are mutually exclusive
 		}
 		return true;
 	}
