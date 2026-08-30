@@ -12,6 +12,7 @@ import net.osparty.model.AdvertisementRequest;
 import net.osparty.model.Role;
 import net.osparty.party.LivePartyBackend;
 import net.osparty.party.PartyStatus;
+import net.osparty.tools.RaidPartyDetected;
 import com.google.gson.Gson;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -21,6 +22,7 @@ import java.awt.Font;
 import java.awt.Insets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -1227,6 +1229,15 @@ class CreatePanel extends ScrollableColumn
 
 	private void create()
 	{
+		create(true);
+	}
+
+	/**
+	 * {@code checkSimilar} is false when the party already exists in-game: its host is not shopping for a
+	 * group, so offering someone else's party to join instead would only stack a second question.
+	 */
+	private void create(boolean checkSimilar)
+	{
 		if (partyState.isInParty())
 		{
 			setError("Leave your current party before creating one.");
@@ -1252,7 +1263,7 @@ class CreatePanel extends ScrollableColumn
 			return;
 		}
 
-		if (!hostMeetsOwnKc(activity, player, form.minKc, form.minHardKc, this::create))
+		if (!hostMeetsOwnKc(activity, player, form.minKc, form.minHardKc, () -> create(checkSimilar)))
 		{
 			return;
 		}
@@ -1269,7 +1280,7 @@ class CreatePanel extends ScrollableColumn
 		// Remember these settings so the form is pre-filled next time.
 		saveLastPreset(captureForm(null));
 
-		if (config.similarPartyCheck() && similarHandler != null)
+		if (checkSimilar && config.similarPartyCheck() && similarHandler != null)
 		{
 			askAboutSimilar(activity, form, requiredRoles, hostRole);
 			return;
@@ -1680,6 +1691,132 @@ class CreatePanel extends ScrollableColumn
 		applyPreset(loadLastPreset());
 		applyRecommendation();
 		updateLoginState();
+	}
+
+	// ---- advertise an in-game raid party -------------------------------------
+
+	/**
+	 * The preset the raid form starts from: the last-used one when it was for this raid, else the form's
+	 * defaults, with whatever the game said about the party laid over it. The game's word is final on the
+	 * mode, the invocation level and the size, because those were just chosen at the board.
+	 */
+	private AdvertisementPreset raidPreset(RaidPartyDetected detected)
+	{
+		Activity activity = detected.getActivity();
+		AdvertisementPreset preset = loadLastPreset();
+		if (preset == null || !activity.getId().equals(preset.getActivityId()))
+		{
+			preset = new AdvertisementPreset();
+			preset.setLootRule(LootRule.UNSPECIFIED.name());
+			preset.setIncludeLayout(true);
+			preset.setCapacity(Math.max(1, config.defaultCapacity()));
+		}
+		preset.setName(null);
+		preset.setActivityId(activity.getId());
+		if (detected.getHardMode() != null)
+		{
+			preset.setHardMode(detected.getHardMode());
+		}
+		if (activity.usesInvocation() && detected.getInvocation() > 0)
+		{
+			preset.setInvocation(detected.getInvocation());
+		}
+		if (detected.getPreferredSize() > 0)
+		{
+			preset.setCapacity(detected.getPreferredSize());
+		}
+		if (isCox(activity))
+		{
+			// The board's scaling is authoritative -- it is what the board-sync holds the ad to anyway.
+			preset.setCoxScale(detected.getCoxScale());
+		}
+		preset.setCapacity(Math.max(activity.getMinPartySize(),
+			Math.min(activity.getMaxPartySize(), preset.getCapacity())));
+		return preset;
+	}
+
+	/** The roles the host could fill in the party the raid form would create. Reads config only, so any thread. */
+	List<Role> raidRoleOptions(RaidPartyDetected detected)
+	{
+		Activity activity = detected.getActivity();
+		if (!activity.hasRoles())
+		{
+			return Collections.emptyList();
+		}
+		AdvertisementPreset preset = raidPreset(detected);
+		return activity.roles(preset.isHardMode(), preset.getCapacity());
+	}
+
+	/**
+	 * Advertise the raid party the player just made in-game: fill the form as {@link #raidPreset} says,
+	 * settle the host's role, then create exactly as the button would. {@code hostRoleId} is the answer to
+	 * the role question when it was asked; otherwise the preset's role stands, and a role activity with no
+	 * usable one leaves the form up for the player to pick from.
+	 *
+	 * @return whether the create was started
+	 */
+	boolean createFromRaid(RaidPartyDetected detected, String hostRoleId)
+	{
+		if (detected == null || editing || partyState.isInParty())
+		{
+			return false;
+		}
+		Activity activity = detected.getActivity();
+		AdvertisementPreset preset = raidPreset(detected);
+		if (hostRoleId != null)
+		{
+			preset.setHostRole(hostRoleId);
+		}
+		applyPreset(preset);
+		if (activity.hasRoles())
+		{
+			int capacity = (Integer) capacitySpinner.getValue();
+			// A composition saved for another size or mode cannot be advertised at this one; Fill-only can.
+			if (!roleCountSpinners.isEmpty() && captureRequiredRoles(activity, capacity).size() != capacity)
+			{
+				fillOnlyRoles(capacity);
+			}
+			Role wanted = Role.fromId(preset.getHostRole());
+			Role offered = wanted == null ? null : nearestOffered(wanted);
+			if (offered == null || !isOffered(offered))
+			{
+				if (!rolesExpanded)
+				{
+					toggleRolesSection();
+				}
+				setStatus("Pick the role you'll fill, then press Create party to advertise your "
+					+ detected.label() + " party.");
+				return false;
+			}
+			myRoleDropdown.setSelectedItem(offered);
+		}
+		create(false);
+		return true;
+	}
+
+	/** CoX only: every slot Fill, so the composition sums to the size whatever it summed to before. */
+	private void fillOnlyRoles(int capacity)
+	{
+		String fillId = currentFillRoleId();
+		rebuildingRoles = true;
+		for (Map.Entry<String, JSpinner> entry : roleCountSpinners.entrySet())
+		{
+			entry.getValue().setValue(entry.getKey().equals(fillId) ? capacity : 0);
+		}
+		rebuildingRoles = false;
+		updateRoleTotal();
+	}
+
+	private boolean isOffered(Role role)
+	{
+		for (int i = 0; i < myRoleDropdown.getItemCount(); i++)
+		{
+			if (myRoleDropdown.getItemAt(i) == role)
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** Map a hosted {@link Advertisement} onto an {@link AdvertisementPreset} so {@link #applyPreset} can fill the form. */

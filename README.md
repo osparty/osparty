@@ -143,6 +143,14 @@ editing.
 
 ![Create form filled in for a CoX raid](docs/images/create.png)
 
+**Made the party in-game first?** When you make a raid party at the Chambers of Xeric board, the
+Theatre of Blood notice board or the Tombs of Amascut obelisk, OSParty offers to advertise it — a
+card in the chatbox and a banner on the panel — with the form filled in from the game (CM, the
+invocation level, the preferred size) and from whatever you last used for that raid. Advertise,
+Not now, or Don't ask again; the Advertise in-game raid parties setting can also make it
+automatic, or turn it off. While you host a CoX or ToA party, the ad also follows the board: change
+the scale or the invocation level in-game and the ad updates itself (Follow the in-game board).
+
 Once hosting, the tab becomes a management view: the roster, pending applicants with Accept and
 Decline (you see their real gear, stats and KC before deciding), and the still-needed roles.
 Kicking someone is a right-click on their row — Kick player or Kick and block player. Inviting a
@@ -326,6 +334,9 @@ All under RuneLite's OSParty plugin settings, grouped the same way as in the cli
 | Check for similar parties | Before creating, look for a party already running the same thing and offer to join it instead. |
 | Blocked applicant | What happens when a blocked player applies: warn you, auto-reject and notify, or auto-reject silently. |
 | Skip disband confirmation | Don't ask for confirmation before disbanding your own party. |
+| Advertise in-game raid parties | When you make a CoX, ToB or ToA party in-game: ask whether to advertise it on OSParty, always advertise it, or do nothing. |
+| Raid party prompt | Where that question is asked: sidebar, in-game card, or both. |
+| Follow the in-game board | While hosting a CoX or ToA party, keep the ad's scale / invocation level in step with the in-game board. |
 
 ### Notifications
 

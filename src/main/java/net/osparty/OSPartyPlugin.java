@@ -33,6 +33,7 @@ import net.osparty.ui.MatchPrompt;
 import net.osparty.ui.SimilarParties;
 import net.osparty.ui.SimilarPrompt;
 import net.osparty.ui.PartyPrompt;
+import net.osparty.ui.RaidPartyPrompt;
 import net.osparty.ui.RoleChooser;
 import net.osparty.ui.NpcDefenceOverlay;
 import net.osparty.ui.PartyNameOverlay;
@@ -56,6 +57,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.gson.Gson;
 import javax.inject.Inject;
@@ -121,6 +123,7 @@ import net.runelite.client.ui.overlay.infobox.InfoBoxManager;
 import net.osparty.api.PartyInvite;
 import net.osparty.enums.EventSound;
 import net.osparty.enums.InviteDisplay;
+import net.osparty.enums.RaidPartyAutoCreate;
 
 @Slf4j
 @PluginDescriptor(
@@ -191,6 +194,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private CoxRaidScanner coxRaidScanner;
 
 	@Inject
+	private RaidPartyWatcher raidPartyWatcher;
+
+	@Inject
+	private RaidBoardSync raidBoardSync;
+
+	@Inject
 	private InfoBoxManager infoBoxManager;
 
 	// Reaches Player Indicators so our overhead party names don't print through the names it
@@ -244,6 +253,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private PartyPrompt partyCard;
 	/** The party currently being offered by the matchmaker, on either surface; null when none is. */
 	private volatile String openMatchId;
+	/** The in-game raid party being offered for advertising, on either surface; null when none is. */
+	private final AtomicReference<RaidPartyDetected> openRaidOffer = new AtomicReference<>();
 	/** Set while an in-game role question is outstanding; see {@link #answerRole(String)}. */
 	private java.util.function.Consumer<String> pendingRolePick;
 	private long identifiedHash;
@@ -427,6 +438,20 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// Turning the toggle off has to take any offer already on screen with it.
 		panel.setOnLookingChanged(() -> clientThread.invoke(() -> cards.dismiss(openMatchId)));
 		apiClient.setInviteListener(this::onPartyInvite);
+		raidPartyWatcher.setListener(this::onRaidPartyDetected);
+		// A hosted raid ad follows the in-game board (CoX scale, ToA invocation level) while the setting is on.
+		raidBoardSync.setHostedAd(() ->
+		{
+			OSPartyPanel currentPanel = panel;
+			return currentPanel != null && config.raidBoardSync() ? currentPanel.hostedAd() : null;
+		});
+		raidBoardSync.setListener((activity, coxScale, invocation) -> SwingUtilities.invokeLater(() ->
+		{
+			if (panel != null)
+			{
+				panel.applyBoardToHostedAd(activity, coxScale, invocation);
+			}
+		}));
 		log.info("OSParty started (API {})", BoardApiClient.apiBaseUrl());
 	}
 
@@ -439,6 +464,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// These live on singletons that outlast the plugin, so a restart would otherwise stack callbacks
 		// onto a dead instance. Every setter tolerates null.
 		apiClient.setInviteListener(null);
+		raidPartyWatcher.setListener(null);
+		raidPartyWatcher.reset();
+		raidBoardSync.setListener(null);
+		raidBoardSync.setHostedAd(null);
+		raidBoardSync.reset();
 		liveParty.setOnReadyCheckStarted(null);
 		liveParty.setOnAllReady(null);
 		liveParty.setOnReadyExpired(null);
@@ -507,6 +537,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// and rejoinChecked would eat the once-per-login rejoin offer.
 		partyCard = null;
 		openMatchId = null;
+		openRaidOffer.set(null);
 		pendingRolePick = null;
 		rejoinChecked = false;
 		cards.clear();
@@ -589,6 +620,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			accountType = null;
 			accountHash = -1L;
 			cards.clear(ChatboxCards.Priority.JOIN_REQUEST);
+			// No game ticks arrive on the login screen, so the watcher can't see the logout itself; without
+			// this the next login's varbit replay would read as the player making a party.
+			raidPartyWatcher.reset();
 		}
 		// Re-arm the rejoin check on a real logout (not a world hop).
 		if (event.getGameState() == GameState.LOGIN_SCREEN)
@@ -644,6 +678,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// Accumulate the CoX layout each tick; a single scan can't see the whole raid.
 		coxRaidScanner.update();
 		coxLayout = coxRaidScanner.layout();
+
+		// Notice a raid party the player just made at the board, so it can be advertised; and keep an ad we
+		// host in step with what the board says about it.
+		raidPartyWatcher.update();
+		raidBoardSync.update();
 
 		// Show the next queued in-game card if the chatbox is free.
 		cards.tick();
@@ -775,6 +814,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Subscribe
 	public void onMenuOptionClicked(MenuOptionClicked event)
 	{
+		Activity raidBoard = raidBoardClick(event);
+		if (raidBoard != null)
+		{
+			raidPartyWatcher.onBoardClicked(raidBoard, event.getMenuOption(), raidBoardComponent(event));
+		}
 		if (!pingHotkeyDown || client.isMenuOpen() || !liveParty.isInParty() || !config.pings())
 		{
 			return;
@@ -1522,6 +1566,230 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 				panel.hideSimilar();
 			}
 		});
+	}
+
+	/**
+	 * The raid whose party board this click belongs to, or null. A button inside one of the boards'
+	 * interfaces names its raid; the boards themselves are scene objects, so a Make party option on one is
+	 * tied to the raid by where the player is standing.
+	 */
+	private Activity raidBoardClick(MenuOptionClicked event)
+	{
+		if (isWidgetOp(event))
+		{
+			return raidBoardOf(WidgetUtil.componentToInterface(event.getParam1()));
+		}
+		String option = event.getMenuOption();
+		if (option != null && option.toLowerCase().startsWith("make"))
+		{
+			Activity near = Activity.nearby(mapRegions);
+			return near != null && near.isRaid() ? near : null;
+		}
+		return null;
+	}
+
+	private static boolean isWidgetOp(MenuOptionClicked event)
+	{
+		MenuAction action = event.getMenuAction();
+		return action == MenuAction.CC_OP || action == MenuAction.CC_OP_LOW_PRIORITY;
+	}
+
+	/** The component a widget click landed on; -1 for a click on the scene, whose param is not a component. */
+	private static int raidBoardComponent(MenuOptionClicked event)
+	{
+		return isWidgetOp(event) ? event.getParam1() : -1;
+	}
+
+	/** The raid whose party board, party-details or lobby interface {@code group} is, or null. */
+	private static Activity raidBoardOf(int group)
+	{
+		switch (group)
+		{
+			case InterfaceID.TOB_PARTYLIST:
+			case InterfaceID.TOB_PARTYDETAILS:
+				return Activity.THEATRE_OF_BLOOD;
+			case InterfaceID.TOA_PARTYLIST:
+			case InterfaceID.TOA_PARTYDETAILS:
+			case InterfaceID.TOA_LOBBY:
+				return Activity.TOMBS_OF_AMASCUT;
+			case InterfaceID.RAIDS_LOBBY_PARTYLIST:
+			case InterfaceID.RAIDS_LOBBY_PARTYDETAILS:
+			case InterfaceID.RAIDS_SIDEPANEL:
+				return Activity.CHAMBERS_OF_XERIC;
+			default:
+				return null;
+		}
+	}
+
+
+	/** Identity of the raid-party card. One party is made at a time, so it needs no per-party key. */
+	private static final Object RAID_CARD_KEY = new Object();
+
+	private enum RaidAnswer
+	{
+		ADVERTISE,
+		DISMISS,
+		DONT_ASK
+	}
+
+	/**
+	 * The player just made a raid party in-game. Per the setting: advertise it outright, ask on the
+	 * surfaces {@link InviteDisplay} names, or leave it alone. Client thread.
+	 */
+	private void onRaidPartyDetected(RaidPartyDetected detected)
+	{
+		RaidPartyAutoCreate mode = config.raidPartyAutoCreate();
+		InviteDisplay display = config.raidPartyPromptDisplay();
+		OSPartyPanel currentPanel = panel;
+		boolean inParty = liveParty.isInParty() || (currentPanel != null && currentPanel.currentAd() != null);
+		log.debug("Raid party detected: {} (setting {}, prompt {}, in a party {}, connected {})", detected, mode,
+			display, inParty, apiClient.isApiConnected());
+		if (mode == null || mode == RaidPartyAutoCreate.OFF || currentPanel == null || inParty)
+		{
+			return;
+		}
+		if (!apiClient.isApiConnected())
+		{
+			chat("Not connected to OSParty, so your " + detected.label() + " party can't be advertised.", true);
+			return;
+		}
+		if (mode == RaidPartyAutoCreate.ALWAYS)
+		{
+			SwingUtilities.invokeLater(() -> advertiseRaidParty(detected, null));
+			return;
+		}
+		if (display == null || display == InviteDisplay.DISABLED)
+		{
+			return;
+		}
+		// A party made after disbanding the last one supersedes its offer; a card still up for the old one
+		// would answer for a party that no longer exists.
+		cards.dismiss(RAID_CARD_KEY);
+		openRaidOffer.set(detected);
+		if (display.showsInGame())
+		{
+			cards.offer(raidPartyCard(detected));
+		}
+		if (display.showsSidebar())
+		{
+			SwingUtilities.invokeLater(() ->
+			{
+				if (panel != null)
+				{
+					panel.addRaidPartyOffer(detected,
+						() -> resolveRaidOffer(detected, RaidAnswer.ADVERTISE, null, false),
+						() -> resolveRaidOffer(detected, RaidAnswer.DISMISS, null, false));
+				}
+				flashInviteButton();
+			});
+		}
+	}
+
+	/** The queued card asking about one raid party, skipped once it was answered on the sidebar. */
+	private ChatboxCards.Card raidPartyCard(RaidPartyDetected detected)
+	{
+		return new ChatboxCards.Card()
+		{
+			@Override
+			public ChatboxCards.Priority priority()
+			{
+				return ChatboxCards.Priority.ACTION;
+			}
+
+			@Override
+			public Object key()
+			{
+				return RAID_CARD_KEY;
+			}
+
+			@Override
+			public boolean isStale()
+			{
+				return openRaidOffer.get() != detected || liveParty.isInParty();
+			}
+
+			@Override
+			public PartyPrompt open()
+			{
+				partyCard = RaidPartyPrompt.open(chatboxPanelManager, latest(detected), () ->
+					{
+						OSPartyPanel currentPanel = panel;
+						return currentPanel == null
+							? Collections.<Role>emptyList() : currentPanel.raidRoleOptions(latest(detected));
+					},
+					role -> resolveRaidOffer(detected, RaidAnswer.ADVERTISE, role, true),
+					() -> resolveRaidOffer(detected, RaidAnswer.DISMISS, null, true),
+					() -> resolveRaidOffer(detected, RaidAnswer.DONT_ASK, null, true),
+					() -> partyCard = null);
+				return partyCard;
+			}
+		};
+	}
+
+	/**
+	 * The party as the game has it now rather than as it was when it appeared: its mode, size and
+	 * invocations are chosen after it is made, so they are read when the host answers. Client thread.
+	 */
+	private RaidPartyDetected latest(RaidPartyDetected detected)
+	{
+		RaidPartyDetected fresh = raidPartyWatcher.snapshot(detected.getActivity());
+		return fresh != null ? fresh : detected;
+	}
+
+	/**
+	 * Resolve the raid-party offer from either surface, clearing it off both. Settled once, by whichever
+	 * surface answers first; {@code inGame} leaves the card alone because it is closing itself.
+	 */
+	private void resolveRaidOffer(RaidPartyDetected detected, RaidAnswer answer, String hostRole, boolean inGame)
+	{
+		if (!openRaidOffer.compareAndSet(detected, null))
+		{
+			return;
+		}
+		if (!inGame)
+		{
+			clientThread.invoke(() -> cards.dismiss(RAID_CARD_KEY));
+		}
+		if (answer == RaidAnswer.DONT_ASK)
+		{
+			configManager.setConfiguration(OSPartyConfig.GROUP, OSPartyConfig.RAID_PARTY_AUTO_CREATE,
+				RaidPartyAutoCreate.OFF);
+			chat("OSParty won't ask about your raid parties again. Turn it back on under Hosting in the plugin settings.",
+				false);
+		}
+		SwingUtilities.invokeLater(() ->
+		{
+			if (panel != null)
+			{
+				panel.removeRaidPartyOffer();
+			}
+			stopInviteFlash();
+		});
+		if (answer == RaidAnswer.ADVERTISE)
+		{
+			// The answer is the moment the host has finished setting the party up, so this is when its
+			// mode, size and invocations are read -- on the client thread, whichever surface answered.
+			clientThread.invoke(() ->
+			{
+				RaidPartyDetected fresh = latest(detected);
+				SwingUtilities.invokeLater(() -> advertiseRaidParty(fresh, hostRole));
+			});
+		}
+	}
+
+	/** Run the create; when the form still needs a role from the player, point them at it. EDT only. */
+	private void advertiseRaidParty(RaidPartyDetected detected, String hostRole)
+	{
+		OSPartyPanel currentPanel = panel;
+		if (currentPanel == null)
+		{
+			return;
+		}
+		if (!currentPanel.createFromRaid(detected, hostRole))
+		{
+			chat("Pick the role you'll fill on the OSParty Party tab, then press Create party.", false);
+			flashInviteButton();
+		}
 	}
 
 	/**

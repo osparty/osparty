@@ -8,8 +8,10 @@ import net.osparty.enums.DefenceInfoBoxValue;
 import net.osparty.enums.DefenceOverlayPosition;
 import net.osparty.enums.DefenceThresholdUnit;
 import net.osparty.enums.DefenceValueFormat;
+import net.osparty.enums.InviteDisplay;
 import net.osparty.enums.MagicDefenceDisplay;
 import net.osparty.enums.PartyChatChannel;
+import net.osparty.enums.RaidPartyAutoCreate;
 import net.osparty.enums.SceneFontSize;
 import net.runelite.client.config.Alpha;
 import net.runelite.client.config.Config;
@@ -218,6 +220,47 @@ public interface OSPartyConfig extends Config
 	default boolean skipDisbandConfirm()
 	{
 		return false;
+	}
+
+	String RAID_PARTY_AUTO_CREATE = "raidPartyAutoCreate";
+
+	@ConfigItem(
+		keyName = RAID_PARTY_AUTO_CREATE,
+		name = "Advertise in-game raid parties",
+		description = "When you make a raid party at the Chambers of Xeric board, the Theatre of Blood notice "
+			+ "board or the Tombs of Amascut obelisk: ask whether to advertise it on OSParty, always advertise "
+			+ "it, or do nothing. Turned off by \"Don't ask again\" on that prompt.",
+		position = 6,
+		section = HOSTING
+	)
+	default RaidPartyAutoCreate raidPartyAutoCreate()
+	{
+		return RaidPartyAutoCreate.ASK;
+	}
+
+	@ConfigItem(
+		keyName = "raidPartyPromptDisplay",
+		name = "Raid party prompt",
+		description = "Where the \"advertise this raid party?\" question is asked: the sidebar, an in-game card, or both.",
+		position = 7,
+		section = HOSTING
+	)
+	default InviteDisplay raidPartyPromptDisplay()
+	{
+		return InviteDisplay.BOTH;
+	}
+
+	@ConfigItem(
+		keyName = "raidBoardSync",
+		name = "Follow the in-game board",
+		description = "While you host a raid party, keep its Chambers of Xeric scale and Tombs of Amascut "
+			+ "invocation level in step with what is set on the in-game party board.",
+		position = 8,
+		section = HOSTING
+	)
+	default boolean raidBoardSync()
+	{
+		return true;
 	}
 
 	// ---- Notifications ----
