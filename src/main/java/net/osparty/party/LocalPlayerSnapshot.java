@@ -92,10 +92,10 @@ public final class LocalPlayerSnapshot
 			}
 		}
 		update.setStats(stats);
-		if (client.getAccountType() != null)
-		{
-			update.setAccountType(client.getAccountType().name());
-		}
+		// Mapped from the varbit ourselves: the deprecated getAccountType() has no unranked-group-ironman
+		// value, and the party would see such a member as a normal account.
+		update.setAccountType(
+			net.osparty.model.AccountTypes.fromVarbit(client.getVarbitValue(VarbitID.IRONMAN)).name());
 		update.setWorld(client.getWorld());
 
 		FriendsChatManager fcm = client.getFriendsChatManager();

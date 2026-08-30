@@ -642,7 +642,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		world = client.getWorld();
 		mapRegions = client.getMapRegions();
-		accountType = client.getAccountType();
+		// Mapped from the varbit ourselves: the deprecated getAccountType() has no unranked-group-ironman
+		// value and reports one as a normal account, locking them out of ironman-only parties.
+		accountType = AccountTypes.fromVarbit(client.getVarbitValue(VarbitID.IRONMAN));
 		accountHash = client.getAccountHash();
 		// Tell the socket which character it should present a credential for. Read on connect, so a switch
 		// takes effect on the next reconnect rather than mid-connection -- which is right: the credential

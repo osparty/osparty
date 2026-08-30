@@ -35,6 +35,32 @@ public final class AccountTypes
 		return type != null && (type.isIronman() || type.isGroupIronman());
 	}
 
+	/**
+	 * The account type as the {@code IRONMAN} varbit reports it (0 normal .. 6 unranked group ironman).
+	 * Read directly rather than through the deprecated {@code Client#getAccountType()}, whose enum has no
+	 * value for an unranked group ironman and so reports one as a normal account -- which is what locked
+	 * unranked group ironmen out of ironman-only parties. Unranked is still a group ironman here.
+	 */
+	public static AccountType fromVarbit(int value)
+	{
+		switch (value)
+		{
+			case 1:
+				return AccountType.IRONMAN;
+			case 2:
+				return AccountType.ULTIMATE_IRONMAN;
+			case 3:
+				return AccountType.HARDCORE_IRONMAN;
+			case 4:
+			case 6:
+				return AccountType.GROUP_IRONMAN;
+			case 5:
+				return AccountType.HARDCORE_GROUP_IRONMAN;
+			default:
+				return AccountType.NORMAL;
+		}
+	}
+
 	/** Short tag for a roster/card badge, or {@code null} for a normal account. */
 	public static String tag(AccountType type)
 	{
