@@ -696,13 +696,13 @@ public class OSPartySocket extends WebSocketListener
 		send(gson.toJson(new KickVoiceFrame(id, key, playerId)));
 	}
 
-	public void reportAd(String id)
+	public void reportAd(String id, String description)
 	{
 		if (id == null || !connected)
 		{
 			return;
 		}
-		send(gson.toJson(new ReportFrame(id)));
+		send(gson.toJson(new ReportFrame(id, description)));
 	}
 
 	/**
@@ -2156,10 +2156,12 @@ public class OSPartySocket extends WebSocketListener
 	{
 		final String type = "report";
 		final String id;
+		final String description;
 
-		ReportFrame(String id)
+		ReportFrame(String id, String description)
 		{
 			this.id = id;
+			this.description = description;
 		}
 	}
 

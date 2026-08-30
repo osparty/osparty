@@ -909,12 +909,17 @@ abstract class PartyCardPanel extends JPanel
 			JMenuItem reportItem = new JMenuItem(reported ? "Already reported" : "Report advertisement");
 			reportItem.setEnabled(!reported);
 			reportItem.addActionListener(e -> {
-				if (reportedAdIds.contains(ad.getId()) || !ReportConfirm.confirm(this, host))
+				if (reportedAdIds.contains(ad.getId()))
+				{
+					return;
+				}
+				String description = ReportConfirm.confirm(this, host);
+				if (description == null)
 				{
 					return;
 				}
 				reportedAdIds.add(ad.getId());
-				boardService.reportAd(ad.getId());
+				boardService.reportAd(ad.getId(), description.isEmpty() ? null : description);
 				setStatus("Report sent. A moderator will review it.");
 			});
 			menu.add(reportItem);

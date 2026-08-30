@@ -122,7 +122,8 @@ public interface BoardService
 	 */
 	void kickVoiceMember(String adId, String hostKey, String playerId);
 
-	void reportAd(String adId);
+	/** Report {@code adId} for moderation, with the reporter's optional description of the problem. */
+	void reportAd(String adId, String description);
 
 	/**
 	 * Member action: request per-user access to the party's voice channel, then open the invite.

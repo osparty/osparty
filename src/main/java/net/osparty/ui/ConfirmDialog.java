@@ -3,7 +3,7 @@ package net.osparty.ui;
 import java.awt.Component;
 import javax.swing.JOptionPane;
 
-/** OK/Cancel warning dialogs whose body is HTML, shared by {@link BlockConfirm} and {@link ReportConfirm}. */
+/** OK/Cancel warning dialogs whose body is HTML, used by {@link BlockConfirm}; {@link ReportConfirm} shares {@link #escape}. */
 final class ConfirmDialog
 {
 	private ConfirmDialog()

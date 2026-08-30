@@ -204,9 +204,9 @@ public class BoardApiClient implements BoardService
 	}
 
 	@Override
-	public void reportAd(String adId)
+	public void reportAd(String adId, String description)
 	{
-		socket.reportAd(adId);
+		socket.reportAd(adId, description);
 	}
 
 	@Override
