@@ -18,7 +18,6 @@ import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.MenuAction;
 import net.runelite.api.MessageNode;
-import net.runelite.api.ScriptID;
 import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.gameval.InterfaceID;
@@ -29,12 +28,12 @@ import net.runelite.client.util.ColorUtil;
 import net.runelite.client.util.Text;
 
 /**
- * A party "link" that fits in the game's chat: a host says {@code !party} (typed, or sent by the Party
- * tab's share button) and the message goes out as ordinary chat. For everyone running OSParty the line
- * is looked up by the sender's name — the game supplies it, so it can't be forged — and redrawn as the
- * party it points at, with an "Apply to party" entry on the line's menu; for everyone else it stays the
- * literal text, the way {@code !kc} does. Applying from the line runs the same checks and role picker
- * as the Search tab, and admission still ends with the host.
+ * A party "link" that fits in the game's chat: a host types {@code !osparty} and the message goes out
+ * as ordinary chat. For everyone running OSParty the line is looked up by the sender's name — the game
+ * supplies it, so it can't be forged — and redrawn as the party it points at, with an "Apply to party"
+ * entry on the line's menu; for everyone else it stays the literal text, the way {@code !kc} does.
+ * Applying from the line runs the same checks and role picker as the Search tab, and admission still
+ * ends with the host.
  *
  * <p>The trigger is a fixed word, not a setting: sender and viewer only find each other because both
  * sides agree on it.
@@ -43,15 +42,14 @@ import net.runelite.client.util.Text;
 public class PartyShare
 {
 	/** The chat word that marks a message as a party share. Protocol, not preference — never configurable. */
-	public static final String TRIGGER = "!party";
+	public static final String TRIGGER = "!osparty";
 
 	/** How every redrawn line starts; also what the menu hook recognizes a decorated line by. */
 	private static final String MARKER = ColorUtil.wrapWithColorTag("[OSParty]", Color.ORANGE);
 	private static final Color LINK = new Color(0x5E, 0xB2, 0xFF);
 
-	/** Per host: how often an overheard {@code !party} may hit the backend, however often it is said. */
+	/** Per host: how often an overheard {@code !osparty} may hit the backend, however often it is said. */
 	private static final long LOOKUP_INTERVAL_MS = 10_000;
-	private static final long SHARE_COOLDOWN_MS = 3_000;
 
 	private final Client client;
 	private final ClientThread clientThread;
@@ -66,7 +64,6 @@ public class PartyShare
 	/** Runs the apply flow for an ad clicked in chat; the panel and role chooser live on the plugin. */
 	private volatile Consumer<Advertisement> onApply;
 	private volatile Supplier<String> selfName;
-	private volatile long lastShareAt;
 
 	@Inject
 	PartyShare(Client client, ClientThread clientThread, OSPartyConfig config, BoardApiClient board,
@@ -97,7 +94,7 @@ public class PartyShare
 		onApply = null;
 	}
 
-	/** An overheard chat line; a {@code !party} from a hosting player is redrawn as their party. */
+	/** An overheard chat line; a {@code !osparty} from a hosting player is redrawn as their party. */
 	public void onChatMessage(ChatMessage event)
 	{
 		if (!config.partyShareLinks() || !isPlayerChat(event.getType()))
@@ -141,7 +138,7 @@ public class PartyShare
 				found.remove(key);
 				if (key.equals(PlayerNames.normalize(self())))
 				{
-					notice("You're not hosting a party, so that !party isn't clickable. Host one first.");
+					notice("You're not hosting a party, so that " + TRIGGER + " isn't clickable. Host one first.");
 				}
 			});
 	}
@@ -183,32 +180,6 @@ public class PartyShare
 			.setTarget(entry.getTarget())
 			.setType(MenuAction.RUNELITE)
 			.onClick(e -> applyFromChat(name));
-	}
-
-	/**
-	 * The host's side of the link: put {@code !party} and the activity into public chat, one message
-	 * per click. Sent through the game's own chat-send script, so it is exactly a typed line.
-	 */
-	public void shareToChat(Advertisement ad)
-	{
-		long now = System.currentTimeMillis();
-		if (now - lastShareAt < SHARE_COOLDOWN_MS)
-		{
-			notice("Give it a moment before sharing again.");
-			return;
-		}
-		lastShareAt = now;
-		Activity activity = Activity.fromId(ad.getActivity());
-		String message = activity == null ? TRIGGER
-			: TRIGGER + " " + activity.displayName(ad.isHardMode(), ad.getInvocation());
-		clientThread.invoke(() ->
-		{
-			if (client.getGameState() == GameState.LOGGED_IN)
-			{
-				// Args as RuneLite's ChatInputManager sends a resumed line: mode 0 is public chat.
-				client.runScript(ScriptID.CHAT_SEND, message, 0, 0, 0, -1);
-			}
-		});
 	}
 
 	/** Apply on a fresh copy of the ad, not the one the line was drawn from — parties fill and fold. */
@@ -254,7 +225,7 @@ public class PartyShare
 		return activity == null ? "a party" : activity.displayName(ad.isHardMode(), ad.getInvocation());
 	}
 
-	/** The chat types another player's {@code !party} can arrive on. */
+	/** The chat types another player's {@code !osparty} can arrive on. */
 	private static boolean isPlayerChat(ChatMessageType type)
 	{
 		switch (type)

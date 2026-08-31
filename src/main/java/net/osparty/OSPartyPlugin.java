@@ -452,7 +452,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 				currentPanel.applyTo(ad, message -> chat(message, false), inGameRoleChooser);
 			}
 		}));
-		panel.setShareToChatHandler(this::sharePartyToChat);
 		raidPartyWatcher.setListener(this::onRaidPartyDetected);
 		// A hosted raid ad follows the in-game board (CoX scale, ToA invocation level) while the setting is on.
 		raidBoardSync.setHostedAd(() ->
@@ -1355,19 +1354,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 				chat(friend + " isn't online in OSParty.", false);
 			}
 		});
-	}
-
-	/** The Party tab's share button: one {@code !party} line into public chat, for OSParty users to click. */
-	private void sharePartyToChat()
-	{
-		OSPartyPanel currentPanel = panel;
-		Advertisement ad = currentPanel == null ? null : currentPanel.hostedAd();
-		if (ad == null)
-		{
-			chat("You're not hosting a party to share.", false);
-			return;
-		}
-		partyShare.shareToChat(ad);
 	}
 
 	/** @return whether the OSRS friend named {@code normalizedName} is currently online (world &gt; 0). */

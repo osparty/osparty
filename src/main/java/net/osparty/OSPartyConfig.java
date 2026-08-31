@@ -503,8 +503,8 @@ public interface OSPartyConfig extends Config
 
 	@ConfigItem(
 		keyName = "partyShareLinks",
-		name = "Clickable !party lines",
-		description = "When a hosting player says \"!party\" in chat, redraw that line as their party and let you apply straight from it. Share your own with the Party tab's share button, or just type !party.",
+		name = "Clickable !osparty lines",
+		description = "When a hosting player says \"!osparty\" in chat, redraw that line as their party and let you apply straight from it. Share your own party by typing !osparty.",
 		position = 4,
 		section = CHAT
 	)

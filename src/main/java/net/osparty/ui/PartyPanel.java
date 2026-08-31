@@ -123,13 +123,6 @@ class PartyPanel extends JPanel
 	private final Runnable onAuthorizeDiscord;
 	private final java.util.function.LongSupplier accountHashSupplier;
 	private final HostTransferHandler hostTransferHandler;
-	/** Sends a {@code !party} line to public chat; wired by the plugin, which owns the client thread. */
-	private Runnable onShareToChat;
-
-	void setOnShareToChat(Runnable handler)
-	{
-		this.onShareToChat = handler;
-	}
 
 	/** Skills in the in-game skills-tab layout (row-major, 3 columns), total last. */
 	private static final Skill[] SKILL_LAYOUT = {
@@ -497,11 +490,6 @@ class PartyPanel extends JPanel
 		{
 			content.add(copyRow("Passphrase: " + liveParty.passphrase(), liveParty.passphrase(),
 				"Copy passphrase", "Passphrase copied to clipboard.", ColorScheme.LIGHT_GRAY_COLOR));
-		}
-		if (host && onShareToChat != null)
-		{
-			content.add(Box.createVerticalStrut(4));
-			content.add(buildShareRow());
 		}
 
 		JComponent voiceRow = buildVoiceRow(ad, host);
@@ -2322,18 +2310,6 @@ class PartyPanel extends JPanel
 			}
 		});
 		return wrapVoiceButton(authorize);
-	}
-
-	/** The host's share button: puts a {@code !party} line into public chat that OSParty users can apply from. */
-	private JPanel buildShareRow()
-	{
-		JButton share = new JButton("Share " + net.osparty.tools.PartyShare.TRIGGER + " to public chat");
-		share.setFocusPainted(false);
-		share.setToolTipText("Say \"" + net.osparty.tools.PartyShare.TRIGGER + "\" in public chat. "
-			+ "Everyone with OSParty sees your party on that line and can apply straight from it; "
-			+ "everyone else just sees the text.");
-		share.addActionListener(e -> onShareToChat.run());
-		return wrapVoiceButton(share);
 	}
 
 	/** Full-width in a capped row (BorderLayout.CENTER stretches the button), matching "Start ready check". */

@@ -797,16 +797,10 @@ public class OSPartyPanel extends PluginPanel
 		searchPanel.joinByCode(code, status, true, chooser);
 	}
 
-	/** Apply to a party fetched outside the panel — a clickable {@code !party} chat line — with the Search panel's checks. */
+	/** Apply to a party fetched outside the panel — a clickable {@code !osparty} chat line — with the Search panel's checks. */
 	public void applyTo(Advertisement ad, java.util.function.Consumer<String> status, RoleChooser chooser)
 	{
 		searchPanel.applyTo(ad, chooser, status);
-	}
-
-	/** What the Party tab's share button does; sending chat needs the client thread, which the plugin owns. */
-	public void setShareToChatHandler(Runnable handler)
-	{
-		partyPanel.setOnShareToChat(handler);
 	}
 
 	/** Register what the sidebar invite banner's Accept/Decline buttons do. */
