@@ -120,6 +120,22 @@ public class OSPartyPanel extends PluginPanel
 	 * fight for the same corner.
 	 */
 	private final JPanel signInBanner;
+	/**
+	 * Shown while the current character's enrolment still owes the user a recovery setup.
+	 *
+	 * <p>The successor to the modal codes popup: enrolment itself is silent, and this banner is how
+	 * the player finds their codes when they are ready to look. Persistent rather than interrupting,
+	 * for the same reason as the sign-in banner above it.
+	 */
+	private final JPanel setupBanner;
+	private final JLabel setupMessage = new JLabel();
+	/** Polled with the rest of the footer state, so the banner survives restarts and character switches. */
+	private java.util.function.BooleanSupplier setupPendingSupplier;
+	/** What the setup banner's button opens. */
+	private volatile Runnable openAccountSetup;
+	/** Told when the user unlinks Discord, so setup can reopen if the link was their only saved route. */
+	private volatile Runnable onDiscordUnlinked;
+	private final Supplier<String> playerNameSupplier;
 	/** Stacked invite banners shown at the top of the panel; keyed by backend party id. EDT only. */
 	private final JPanel invitePanel = buildInvitePanel();
 	private final java.util.Map<String, JPanel> inviteBanners = new java.util.HashMap<>();
@@ -195,7 +211,9 @@ public class OSPartyPanel extends PluginPanel
 		this.gameMessage = gameMessage;
 		this.historyService = historyService;
 		this.openDeviceManager = openDeviceManager;
+		this.playerNameSupplier = playerNameSupplier;
 		this.signInBanner = buildSignInBanner(openSignInHelp);
+		this.setupBanner = buildSetupBanner();
 		this.partyState = new PartyState(configManager);
 		this.hostTransferHandler = new HostTransferHandler(liveParty, boardService, partyState,
 			playerNameSupplier, accountTypeSupplier, gameMessage);
@@ -305,7 +323,13 @@ public class OSPartyPanel extends PluginPanel
 		JPanel notices = new JPanel(new BorderLayout());
 		notices.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		notices.add(signInBanner, BorderLayout.NORTH);
-		notices.add(invitePanel, BorderLayout.CENTER);
+		// Nested rather than stacked in one grid: BorderLayout is the layout that collapses an
+		// invisible banner to nothing, and each of these is hidden most of the time.
+		JPanel belowSignIn = new JPanel(new BorderLayout());
+		belowSignIn.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		belowSignIn.add(setupBanner, BorderLayout.NORTH);
+		belowSignIn.add(invitePanel, BorderLayout.CENTER);
+		notices.add(belowSignIn, BorderLayout.CENTER);
 		north.add(notices, BorderLayout.NORTH);
 		north.add(tabGroup, BorderLayout.CENTER);
 
@@ -434,6 +458,115 @@ public class OSPartyPanel extends PluginPanel
 		signInBanner.repaint();
 	}
 
+	/**
+	 * The "finish account setup" strip, shown while the current character's recovery setup is pending.
+	 *
+	 * <p>An offer rather than a warning — orange, not the sign-in banner's red — because nothing is
+	 * wrong: the account just signed in, and the only thing at stake is a way back in the user hasn't
+	 * saved yet. Shaped like an invite banner (text above, a full-width button below) because that is
+	 * the panel's established "this is for you, when you're ready" form, and a side-by-side button
+	 * squeezes the text into a cramped column at sidebar width.
+	 */
+	private JPanel buildSetupBanner()
+	{
+		JPanel banner = new JPanel(new BorderLayout(0, 6));
+		// A warm-tinted surface rather than another grey block: orange *text* cannot stand out in this
+		// sidebar, whose section headers are already orange — the background is the one channel nothing
+		// else uses. Derived from BRAND_ORANGE so a theme change carries it along.
+		banner.setBackground(blend(ColorScheme.DARKER_GRAY_COLOR, ColorScheme.BRAND_ORANGE, 0.18f));
+		banner.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createCompoundBorder(
+				BorderFactory.createMatteBorder(1, 1, 1, 1,
+					blend(ColorScheme.DARKER_GRAY_COLOR, ColorScheme.BRAND_ORANGE, 0.45f)),
+				BorderFactory.createMatteBorder(0, 3, 0, 0, ColorScheme.BRAND_ORANGE)),
+			BorderFactory.createEmptyBorder(9, 10, 9, 10)));
+
+		setupMessage.setForeground(Color.WHITE);
+		setupMessage.setFont(FontManager.getRunescapeSmallFont());
+		banner.add(setupMessage, BorderLayout.NORTH);
+
+		JButton setUp = new JButton("Set up");
+		setUp.setFont(FontManager.getRunescapeSmallFont());
+		setUp.setFocusPainted(false);
+		setUp.setToolTipText("Save recovery codes or link Discord — a way back in if this device is ever lost");
+		setUp.addActionListener(e ->
+		{
+			Runnable open = openAccountSetup;
+			if (open != null)
+			{
+				open.run();
+			}
+		});
+		banner.add(setUp, BorderLayout.CENTER);
+
+		// A transparent wrapper carries the gap to the tab bar below: a margin border on the banner
+		// itself would be painted in its own amber background, since a panel fills its whole bounds.
+		JPanel wrapper = new JPanel(new BorderLayout());
+		wrapper.setOpaque(false);
+		wrapper.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
+		wrapper.add(banner, BorderLayout.CENTER);
+		wrapper.setVisible(false);
+		return wrapper;
+	}
+
+	/** {@link ColorScheme#BRAND_ORANGE} as an HTML colour attribute, so the headline matches the edge. */
+	private static String brandOrangeHex()
+	{
+		return String.format("#%06x", ColorScheme.BRAND_ORANGE.getRGB() & 0xFFFFFF);
+	}
+
+	/** {@code a} moved {@code t} of the way toward {@code b}. */
+	private static Color blend(Color a, Color b, float t)
+	{
+		return new Color(
+			Math.round(a.getRed() + (b.getRed() - a.getRed()) * t),
+			Math.round(a.getGreen() + (b.getGreen() - a.getGreen()) * t),
+			Math.round(a.getBlue() + (b.getBlue() - a.getBlue()) * t));
+	}
+
+	/**
+	 * Show or retire the setup banner. Called from the recovery controller on the EDT, and refreshed by
+	 * the footer poll so a restart or a character switch is reflected without an event. Idempotent.
+	 */
+	public void setSetupPending(boolean pending)
+	{
+		if (setupBanner.isVisible() == pending)
+		{
+			return;
+		}
+		if (pending)
+		{
+			String name = playerNameSupplier.get();
+			String who = name == null || name.isEmpty() ? "this account" : ConfirmDialog.escape(name);
+			setupMessage.setText("<html><body style='width:170px'>"
+				+ "<font color='" + brandOrangeHex() + "'><b>Finish account setup</b></font><br>"
+				+ "Save a way back in for " + who + "."
+				+ "</body></html>");
+		}
+		setupBanner.setVisible(pending);
+		setupBanner.revalidate();
+		setupBanner.repaint();
+	}
+
+	/** Wire the recovery-setup offer: {@code pending} is polled with the footer state, {@code open} is the banner's button. */
+	public void setAccountSetup(java.util.function.BooleanSupplier pending, Runnable open)
+	{
+		this.setupPendingSupplier = pending;
+		this.openAccountSetup = open;
+	}
+
+	/** Told when the user unlinks Discord, so setup can reopen if the link was their only saved route. */
+	public void setOnDiscordUnlinked(Runnable onDiscordUnlinked)
+	{
+		this.onDiscordUnlinked = onDiscordUnlinked;
+	}
+
+	/** Whether the current account is Discord-linked, as last reported by the footer's status query. */
+	public boolean isDiscordLinked()
+	{
+		return discordLinked;
+	}
+
 	private JButton linkButton(String text, String tooltip, String iconFile, String url)
 	{
 		JButton button = new JButton();
@@ -461,6 +594,13 @@ public class OSPartyPanel extends PluginPanel
 	{
 		int online = boardService.onlineUserCount();
 		activeUsersLabel.setText(online < 0 ? "" : online + " online");
+
+		// The setup banner rides the same tick: no auth frame arrives on the reconnects and character
+		// switches that change the answer, so asking is the only way to stay right.
+		if (setupPendingSupplier != null)
+		{
+			setSetupPending(setupPendingSupplier.getAsBoolean());
+		}
 
 		// Only re-query link status when the logged-in account changes, not every tick.
 		long hash = accountHashSupplier.getAsLong();
@@ -542,6 +682,11 @@ public class OSPartyPanel extends PluginPanel
 		}
 		boardService.unlinkDiscord(hash);
 		applyLinkStatus(null); // reset the button (and re-gate the Party tab's voice buttons)
+		Runnable unlinked = onDiscordUnlinked;
+		if (unlinked != null)
+		{
+			unlinked.run();
+		}
 	}
 
 	/** Ask the server whether the current account is linked and reflect it on the button. */

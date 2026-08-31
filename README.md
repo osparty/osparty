@@ -303,6 +303,13 @@ The first time you connect, the server issues your account a credential. OSParty
 `<runelite>/osparty/credentials.json`, keyed by your account hash — deliberately not in
 RuneLite's own config, since that's cloud-synced in plain text.
 
+Signing in for the first time also asks nothing of you in the moment: a quiet banner appears at
+the top of the panel offering **account recovery setup**. Do it when you like — it's how you get
+back in if this computer is ever lost or wiped. Setup offers two routes, and either one
+completes it: link your Discord account (nothing to write down, works from any machine), or save
+ten one-time recovery codes somewhere safe. The banner stays until you've done one of them, and
+codes can be regenerated later from the Devices dialog if you lose your copy.
+
 The Devices button in the panel footer opens a dialog listing every machine currently able to
 sign in as you, with Rename and Revoke for each. If you sign in on a new device while an
 existing one is already registered, you'll be asked to confirm it with a six-digit coupling

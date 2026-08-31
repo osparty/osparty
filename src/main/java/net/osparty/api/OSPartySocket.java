@@ -279,6 +279,7 @@ public class OSPartySocket extends WebSocketListener
 		{
 			request.header("X-OSParty-Auth", token);
 		}
+		credentialPresented = token != null;
 		webSocket = client.newWebSocket(request.build(), this);
 	}
 
@@ -764,6 +765,9 @@ public class OSPartySocket extends WebSocketListener
 	public void onOpen(WebSocket socket, Response response)
 	{
 		connected = true;
+		// Believed until the server says otherwise: a rejected credential comes back as authFailed, which
+		// flips this off and clears the store. See the note on the field.
+		signedIn = credentialPresented;
 		attempt = 0;
 		if (!searchListeners.isEmpty())
 		{
@@ -1291,8 +1295,17 @@ public class OSPartySocket extends WebSocketListener
 	private volatile Consumer<Integer> onCouplingCodeSent;
 	private volatile Consumer<CouplingResultEvent> onCouplingResult;
 	private volatile Consumer<Long> onCouplingAccepted;
-	/** Whether this connection is speaking for a proved character. Reset whenever the socket goes down. */
+	/**
+	 * Whether this connection is speaking for a proved character. Reset whenever the socket goes down.
+	 *
+	 * <p>True from the open when a stored credential rode the handshake, not only when one is minted: the
+	 * server acknowledges a presented credential with silence (it only ever speaks up to refuse one, with
+	 * {@code authFailed}), so a reconnect that waits to be told it is signed in waits forever — which is
+	 * how the Devices button used to dead-end after every client restart.
+	 */
 	private volatile boolean signedIn;
+	/** Whether {@link #connect()} put a stored credential on the current connection's handshake. */
+	private volatile boolean credentialPresented;
 
 	public void setOnSignedIn(Consumer<SignedInEvent> callback)
 	{

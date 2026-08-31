@@ -224,6 +224,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private OSPartySocket socket;
 
 	@Inject
+	private net.osparty.store.RecoverySetupStore recoverySetupStore;
+
+	@Inject
 	private FavoritesService favoritesService;
 
 	@Inject
@@ -337,7 +340,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		// Registered before the socket opens: the first connection can enrol this character, and the codes
 		// that come back with a brand-new account arrive exactly once.
-		accountRecovery = new AccountRecoveryController(socket, this::getAccountHash, this::getPlayerName);
+		accountRecovery = new AccountRecoveryController(socket, this::getAccountHash, this::getPlayerName,
+			recoverySetupStore);
 		accountRecovery.register();
 		socket.start();
 
@@ -429,6 +433,22 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// the controller only learns about it once it exists.
 		accountRecovery.attachPanel(panel, panel::setSignedIn);
 		accountRecovery.setOnLinkDiscord(panel::startDiscordLink);
+		accountRecovery.setDiscordLinked(panel::isDiscordLinked);
+		accountRecovery.setOnSetupPendingChanged(panel::setSetupPending);
+		panel.setAccountSetup(accountRecovery::isSetupPendingNow, accountRecovery::openSetup);
+		panel.setOnDiscordUnlinked(accountRecovery::onDiscordUnlinked);
+		// A first enrolment gets one quiet nudge — a chat line and the sidebar badge — instead of the
+		// modal codes popup it used to get: the banner and the setup dialog carry the rest, on the
+		// player's own time.
+		accountRecovery.setOnSetupPrompt(() ->
+		{
+			chat("This character is now signed in on this device. "
+				+ "Open the OSParty panel to finish account setup.", true);
+			if (!panelActive)
+			{
+				showNavButton(true);
+			}
+		});
 
 		clientToolbar.addNavigation(navButton);
 		panel.setOnActivated(this::onPanelActivated);
