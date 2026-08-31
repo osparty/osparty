@@ -29,7 +29,7 @@ public final class PartyErrors
 			String m = msg.toLowerCase();
 			if (m.contains("not connected"))
 			{
-				return "You're offline — can't reach OSParty. Check your connection and retry.";
+				return "You're offline and can't reach OSParty. Check your connection and retry.";
 			}
 			if (m.startsWith("host rejected:"))
 			{

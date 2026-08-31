@@ -14,10 +14,11 @@ import net.osparty.store.PlayerFlag;
 
 /**
  * Shared logic for a per-player flag list (favourites or blocks), backed by
- * {@link PartyStore}. Entries are keyed by {@code accountHash} when known so they
- * survive name changes; entries whose hash isn't known yet (e.g. migrated from the
- * old name-only favourites) fall back to matching on the normalised username and are
- * upgraded to a hash the first time we {@link #observe} that player in a party.
+ * {@link PartyStore}. Entries are keyed by {@code playerId} when known so they
+ * survive name changes; entries whose id isn't known yet (e.g. migrated from the
+ * old name-only favourites, or from a file keyed by account hash) fall back to
+ * matching on the normalised username and are upgraded to an id the first time we
+ * {@link #observe} that player in a party.
  *
  * <p>All state is guarded by the instance monitor; callers are the Swing EDT and the
  * socket reader thread.
@@ -27,11 +28,11 @@ public abstract class PlayerFlagService
 	private final PartyStore store;
 	private final FlagKind kind;
 
-	/** accountHash (&gt; 0) -&gt; normalised username. */
-	private final Map<Long, String> byHash = new HashMap<>();
-	/** Normalised usernames flagged without a known hash. */
+	/** playerId -&gt; normalised username. */
+	private final Map<String, String> byId = new HashMap<>();
+	/** Normalised usernames flagged without a known id. */
 	private final Set<String> nameOnly = new HashSet<>();
-	/** Union of {@link #nameOnly} and {@link #byHash} values, for name-based matching. */
+	/** Union of {@link #nameOnly} and {@link #byId} values, for name-based matching. */
 	private final Set<String> flaggedNames = new HashSet<>();
 
 	protected PlayerFlagService(PartyStore store, FlagKind kind)
@@ -43,14 +44,14 @@ public abstract class PlayerFlagService
 
 	protected final synchronized void reload()
 	{
-		byHash.clear();
+		byId.clear();
 		nameOnly.clear();
 		for (PlayerFlag flag : store.loadFlags(kind))
 		{
 			String norm = normalize(flag.getUsername());
-			if (flag.hasKnownHash())
+			if (flag.hasKnownId())
 			{
-				byHash.put(flag.getAccountHash(), norm);
+				byId.put(flag.getPlayerId(), norm);
 			}
 			else
 			{
@@ -60,20 +61,20 @@ public abstract class PlayerFlagService
 		rebuildNames();
 	}
 
-	/** True when this player is flagged, by hash when known, else by name. */
-	public synchronized boolean isFlagged(long accountHash, String name)
+	/** True when this player is flagged, by id when known, else by name. */
+	public synchronized boolean isFlagged(String playerId, String name)
 	{
-		if (PlayerFlag.isKnown(accountHash) && byHash.containsKey(accountHash))
+		if (PlayerFlag.isKnown(playerId) && byId.containsKey(playerId))
 		{
 			return true;
 		}
 		return name != null && flaggedNames.contains(normalize(name));
 	}
 
-	/** Name-only convenience check (no hash available at the call site). */
+	/** Name-only convenience check (no id available at the call site). */
 	public boolean isFlagged(String name)
 	{
-		return isFlagged(0L, name);
+		return isFlagged(null, name);
 	}
 
 	/** True when the host or any listed member of {@code ad} is flagged. */
@@ -83,7 +84,7 @@ public abstract class PlayerFlagService
 		{
 			return false;
 		}
-		if (isFlagged(ad.getHostAccountHash(), ad.getHost()))
+		if (isFlagged(ad.getHostPlayerId(), ad.getHost()))
 		{
 			return true;
 		}
@@ -92,7 +93,7 @@ public abstract class PlayerFlagService
 		{
 			for (Member member : members)
 			{
-				if (member != null && isFlagged(member.getAccountHash(), member.getName()))
+				if (member != null && isFlagged(member.getPlayerId(), member.getName()))
 				{
 					return true;
 				}
@@ -102,71 +103,71 @@ public abstract class PlayerFlagService
 	}
 
 	/** Add the player if not flagged, remove if flagged. Persists the change. */
-	public synchronized void toggle(long accountHash, String name)
+	public synchronized void toggle(String playerId, String name)
 	{
 		if (name == null)
 		{
 			return;
 		}
 		String norm = normalize(name);
-		if (isFlagged(accountHash, name))
+		if (isFlagged(playerId, name))
 		{
-			// Remove every representation of this player (hash row and/or name-only row).
-			Long byNameHash = hashForName(norm);
-			if (PlayerFlag.isKnown(accountHash) && byHash.remove(accountHash) != null)
+			// Remove every representation of this player (id row and/or name-only row).
+			String byNameId = idForName(norm);
+			if (PlayerFlag.isKnown(playerId) && byId.remove(playerId) != null)
 			{
-				store.removeFlag(kind, new PlayerFlag(accountHash, norm));
+				store.removeFlag(kind, new PlayerFlag(playerId, norm));
 			}
-			if (byNameHash != null && byHash.remove(byNameHash) != null)
+			if (byNameId != null && byId.remove(byNameId) != null)
 			{
-				store.removeFlag(kind, new PlayerFlag(byNameHash, norm));
+				store.removeFlag(kind, new PlayerFlag(byNameId, norm));
 			}
 			if (nameOnly.remove(norm))
 			{
-				store.removeFlag(kind, new PlayerFlag(PlayerFlag.UNKNOWN_HASH, norm));
+				store.removeFlag(kind, new PlayerFlag(null, norm));
 			}
 		}
-		else if (PlayerFlag.isKnown(accountHash))
+		else if (PlayerFlag.isKnown(playerId))
 		{
-			byHash.put(accountHash, norm);
-			store.upsertFlag(kind, new PlayerFlag(accountHash, norm));
+			byId.put(playerId, norm);
+			store.upsertFlag(kind, new PlayerFlag(playerId, norm));
 		}
 		else
 		{
 			nameOnly.add(norm);
-			store.upsertFlag(kind, new PlayerFlag(PlayerFlag.UNKNOWN_HASH, norm));
+			store.upsertFlag(kind, new PlayerFlag(null, norm));
 		}
 		rebuildNames();
 	}
 
 	/**
-	 * Record that {@code accountHash} currently goes by {@code name}: renames a stored
-	 * entry when the name changed, and backfills the hash onto a name-only entry. No-op
-	 * when the hash is unknown or the player isn't flagged.
+	 * Record that {@code playerId} currently goes by {@code name}: renames a stored
+	 * entry when the name changed, and backfills the id onto a name-only entry. No-op
+	 * when the id is unknown or the player isn't flagged.
 	 */
-	public synchronized void observe(long accountHash, String name)
+	public synchronized void observe(String playerId, String name)
 	{
-		if (!PlayerFlag.isKnown(accountHash) || name == null)
+		if (!PlayerFlag.isKnown(playerId) || name == null)
 		{
 			return;
 		}
 		String norm = normalize(name);
-		String known = byHash.get(accountHash);
+		String known = byId.get(playerId);
 		if (known != null)
 		{
 			if (!known.equals(norm))
 			{
-				byHash.put(accountHash, norm);
-				store.upsertFlag(kind, new PlayerFlag(accountHash, norm));
+				byId.put(playerId, norm);
+				store.upsertFlag(kind, new PlayerFlag(playerId, norm));
 				rebuildNames();
 			}
 		}
 		else if (nameOnly.contains(norm))
 		{
 			nameOnly.remove(norm);
-			byHash.put(accountHash, norm);
-			// upsert with a known hash also clears the stale name-only row.
-			store.upsertFlag(kind, new PlayerFlag(accountHash, norm));
+			byId.put(playerId, norm);
+			// upsert with a known id also clears the stale name-only row.
+			store.upsertFlag(kind, new PlayerFlag(playerId, norm));
 			rebuildNames();
 		}
 	}
@@ -178,58 +179,58 @@ public abstract class PlayerFlagService
 		{
 			return;
 		}
-		observe(ad.getHostAccountHash(), ad.getHost());
+		observe(ad.getHostPlayerId(), ad.getHost());
 		if (ad.getMembers() != null)
 		{
 			for (Member member : ad.getMembers())
 			{
 				if (member != null)
 				{
-					observe(member.getAccountHash(), member.getName());
+					observe(member.getPlayerId(), member.getName());
 				}
 			}
 		}
 	}
 
-	/** All flagged entries (hash + last-known name), for management UIs. */
+	/** All flagged entries (id + last-known name), for management UIs. */
 	public synchronized List<PlayerFlag> entries()
 	{
 		List<PlayerFlag> out = new ArrayList<>();
-		for (Map.Entry<Long, String> e : byHash.entrySet())
+		for (Map.Entry<String, String> e : byId.entrySet())
 		{
 			out.add(new PlayerFlag(e.getKey(), e.getValue()));
 		}
 		for (String name : nameOnly)
 		{
-			out.add(new PlayerFlag(PlayerFlag.UNKNOWN_HASH, name));
+			out.add(new PlayerFlag(null, name));
 		}
 		return out;
 	}
 
 	/** Import a flag without toggling (used for one-time migrations). */
-	protected synchronized void importFlag(long accountHash, String name)
+	protected synchronized void importFlag(String playerId, String name)
 	{
 		if (name == null)
 		{
 			return;
 		}
 		String norm = normalize(name);
-		if (PlayerFlag.isKnown(accountHash))
+		if (PlayerFlag.isKnown(playerId))
 		{
-			byHash.put(accountHash, norm);
-			store.upsertFlag(kind, new PlayerFlag(accountHash, norm));
+			byId.put(playerId, norm);
+			store.upsertFlag(kind, new PlayerFlag(playerId, norm));
 		}
 		else if (!flaggedNames.contains(norm) && !nameOnly.contains(norm))
 		{
 			nameOnly.add(norm);
-			store.upsertFlag(kind, new PlayerFlag(PlayerFlag.UNKNOWN_HASH, norm));
+			store.upsertFlag(kind, new PlayerFlag(null, norm));
 		}
 		rebuildNames();
 	}
 
-	private Long hashForName(String norm)
+	private String idForName(String norm)
 	{
-		for (Map.Entry<Long, String> e : byHash.entrySet())
+		for (Map.Entry<String, String> e : byId.entrySet())
 		{
 			if (e.getValue().equals(norm))
 			{
@@ -243,12 +244,12 @@ public abstract class PlayerFlagService
 	{
 		flaggedNames.clear();
 		flaggedNames.addAll(nameOnly);
-		flaggedNames.addAll(byHash.values());
+		flaggedNames.addAll(byId.values());
 	}
 
 	/** Normalise a name for storage/comparison (RuneLite uses nbsp in player names). */
 	public static String normalize(String name)
 	{
-		return name == null ? "" : name.replace(' ', ' ').trim().toLowerCase();
+		return name == null ? "" : name.replace(' ', ' ').trim().toLowerCase();
 	}
 }

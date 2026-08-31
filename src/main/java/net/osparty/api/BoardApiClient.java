@@ -96,6 +96,13 @@ public class BoardApiClient implements BoardService
 	}
 
 	@Override
+	public void fetchSimilarParties(String activityId, boolean hardMode,
+		Consumer<java.util.List<Advertisement>> onResult)
+	{
+		socket.fetchSimilar(activityId, hardMode, onResult);
+	}
+
+	@Override
 	public void setOnHostedAdGone(Consumer<String> callback)
 	{
 		socket.setOnHostedGone(callback);
@@ -191,15 +198,15 @@ public class BoardApiClient implements BoardService
 	}
 
 	@Override
-	public void kickVoiceMember(String adId, String hostKey, long accountHash)
+	public void kickVoiceMember(String adId, String hostKey, String playerId)
 	{
-		socket.kickVoiceMember(adId, hostKey, accountHash);
+		socket.kickVoiceMember(adId, hostKey, playerId);
 	}
 
 	@Override
-	public void reportAd(String adId)
+	public void reportAd(String adId, String description)
 	{
-		socket.reportAd(adId);
+		socket.reportAd(adId, description);
 	}
 
 	@Override

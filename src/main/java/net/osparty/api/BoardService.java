@@ -33,6 +33,13 @@ public interface BoardService
 	void fetchAdByHost(String host, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError);
 
 	/**
+	 * Parties already running {@code activityId} in the same mode, closest to full first, so a host can be
+	 * asked whether they would rather join one than advertise the same thing beside it. Empty when there
+	 * are none, when the connection is down, or when the server predates the lookup.
+	 */
+	void fetchSimilarParties(String activityId, boolean hardMode, Consumer<java.util.List<Advertisement>> onResult);
+
+	/**
 	 * Register a callback fired (off the EDT) with the ad id when the server reports the
 	 * hosted ad no longer exists (stale purge, manual cleanup, or expiry before a resume).
 	 */
@@ -55,7 +62,7 @@ public interface BoardService
 	/**
 	 * Report live occupancy/world/layout/roles for the hosted ad; only genuine changes are sent. A
 	 * non-positive/null/blank field means "unknown" and is left unchanged. {@code members} is the live
-	 * roster (host first, with accountHashes) for block/favourite matching. {@code hostKey} authorises it.
+	 * roster (host first, each by public id) for block/favourite matching. {@code hostKey} authorises it.
 	 */
 	void heartbeat(String adId, int size, int world, String layout, String roles, List<Member> members,
 		String hostKey, Consumer<Advertisement> onSuccess, Consumer<Throwable> onError);
@@ -110,12 +117,13 @@ public interface BoardService
 	void setBadgeVisibility(long accountHash, boolean visible, Consumer<DiscordLinkStatus> onResult);
 
 	/**
-	 * Host action: disconnect a kicked member from the party's voice channel. Fire-and-forget; no-ops
-	 * unless they're linked and in that channel. {@code hostKey} authorises it.
+	 * Host action: disconnect a kicked member (named by public id) from the party's voice channel.
+	 * Fire-and-forget; no-ops unless they're linked and in that channel. {@code hostKey} authorises it.
 	 */
-	void kickVoiceMember(String adId, String hostKey, long accountHash);
+	void kickVoiceMember(String adId, String hostKey, String playerId);
 
-	void reportAd(String adId);
+	/** Report {@code adId} for moderation, with the reporter's optional description of the problem. */
+	void reportAd(String adId, String description);
 
 	/**
 	 * Member action: request per-user access to the party's voice channel, then open the invite.

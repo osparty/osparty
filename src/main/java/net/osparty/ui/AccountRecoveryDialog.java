@@ -55,7 +55,7 @@ public final class AccountRecoveryDialog extends JDialog
 		// a modal setVisible(true) does not return until the dialog is dismissed, so the controller would
 		// not hold the instance until it no longer needed it, and neither setStatus nor the automatic
 		// dismissal on a successful sign-in could ever reach it.
-		super(parent == null ? null : SwingUtilities.getWindowAncestor(parent), "OSParty — couldn't sign in",
+		super(parent == null ? null : SwingUtilities.getWindowAncestor(parent), "OSParty: couldn't sign in",
 			ModalityType.MODELESS);
 
 		String who = characterName == null || characterName.isEmpty() ? "this character" : characterName;
@@ -347,8 +347,9 @@ public final class AccountRecoveryDialog extends JDialog
 
 	private JPanel buttonRow(Runnable onRetry)
 	{
-		JPanel row = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 6));
-		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		// Shares a BoxLayout column with the left-aligned status line: a plain JPanel's centre alignment
+		// would drag that line's start to the middle of the dialog, the same way it did under Create.
+		JPanel row = PanelWidgets.cappedRow(new FlowLayout(FlowLayout.RIGHT, 6, 6));
 
 		JButton retry = new JButton("Try again");
 		retry.setFont(FontManager.getRunescapeSmallFont());

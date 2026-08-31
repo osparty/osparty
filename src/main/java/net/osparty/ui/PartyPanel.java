@@ -589,7 +589,7 @@ class PartyPanel extends JPanel
 
 			// Block-list handling: warn (flag + still show), or auto-decline (once).
 			boolean blocked = blockListService != null
-				&& blockListService.isBlocked(applicant.getAccountHash(), applicant.getName());
+				&& blockListService.isBlocked(applicant.getPlayerId(), applicant.getName());
 			if (blocked)
 			{
 				BlockedApplicantAction action = config.blockedApplicantAction();
@@ -674,9 +674,9 @@ class PartyPanel extends JPanel
 		PlayerUpdate data = member.getData();
 		boolean isExpanded = expanded.contains(id);
 		boolean fav = favoritesService != null && member.getName() != null && !member.isLocal()
-			&& favoritesService.isFavorite(memberHash(member), member.getName());
+			&& favoritesService.isFavorite(memberPlayerId(member), member.getName());
 		boolean blocked = blockListService != null && member.getName() != null
-			&& blockListService.isBlocked(memberHash(member), member.getName());
+			&& blockListService.isBlocked(memberPlayerId(member), member.getName());
 		List<String> badges = adBadges(ad, member);
 		boolean fcReady = joinPromptCooldown.getOrDefault(id, 0L) - System.currentTimeMillis() <= 0;
 		// KC shows only in the expanded detail and arrives via an async lookup, so fold it in there.
@@ -754,7 +754,7 @@ class PartyPanel extends JPanel
 
 		// Block-list warning on a pending applicant (WARN mode; auto-reject removes them instead).
 		if (status == PartyStatus.PENDING && blockListService != null
-			&& blockListService.isBlocked(memberHash(member), member.getName()))
+			&& blockListService.isBlocked(memberPlayerId(member), member.getName()))
 		{
 			JLabel blockedBadge = new JLabel(StatusIcons.BLOCK_ON);
 			blockedBadge.setToolTipText("On your block list");
@@ -903,7 +903,7 @@ class PartyPanel extends JPanel
 			return null;
 		}
 		final String rsn = member.getName();
-		final long hash = memberHash(member);
+		final String playerId = memberPlayerId(member);
 		// Favouriting/blocking/kicking yourself makes no sense, so your own row has no menu at all.
 		final boolean self = member.isLocal();
 		JPopupMenu menu = new JPopupMenu();
@@ -911,10 +911,10 @@ class PartyPanel extends JPanel
 
 		if (!self && favoritesService != null)
 		{
-			boolean fav = favoritesService.isFavorite(hash, rsn);
+			boolean fav = favoritesService.isFavorite(playerId, rsn);
 			JMenuItem favItem = new JMenuItem(fav ? "Remove from Favorites" : "Add to Favorites");
 			favItem.addActionListener(e -> {
-				favoritesService.toggle(hash, rsn);
+				favoritesService.toggle(playerId, rsn);
 				refresh();
 			});
 			menu.add(favItem);
@@ -923,10 +923,10 @@ class PartyPanel extends JPanel
 
 		if (!self && blockListService != null)
 		{
-			boolean blocked = blockListService.isBlocked(hash, rsn);
+			boolean blocked = blockListService.isBlocked(playerId, rsn);
 			JMenuItem blockItem = new JMenuItem(blocked ? "Remove from blocklist" : "Add to blocklist");
 			blockItem.addActionListener(e -> {
-				if (BlockConfirm.toggle(this, blockListService, favoritesService, hash, rsn))
+				if (BlockConfirm.toggle(this, blockListService, favoritesService, playerId, rsn))
 				{
 					refresh();
 				}
@@ -942,7 +942,7 @@ class PartyPanel extends JPanel
 			kickItem.addActionListener(e -> kick(activity, member));
 			menu.add(kickItem);
 			JMenuItem kickBlockItem = new JMenuItem("Kick and block player");
-			kickBlockItem.addActionListener(e -> kickAndBlock(activity, member, hash, rsn));
+			kickBlockItem.addActionListener(e -> kickAndBlock(activity, member, playerId, rsn));
 			menu.add(kickBlockItem);
 			any = true;
 		}
@@ -951,13 +951,13 @@ class PartyPanel extends JPanel
 	}
 
 	/** Kick a member and add them to the block list (host only), confirming the block first. */
-	private void kickAndBlock(Activity activity, RosterMember member, long hash, String rsn)
+	private void kickAndBlock(Activity activity, RosterMember member, String playerId, String rsn)
 	{
-		if (blockListService.isBlocked(hash, rsn))
+		if (blockListService.isBlocked(playerId, rsn))
 		{
 			kick(activity, member); // refreshes and sets the status line
 		}
-		else if (BlockConfirm.toggle(this, blockListService, favoritesService, hash, rsn))
+		else if (BlockConfirm.toggle(this, blockListService, favoritesService, playerId, rsn))
 		{
 			kick(activity, member);
 		}
@@ -971,10 +971,10 @@ class PartyPanel extends JPanel
 			? "Joining…" : name;
 	}
 
-	/** The member's self-reported accountHash, or {@code 0} until they've synced. */
-	private static long memberHash(RosterMember member)
+	/** The member's public id off the roster, or {@code null} until the server has seated them. */
+	private String memberPlayerId(RosterMember member)
 	{
-		return member.getData() != null ? member.getData().getAccountHash() : 0L;
+		return liveParty.playerIdForMember(member.getMemberId());
 	}
 
 	/**
@@ -988,18 +988,18 @@ class PartyPanel extends JPanel
 		{
 			return null;
 		}
-		long hash = memberHash(member);
+		String playerId = memberPlayerId(member);
 		String name = member.getName();
-		List<String> live = AdText.badgesFor(liveAdMembers, hash, name);
+		List<String> live = AdText.badgesFor(liveAdMembers, playerId, name);
 		if (live != null)
 		{
 			return live;
 		}
-		return ad == null ? null : AdText.badgesFor(ad.getMembers(), hash, name);
+		return ad == null ? null : AdText.badgesFor(ad.getMembers(), playerId, name);
 	}
 
-	/** Membership key over (partyId, each member's id·status·accountHash); changes on join/leave/admit/hash-resolve. */
-	private static String rosterKey(String partyId, List<RosterMember> roster)
+	/** Membership key over (partyId, each member's id·status·playerId); changes on join/leave/admit/id-resolve. */
+	private String rosterKey(String partyId, List<RosterMember> roster)
 	{
 		StringBuilder sb = new StringBuilder(partyId == null ? "" : partyId).append('|');
 		if (roster != null)
@@ -1007,7 +1007,7 @@ class PartyPanel extends JPanel
 			for (RosterMember m : roster)
 			{
 				sb.append(m.getMemberId()).append(':').append(m.getStatus()).append(':')
-					.append(memberHash(m)).append(';');
+					.append(memberPlayerId(m)).append(';');
 			}
 		}
 		return sb.toString();
@@ -1069,7 +1069,7 @@ class PartyPanel extends JPanel
 		refresh();
 	}
 
-	/** A stable string over each ad member's (hash, name, badges), for change detection. */
+	/** A stable string over each ad member's (id, name, badges), for change detection. */
 	private static String badgeSignature(List<Member> members)
 	{
 		if (members == null || members.isEmpty())
@@ -1083,7 +1083,7 @@ class PartyPanel extends JPanel
 			{
 				continue;
 			}
-			sb.append(m.getAccountHash()).append(':').append(m.getName()).append('=')
+			sb.append(m.getPlayerId()).append(':').append(m.getName()).append('=')
 				.append(m.getBadges() == null ? "" : String.join(",", m.getBadges())).append(';');
 		}
 		return sb.toString();
@@ -1213,11 +1213,26 @@ class PartyPanel extends JPanel
 		row.setAlignmentX(Component.LEFT_ALIGNMENT);
 		row.setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 0));
 		row.add(grid, BorderLayout.CENTER);
-		// Spellbook symbol trailing the run-energy orb (icon only, no value).
+		// Trailing the run-energy orb: the spellbook symbol, and the Vengeance icon while the spell is up
+		// (icons only, no values).
+		JPanel trailing = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
+		trailing.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		JComponent spellbook = spellbookIcon(data.getSpellbook());
 		if (spellbook != null)
 		{
-			row.add(spellbook, BorderLayout.EAST);
+			trailing.add(spellbook);
+		}
+		if (data.isVengeance())
+		{
+			JLabel veng = new JLabel();
+			veng.setPreferredSize(ORB_ICON);
+			veng.setToolTipText("Vengeance active");
+			loadOrbIcon(veng, net.runelite.api.gameval.SpriteID.LunarMagicOn.VENGEANCE_OTHER);
+			trailing.add(veng);
+		}
+		if (trailing.getComponentCount() > 0)
+		{
+			row.add(trailing, BorderLayout.EAST);
 		}
 		return row;
 	}
@@ -1771,10 +1786,10 @@ class PartyPanel extends JPanel
 		Applicant applicant = new Applicant();
 		applicant.setMemberId(update.getMemberId());
 		applicant.setName(update.getName());
-		// From the roster, not the snapshot: the snapshot stopped carrying an account hash because it is
-		// relayed to everyone attached to the party. The host still sees the whole roster, so the applicant
-		// it is deciding about can still be matched against the block list by account rather than by name.
-		applicant.setAccountHash(liveParty.accountHashForMember(update.getMemberId()));
+		// From the roster, not the snapshot: the snapshot carries no identity because it is relayed to
+		// everyone attached to the party. The host sees the whole roster, so the applicant it is deciding
+		// about can still be matched against the block list by account rather than by name.
+		applicant.setPlayerId(liveParty.playerIdForMember(update.getMemberId()));
 		applicant.setCombatLevel(update.getCombatLevel());
 		applicant.setStats(update.getStats());
 		applicant.setEquipment(update.getEquipment());
@@ -1829,10 +1844,10 @@ class PartyPanel extends JPanel
 		Advertisement ad = partyState.getCurrentAd();
 		if (partyState.isHost() && ad != null && liveParty.discordInviteUrl() != null)
 		{
-			long accountHash = liveParty.accountHashForMember(member.getMemberId());
-			if (accountHash != 0)
+			String playerId = liveParty.playerIdForMember(member.getMemberId());
+			if (playerId != null)
 			{
-				boardService.kickVoiceMember(ad.getId(), partyState.getHostKey(), accountHash);
+				boardService.kickVoiceMember(ad.getId(), partyState.getHostKey(), playerId);
 			}
 		}
 		expanded.remove(member.getMemberId());
@@ -2239,7 +2254,7 @@ class PartyPanel extends JPanel
 				channelUrl -> SwingUtilities.invokeLater(() -> {
 					// Record and re-broadcast so members get a "Join voice" button.
 					liveParty.setDiscordInviteUrl(channelUrl);
-					setStatus("Voice channel created — members can now join.");
+					setStatus("Voice channel created. Members can now join.");
 				}),
 				err -> SwingUtilities.invokeLater(() -> {
 					create.setEnabled(true);
@@ -2397,7 +2412,7 @@ class PartyPanel extends JPanel
 		}
 		if (flagged.getRating() != null)
 		{
-			tip.append(" — evidence rating ").append(escape(flagged.getRating()));
+			tip.append(", evidence rating ").append(escape(flagged.getRating()));
 		}
 		if (flagged.getDate() != null)
 		{

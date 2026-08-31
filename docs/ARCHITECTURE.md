@@ -36,11 +36,11 @@ The room holds:
   members hold a connection and are visible to the host, but nothing they send fans out to
   anyone else, and they don't count against capacity checks the way an admitted member does.
 - **Per-member live state.** Every member sends a `PlayerUpdate` (equipment, inventory, combat
-  vitals, chosen role, learner/teacher mark) as only the parts that changed, and the owning node
+  vitals, Vengeance, chosen role, learner/teacher mark) as only the parts that changed, and the owning node
   relays it to the rest of the room without reading or validating it. Receivers merge each
   update into the copy they hold — an omitted field means "unchanged", not "cleared" — and render
   it on the Party tab.
-- **Host management.** Admit, kick, capacity, lock and the map-ping/ready-check/spec-drain
+- **Host management.** Admit, kick, capacity, lock and the map-ping/ready-check/spec-drain/party-chat
   broadcasts are all enforced by the node that owns the room.
 - **The host-transfer handshake** and **friends-chat/notice-board/obelisk join prompts**, both
   targeted point-to-point deliveries between two members, routed by the server rather than
@@ -60,11 +60,12 @@ The dividing line is exactly the board/room split above: the server is authorita
 | Owned by the server | Self-asserted, relayed verbatim | Independently verified by each viewer |
 |---|---|---|
 | Roster membership (who is actually seated) | Equipment, inventory, rune pouch contents | Killcount / hard-mode killcount |
-| Capacity | Combat vitals (HP, prayer, spec, run energy) | |
+| Capacity | Combat vitals (HP, prayer, spec, run energy, Vengeance up) | |
 | Admission (`ADMIT`/`REJECT`) | Chosen role, learner/teacher marks | |
 | Kicks (`KICK`) | Account type badge (`NORMAL`/`IRONMAN`/…) | |
 | Lock state | Personal best time (`pbSeconds`) | |
 | Host identity (post-transfer) | World, friends-chat membership | |
+| Party chat sender (the room's name for them) | Party chat text (trimmed, capped, rate-limited; escaped by the receiver) | |
 
 A modified client cannot forge its way into a party, kick another member, or claim capacity that
 isn't there — those all require the owning node to agree. What a member reports about *itself* —
@@ -123,7 +124,7 @@ and writes nothing over it, rather than risk corrupting a file a newer OSParty w
 | File | Backed by | Contents |
 |---|---|---|
 | `history.json` | [`PartyHistoryService`](../src/main/java/net/osparty/service/PartyHistoryService.java) | Local, capped party history (newest first; capped at the *Party history size* setting, hard ceiling 500) |
-| `flags.json` | [`JsonPartyStore`](../src/main/java/net/osparty/store/JsonPartyStore.java) | Favourite and block lists, keyed by `accountHash` where known, per-kind |
+| `flags.json` | [`JsonPartyStore`](../src/main/java/net/osparty/store/JsonPartyStore.java) | Favourite and block lists, keyed by `playerId` where known, per-kind (a file keyed by account hash is rewritten without the hashes on first open) |
 | `credentials.json` | [`CredentialStore`](../src/main/java/net/osparty/store/CredentialStore.java) | One OSParty auth token per character on this machine, keyed by `accountHash` |
 
 None of these three ever leave the client except as the credential itself, presented on the

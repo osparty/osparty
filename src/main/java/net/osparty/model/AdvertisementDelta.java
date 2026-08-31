@@ -18,9 +18,9 @@ public class AdvertisementDelta
 
 	/**
 	 * Travels with {@code host}: a transfer rewrites the host without touching the member list, so
-	 * without this the ad's hash would keep pointing at the outgoing host.
+	 * without this the ad's id would keep pointing at the outgoing host.
 	 */
-	private Long hostAccountHash;
+	private String hostPlayerId;
 
 	/** Travels with {@code host} too: the account-type badge belongs to whoever runs the ad. */
 	private String hostAccountType;
@@ -70,9 +70,9 @@ public class AdvertisementDelta
 		{
 			p.setHost(host);
 		}
-		if (hostAccountHash != null)
+		if (hostPlayerId != null)
 		{
-			p.setHostAccountHash(hostAccountHash);
+			p.setHostPlayerId(hostPlayerId);
 		}
 		if (hostAccountType != null)
 		{

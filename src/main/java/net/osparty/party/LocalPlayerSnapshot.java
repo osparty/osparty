@@ -58,12 +58,12 @@ public final class LocalPlayerSnapshot
 
 		PlayerUpdate update = new PlayerUpdate();
 		update.setName(local.getName());
-		// The account hash is deliberately not here. This snapshot is relayed verbatim to everyone attached
-		// to the party, applicants included, and the server treats it as opaque -- so putting the hash in it
-		// handed every account in the room to anyone who knew the room key, which is published on the board.
-		// The hash is the thing a client asserts to claim an identity, which makes a harvested one a
-		// squattable account. It reaches the members who need it on the server-built roster instead, which
-		// is withheld from applicants; see LiveParty.accountHashForMember.
+		// No account hash here, or anywhere a peer can read. This snapshot is relayed verbatim to everyone
+		// attached to the party, applicants included, and the server treats it as opaque -- so putting the
+		// hash in it handed every account in the room to anyone who knew the room key, which is published on
+		// the board. The hash is the thing a client asserts to claim an identity, which makes a harvested
+		// one a squattable account. Peers identify each other by the public id on the server-built roster
+		// instead; see LiveParty.playerIdForMember.
 		update.setCombatLevel(local.getCombatLevel());
 		update.setEquipment(equipment(client));
 		update.setInventory(inventory(client));
@@ -92,10 +92,10 @@ public final class LocalPlayerSnapshot
 			}
 		}
 		update.setStats(stats);
-		if (client.getAccountType() != null)
-		{
-			update.setAccountType(client.getAccountType().name());
-		}
+		// Mapped from the varbit ourselves: the deprecated getAccountType() has no unranked-group-ironman
+		// value, and the party would see such a member as a normal account.
+		update.setAccountType(
+			net.osparty.model.AccountTypes.fromVarbit(client.getVarbitValue(VarbitID.IRONMAN)).name());
 		update.setWorld(client.getWorld());
 
 		FriendsChatManager fcm = client.getFriendsChatManager();

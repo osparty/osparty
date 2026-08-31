@@ -107,7 +107,7 @@ class SearchPanel extends PartyCardPanel
 			Activity.KREEARRA, Activity.GENERAL_GRAARDOR, Activity.KRIL_TSUTSAROTH,
 			Activity.COMMANDER_ZILYANA, Activity.NEX),
 		new ActivityGroup("Other",
-			Activity.NIGHTMARE, Activity.CORPOREAL_BEAST, Activity.BARBARIAN_ASSAULT,
+			Activity.NIGHTMARE, Activity.CORPOREAL_BEAST, Activity.DAGANNOTH_KINGS, Activity.BARBARIAN_ASSAULT,
 			Activity.ZALCANO, Activity.HUEYCOATL, Activity.YAMA, Activity.ROYAL_TITANS,
 			Activity.VOLCANIC_MINE, Activity.CASTLE_WARS, Activity.GUARDIANS_OF_THE_RIFT,
 			Activity.WINTERTODT),
@@ -269,6 +269,7 @@ class SearchPanel extends PartyCardPanel
 		JPanel north = new JPanel();
 		north.setLayout(new BoxLayout(north, BoxLayout.Y_AXIS));
 		north.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		north.add(buildLookingBar());
 		north.add(buildActivityFilter());
 		north.add(buildFiltersSection());
 		north.add(buildControlsBar());
@@ -1215,11 +1216,17 @@ class SearchPanel extends PartyCardPanel
 		joinByCode(code, status, false);
 	}
 
+	public void joinByCode(String code, Consumer<String> status, boolean invited)
+	{
+		joinByCode(code, status, invited, null);
+	}
+
 	/**
 	 * Look up an invite code and apply to that party. When {@code invited} is true (accepting a party
-	 * invite) we join as an invited player so the host auto-admits us instead of prompting.
+	 * invite) we join as an invited player so the host auto-admits us instead of prompting. A
+	 * {@code chooser} takes over asking for a role, so an invite accepted in-game is finished in-game.
 	 */
-	public void joinByCode(String code, Consumer<String> status, boolean invited)
+	public void joinByCode(String code, Consumer<String> status, boolean invited, RoleChooser chooser)
 	{
 		String trimmed = code == null ? "" : code.trim();
 		if (trimmed.isEmpty())
@@ -1232,17 +1239,56 @@ class SearchPanel extends PartyCardPanel
 			status.accept("Log in before joining.");
 			return;
 		}
-		status.accept("Looking up code " + trimmed + "...");
+		// Someone accepting an invite never typed the code, so echoing it back tells them nothing:
+		// they get silence until there's something to say. Only a typed code reports its own progress.
+		if (!invited)
+		{
+			status.accept("Looking up code " + trimmed + "...");
+		}
+		// Anything we have to report is the end of this join, so it also stands the chooser down.
+		Consumer<String> report = chooser == null ? status : message ->
+		{
+			chooser.dismiss();
+			status.accept(message);
+		};
+		String missing = invited
+			? "That party isn't around any more."
+			: "No party found for code " + trimmed + ".";
 		boardService.fetchAdByCode(trimmed,
-			ad -> SwingUtilities.invokeLater(() -> joinFetched(ad, status, invited)),
-			error -> SwingUtilities.invokeLater(() -> status.accept("No party found for code " + trimmed + ".")));
+			ad -> SwingUtilities.invokeLater(() -> joinFetched(ad, report, invited, chooser)),
+			error -> SwingUtilities.invokeLater(() -> report.accept(missing)));
 	}
 
-	private void joinFetched(Advertisement ad, Consumer<String> status, boolean invited)
+	/**
+	 * Apply to a party the player was offered rather than one they clicked, running every check the
+	 * panel's own Apply button runs. {@code chooser} answers the role question on whichever surface
+	 * they accepted from.
+	 */
+	public void applyTo(Advertisement ad, RoleChooser chooser, Consumer<String> status)
+	{
+		if (playerNameSupplier.get() == null)
+		{
+			status.accept("Log in before joining.");
+			if (chooser != null)
+			{
+				chooser.dismiss();
+			}
+			return;
+		}
+		// Anything we have to report is the end of this join, so it also stands the chooser down.
+		Consumer<String> report = chooser == null ? status : message ->
+		{
+			chooser.dismiss();
+			status.accept(message);
+		};
+		joinFetched(ad, report, false, chooser);
+	}
+
+	private void joinFetched(Advertisement ad, Consumer<String> status, boolean invited, RoleChooser chooser)
 	{
 		if (ad == null)
 		{
-			status.accept("No party found for that code.");
+			status.accept(invited ? "That party isn't around any more." : "No party found for that code.");
 			return;
 		}
 		if (isOwnParty(ad))
@@ -1262,18 +1308,41 @@ class SearchPanel extends PartyCardPanel
 		}
 
 		Activity activity = Activity.fromId(ad.getActivity());
-		String role = null;
-		if (activity != null && activity.hasRoles())
+		if (activity == null || !activity.hasRoles())
 		{
-			role = promptForRole(ad, activity);
+			if (chooser != null)
+			{
+				chooser.dismiss();
+			}
+			leaveCurrentThen(() -> doApply(ad, null, false, invited));
+			return;
+		}
+
+		if (chooser == null)
+		{
+			String role = promptForRole(ad, activity);
 			if (role == null)
 			{
 				return; // cancelled the role dialog
 			}
+			leaveCurrentThen(() -> doApply(ad, role, false, invited));
+			return;
 		}
 
-		final String chosenRole = role;
-		leaveCurrentThen(() -> doApply(ad, chosenRole, false, invited));
+		List<Role> options = roleOptionsFor(ad, activity);
+		if (options.isEmpty())
+		{
+			chooser.dismiss();
+			return;
+		}
+		// The chooser answers on whichever thread it lives on, so come back to the EDT to apply.
+		chooser.choose(ad, activity, options, role -> SwingUtilities.invokeLater(() ->
+		{
+			if (role != null)
+			{
+				leaveCurrentThen(() -> doApply(ad, role, false, invited));
+			}
+		}));
 	}
 
 	private LootRule lootFilterValue()
@@ -1392,12 +1461,284 @@ class SearchPanel extends PartyCardPanel
 			}
 			else
 			{
-				setStatus("No response from the OSParty server — it may be offline. Try again shortly.");
+				setStatus("No response from the OSParty server. It may be offline; try again shortly.");
 			}
 		});
 		timeout.setRepeats(false);
 		timeout.start();
 	}
+
+	// ---- find me a party ---------------------------------------------------
+
+	/** How long after an offer before another one may interrupt, so a burst of new parties is one prompt. */
+	private static final long OFFER_COOLDOWN_MS = 20_000;
+
+	private final JButton lookingButton = new JButton();
+	private boolean looking;
+	/** Parties turned down this session. Declining has to stick, or the next push offers them again. */
+	private final Set<String> declinedMatches = new HashSet<>();
+	private long lastOfferAt;
+	private String offeredId;
+	private Consumer<MatchOffer> matchHandler;
+	private Runnable onLookingChanged;
+
+	private JPanel buildLookingBar()
+	{
+		JPanel row = PanelWidgets.cappedRow(new BorderLayout(0, 0));
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row.setBorder(BorderFactory.createEmptyBorder(0, 6, 6, 6));
+
+		lookingButton.setFocusPainted(false);
+		lookingButton.setFont(FontManager.getRunescapeSmallFont());
+		lookingButton.addActionListener(e -> setLooking(!looking));
+		row.add(lookingButton, BorderLayout.CENTER);
+		updateLookingButton();
+		return row;
+	}
+
+	/** Register where an offer should be shown. The plugin decides the surfaces; this tab decides the offer. */
+	void setMatchHandler(Consumer<MatchOffer> handler)
+	{
+		this.matchHandler = handler;
+	}
+
+	/** Called whenever the toggle flips, so the plugin can clear a stale offer off its own surfaces. */
+	void setOnLookingChanged(Runnable listener)
+	{
+		this.onLookingChanged = listener;
+	}
+
+	boolean isLooking()
+	{
+		return looking;
+	}
+
+	void setLooking(boolean on)
+	{
+		if (looking == on)
+		{
+			return;
+		}
+		looking = on;
+		if (!on)
+		{
+			offeredId = null;
+		}
+		else
+		{
+			// A fresh start forgets what was turned down, so changing filters and looking again works.
+			declinedMatches.clear();
+			lastOfferAt = 0;
+		}
+		updateLookingButton();
+		Runnable listener = onLookingChanged;
+		if (listener != null)
+		{
+			listener.run();
+		}
+		if (on)
+		{
+			offerBestMatch(lastResults);
+		}
+	}
+
+	private void updateLookingButton()
+	{
+		lookingButton.setText(looking ? "Stop looking for a party" : "Find me a party");
+		lookingButton.setForeground(looking ? ColorScheme.BRAND_ORANGE : java.awt.Color.WHITE);
+		lookingButton.setToolTipText(looking
+			? "Turn off to stop being offered parties"
+			: "Get told when a party matching your filters is created");
+	}
+
+	/**
+	 * Offer the best party on the board that the player would have applied to, if one is worth
+	 * interrupting them for. Deliberately one party rather than a stream: they want a party, not a list.
+	 */
+	private void offerBestMatch(List<Advertisement> ads)
+	{
+		Consumer<MatchOffer> handler = matchHandler;
+		if (!looking || handler == null || ads == null || ads.isEmpty())
+		{
+			return;
+		}
+		if (partyState.isInParty())
+		{
+			// Joined or hosted by any route: the search is over, so the toggle should not look stuck on.
+			setLooking(false);
+			return;
+		}
+		if (playerNameSupplier.get() == null)
+		{
+			return;
+		}
+		if (offeredId != null || System.currentTimeMillis() - lastOfferAt < OFFER_COOLDOWN_MS)
+		{
+			return;
+		}
+
+		SearchFilters filters = currentFilters();
+		Advertisement best = null;
+		for (Advertisement ad : ads)
+		{
+			if (ad.getId() == null || declinedMatches.contains(ad.getId()) || isOwnParty(ad))
+			{
+				continue;
+			}
+			// A blocked host is never offered, whatever the panel is set to show.
+			if (ad.isFull() || blockListService.hasAnyBlocked(ad))
+			{
+				continue;
+			}
+			if (!filters.matches(ad, Activity.fromId(ad.getActivity()), filterContext))
+			{
+				continue;
+			}
+			if (best == null || fullerFirst(ad, best))
+			{
+				best = ad;
+			}
+		}
+		if (best == null)
+		{
+			return;
+		}
+
+		lastOfferAt = System.currentTimeMillis();
+		offeredId = best.getId();
+		handler.accept(offerFor(best));
+	}
+
+	/** Closest to full wins, then newest — the party most likely to actually run. */
+	private static boolean fullerFirst(Advertisement candidate, Advertisement best)
+	{
+		int free = candidate.getCapacity() - candidate.getSize();
+		int bestFree = best.getCapacity() - best.getSize();
+		return free != bestFree ? free < bestFree : candidate.getCreatedAt() > best.getCreatedAt();
+	}
+
+	private MatchOffer offerFor(Advertisement ad)
+	{
+		return new MatchOffer()
+		{
+			@Override
+			public Advertisement ad()
+			{
+				return ad;
+			}
+
+			@Override
+			public void join(RoleChooser chooser, Consumer<String> status)
+			{
+				SwingUtilities.invokeLater(() ->
+				{
+					clearOffer(ad.getId());
+					// Looking ends here either way: they are joining, or they will be told why they cannot.
+					setLooking(false);
+					applyTo(ad, chooser, status);
+				});
+			}
+
+			@Override
+			public void dismiss()
+			{
+				SwingUtilities.invokeLater(() ->
+				{
+					declinedMatches.add(ad.getId());
+					clearOffer(ad.getId());
+				});
+			}
+
+			@Override
+			public void stopLooking()
+			{
+				SwingUtilities.invokeLater(() ->
+				{
+					clearOffer(ad.getId());
+					setLooking(false);
+				});
+			}
+		};
+	}
+
+	private void clearOffer(String adId)
+	{
+		if (adId != null && adId.equals(offeredId))
+		{
+			offeredId = null;
+		}
+	}
+
+	/** The Search tab's filters as they stand, for the list and for anything else that asks the same question. */
+	SearchFilters currentFilters()
+	{
+		int learnerIdx = learnerComboBox.getSelectedIndex(); // 0=Any, 1=Learner only, 2=Hide learner
+		return SearchFilters.builder()
+			.activities(selectedActivities)
+			.regions(selectedRegions, KNOWN_REGIONS)
+			.loot(lootFilterValue())
+			.ironmanOnly(ironmanFilter.isSelected())
+			.hideIneligible(hideIneligibleFilter.isSelected())
+			.learner(learnerIdx == 1 ? SearchFilters.Learner.ONLY
+				: learnerIdx == 2 ? SearchFilters.Learner.HIDE : SearchFilters.Learner.ANY)
+			.text(textField.getText())
+			.maxPing(parseMaxPing())
+			.showBlocked(config.showBlockedParties())
+			.build();
+	}
+
+	/** Everything a filter needs to know that an advertisement cannot tell it itself. */
+	private final SearchFilters.Context filterContext = new SearchFilters.Context()
+	{
+		@Override
+		public boolean blocked(Advertisement ad)
+		{
+			return blockListService.hasAnyBlocked(ad);
+		}
+
+		@Override
+		public boolean meetsIronmanRule(Advertisement ad)
+		{
+			return SearchPanel.this.meetsIronmanRule(ad);
+		}
+
+		@Override
+		public boolean killcountBelow(Advertisement ad)
+		{
+			// A check still in flight is PENDING, and is never treated as below.
+			return kcStatus(ad) == KcStatus.BELOW;
+		}
+
+		@Override
+		public boolean matchesRoles(Advertisement ad, Activity activity)
+		{
+			return matchesRoleFilter(ad, activity);
+		}
+
+		@Override
+		public boolean matchesText(Advertisement ad, Activity activity, String text)
+		{
+			return SearchPanel.matchesText(ad, activity, text);
+		}
+
+		@Override
+		public Integer worldOf(Advertisement ad)
+		{
+			return parseWorldNum(ad);
+		}
+
+		@Override
+		public WorldRegion regionOf(int world)
+		{
+			return worldRegionResolver == null ? null : worldRegionResolver.apply(world);
+		}
+
+		@Override
+		public Integer pingOf(int world)
+		{
+			return worldPinger == null ? null : worldPinger.getCachedPing(world);
+		}
+	};
 
 	/** Scope the live subscription to the single selected activity, or null (= all) when zero or several. */
 	private String scopeActivityId()
@@ -1424,6 +1765,8 @@ class SearchPanel extends PartyCardPanel
 		{
 			showResults(ads);
 		}
+		// Runs whether or not the tab is on screen: the whole point is to be told without looking.
+		offerBestMatch(ads);
 	}
 
 	/** Unsubscribe and stop timers; called when the plugin shuts down. */
@@ -1450,26 +1793,8 @@ class SearchPanel extends PartyCardPanel
 		// Badges refresh on every push, even when the visible-card render below is skipped.
 		updateActivityCounts();
 
-		LootRule wantLoot = lootFilterValue();
-		boolean ironOnly = ironmanFilter.isSelected();
-		boolean hideIneligible = hideIneligibleFilter.isSelected();
-		int learnerIdx = learnerComboBox.getSelectedIndex(); // 0=Any, 1=Learner only, 2=Hide learner
 		String text = textField.getText().trim().toLowerCase();
-		int maxPing = parseMaxPing();
-
-		// Region filter is active when at least one known region is deselected.
-		boolean regionFilterActive = false;
-		for (WorldRegion r : KNOWN_REGIONS)
-		{
-			if (!selectedRegions.contains(r))
-			{
-				regionFilterActive = true;
-				break;
-			}
-		}
-
-		// Blocked parties are hidden entirely unless the player opts to see them greyed out.
-		boolean showBlocked = config.showBlockedParties();
+		SearchFilters filters = currentFilters();
 
 		// Show only joinable parties matching every active filter (full ones hidden).
 		List<Advertisement> visible = new ArrayList<>();
@@ -1482,80 +1807,15 @@ class SearchPanel extends PartyCardPanel
 				favoritesService.observeAd(ad);
 				blockListService.observeAd(ad);
 
-				if (ad.isFull())
-				{
-					continue;
-				}
-				if (!showBlocked && blockListService.hasAnyBlocked(ad))
+				if (!filters.joinable(ad, filterContext))
 				{
 					continue;
 				}
 				totalOpen++;
-				Activity act = Activity.fromId(ad.getActivity());
-				if (act == null || !selectedActivities.contains(act))
+				if (filters.matches(ad, Activity.fromId(ad.getActivity()), filterContext))
 				{
-					continue;
+					visible.add(ad);
 				}
-				if (wantLoot != null && LootRule.fromName(ad.getLootRule()) != wantLoot)
-				{
-					continue;
-				}
-				if (ironOnly && !ad.isIronmanOnly())
-				{
-					continue;
-				}
-				if (learnerIdx == 1 && !ad.isLearnerRaid())
-				{
-					continue; // "Learner only" — hide non-learner parties
-				}
-				if (learnerIdx == 2 && ad.isLearnerRaid())
-				{
-					continue; // "Hide learner raids" — hide learner parties
-				}
-				// A PENDING KC check is never treated as BELOW.
-				if (hideIneligible)
-				{
-					if (!meetsIronmanRule(ad))
-					{
-						continue;
-					}
-					if (kcStatus(ad) == KcStatus.BELOW)
-					{
-						continue;
-					}
-				}
-				if (!matchesRoleFilter(ad, act))
-				{
-					continue;
-				}
-				if (!text.isEmpty() && !matchesText(ad, act, text))
-				{
-					continue;
-				}
-
-				Integer worldNum = parseWorldNum(ad);
-
-				// Region filter: skip parties whose host world has a deselected region.
-				if (regionFilterActive && worldNum != null)
-				{
-					WorldRegion region = worldRegionResolver.apply(worldNum);
-					if (region != null && !selectedRegions.contains(region))
-					{
-						continue;
-					}
-				}
-
-				// Max ping filter: skip parties over the threshold; parties with no known ping yet are always shown.
-				if (maxPing > 0 && worldNum != null && worldPinger != null)
-				{
-					Integer ping = worldPinger.getCachedPing(worldNum);
-					if (ping != null && ping >= 0 && ping > maxPing)
-					{
-						continue;
-					}
-				}
-
-				visible.add(ad);
 			}
 		}
 
@@ -1849,11 +2109,11 @@ class SearchPanel extends PartyCardPanel
 		if (favoritesService != null)
 		{
 			sb.append('v').append(favoritesService.hasAnyFavorite(ad) ? '1' : '0')
-				.append(favoritesService.isFavorite(ad.getHostAccountHash(), ad.getHost()) ? 'H' : '_');
+				.append(favoritesService.isFavorite(ad.getHostPlayerId(), ad.getHost()) ? 'H' : '_');
 		}
 		if (blockListService != null)
 		{
-			sb.append('b').append(blockListService.isBlocked(ad.getHostAccountHash(), ad.getHost()) ? '1' : '0');
+			sb.append('b').append(blockListService.isBlocked(ad.getHostPlayerId(), ad.getHost()) ? '1' : '0');
 		}
 		return sb.toString();
 	}
@@ -1868,7 +2128,7 @@ class SearchPanel extends PartyCardPanel
 		StringBuilder sb = new StringBuilder();
 		for (Advertisement p : ads)
 		{
-			if (blockListService.isBlocked(p.getHostAccountHash(), p.getHost()))
+			if (blockListService.isBlocked(p.getHostPlayerId(), p.getHost()))
 			{
 				sb.append(p.getId()).append(',');
 			}

@@ -141,6 +141,16 @@ public interface LivePartyBackend
 	 */
 	void sendSpecDrain(int npcIndex, String weapon, int hit, int world);
 
+	// ---- party chat ---------------------------------------------------------
+	/**
+	 * Say something to the party. On success our own {@link PartyChatEvent} is posted too, so the line
+	 * shows for us the way it does for everyone else — the server never echoes a sender its own frame.
+	 *
+	 * @return whether the line went out; false when not in a party, not yet admitted, or the live channel
+	 *     is down, and then nothing is posted either
+	 */
+	boolean sendChat(String text);
+
 	// ---- host transfer ------------------------------------------------------
 	void promoteToHost(String hostName);
 
@@ -181,14 +191,15 @@ public interface LivePartyBackend
 
 	boolean isPendingApplicant(long memberId);
 
-	long accountHashForMember(long memberId);
-
 	/**
 	 * The public, non-reversible id the server derived for this member's account -- stable across a rename,
-	 * and safe to persist or show, unlike {@link #accountHashForMember}. Null when the roster has no entry
-	 * for the member (not yet seated) or the entry predates this field.
+	 * and safe to persist or show. Null when the roster has no entry for the member (not yet seated) or the
+	 * entry predates this field. The only identity the plugin ever holds for another player.
 	 */
 	String playerIdForMember(long memberId);
+
+	/** {@link #playerIdForMember} for the local player; null when not seated in a party. */
+	String localPlayerId();
 
 	List<Member> rosterMembers();
 

@@ -38,7 +38,7 @@ public final class DeviceManagerDialog extends JDialog
 
 	private DeviceManagerDialog(Component parent, OSPartySocket socket, AccountRecoveryController recovery)
 	{
-		super(SwingUtilities.getWindowAncestor(parent), "OSParty — Devices", ModalityType.MODELESS);
+		super(SwingUtilities.getWindowAncestor(parent), "OSParty devices", ModalityType.MODELESS);
 		this.socket = socket;
 		this.recovery = recovery;
 

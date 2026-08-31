@@ -3,12 +3,16 @@ package net.osparty.ui;
 import net.osparty.service.BlockListService;
 import net.osparty.service.FavoritesService;
 import net.osparty.tools.HostApplicationHandler;
+import net.osparty.tools.RaidPartyDetected;
 import net.osparty.service.KillcountService;
 import net.osparty.OSPartyConfig;
 import net.osparty.api.DiscordLinkStatus;
 import net.osparty.api.BoardService;
 import net.osparty.service.PartyHistoryService;
+import net.osparty.model.Activity;
 import net.osparty.model.Advertisement;
+import net.osparty.model.AdvertisementEditRequest;
+import net.osparty.model.Role;
 import net.osparty.party.HostTransferEvent;
 import net.osparty.party.LivePartyBackend;
 import com.google.gson.Gson;
@@ -21,6 +25,7 @@ import java.awt.GridLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
+import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.IntFunction;
@@ -100,6 +105,8 @@ public class OSPartyPanel extends PluginPanel
 	private final Runnable openDeviceManager;
 	/** The backend party we're in (host or member), mirrored for off-EDT reads (invite menu); null when none. */
 	private volatile Advertisement contextAd;
+	/** Whether {@link #contextAd} is one we host, mirrored alongside it for the same off-EDT readers. */
+	private volatile boolean contextHost;
 	/** Run when the side panel is opened (used to stop the sidebar invite blink). */
 	private volatile Runnable onActivated;
 	/** Run when the side panel is closed (used to restore the normal sidebar icon). */
@@ -165,7 +172,7 @@ public class OSPartyPanel extends PluginPanel
 	/** Whether the tab bar is in the in-party layout (Party shown, Create hidden). */
 	private boolean inPartyTabLayout;
 	/** Whether the host is editing their party (the create form is shown alongside the roster). */
-	private boolean editing;
+	private volatile boolean editing;
 
 	public OSPartyPanel(BoardService boardService, OSPartyConfig config, Supplier<String> playerNameSupplier,
 		HostApplicationHandler hostApplicationHandler, Supplier<String> friendsChatOwnerSupplier,
@@ -393,7 +400,7 @@ public class OSPartyPanel extends PluginPanel
 			BorderFactory.createEmptyBorder(6, 6, 6, 6)));
 
 		JLabel message = new JLabel("<html><body style='width:120px'>"
-			+ "Not signed in on this device — you can't host parties as this character."
+			+ "Not signed in on this device, so you can't host parties as this character."
 			+ "</body></html>");
 		message.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		message.setFont(FontManager.getRunescapeSmallFont());
@@ -695,6 +702,58 @@ public class OSPartyPanel extends PluginPanel
 		return contextAd;
 	}
 
+	/**
+	 * The ad we host and are not in the middle of editing by hand, or null. Safe to read off the EDT. The
+	 * edit form is excluded because a save from it would overwrite anything pushed underneath it.
+	 */
+	public Advertisement hostedAd()
+	{
+		return contextHost && !editing ? contextAd : null;
+	}
+
+	/**
+	 * The in-game board changed something the ad advertises -- the Chambers scaling or the Tombs invocation
+	 * level -- so push it to the ad the way a saved edit would, without touching the form. Host only. EDT.
+	 */
+	public void applyBoardToHostedAd(Activity activity, String coxScale, int invocation)
+	{
+		Advertisement ad = partyState.getCurrentAd();
+		String hostKey = partyState.getHostKey();
+		if (ad == null || hostKey == null || !partyState.isHost() || editing
+			|| activity == null || !activity.getId().equals(ad.getActivity()))
+		{
+			return;
+		}
+		String scale = coxScale == null ? "" : coxScale;
+		AdvertisementEditRequest edit = new AdvertisementEditRequest(ad.getDescription(), ad.getCapacity(),
+			ad.getWorld(), ad.getMinKillCount(), ad.getMinHardModeKillCount(), ad.getLootRule(), ad.isPrivateAd(),
+			ad.isIronmanOnly(), invocation, ad.isHardMode(), scale, ad.getRequiredRoles(), ad.getHostRole(),
+			ad.isLearner(), ad.isTeacher());
+		boardService.editAd(ad.getId(), hostKey, edit,
+			ignored -> SwingUtilities.invokeLater(() ->
+			{
+				// Mirror it locally as a saved edit is; the Party tab and the live room's meta follow the
+				// state change.
+				ad.setCoxScale(scale);
+				ad.setInvocation(invocation);
+				partyState.update(ad);
+				gameMessage.accept(boardFollowedMessage(activity, scale, invocation));
+			}),
+			error -> gameMessage.accept("Couldn't update your party from the board: "
+				+ net.osparty.api.PartyErrors.friendly(error)));
+	}
+
+	private static String boardFollowedMessage(Activity activity, String scale, int invocation)
+	{
+		if (activity == Activity.CHAMBERS_OF_XERIC)
+		{
+			return scale.isEmpty()
+				? "Your party's scale was cleared to match the board."
+				: "Your party's scale is now " + scale + ", to match the board.";
+		}
+		return "Your party's invocation level is now " + invocation + ", to match the obelisk.";
+	}
+
 	/** Register a callback invoked when the side panel is opened (used to clear the invite blink). */
 	public void setOnActivated(Runnable onActivated)
 	{
@@ -729,10 +788,19 @@ public class OSPartyPanel extends PluginPanel
 		}
 	}
 
-	/** Accept a party invite by joining via its invite code, reusing the Search panel's join-by-code flow. */
-	public void joinByInviteCode(String code, java.util.function.Consumer<String> status)
+	/**
+	 * Accept a party invite by joining via its invite code, reusing the Search panel's join-by-code flow.
+	 * A {@code chooser} answers the role question wherever the invite itself was answered.
+	 */
+	public void joinByInviteCode(String code, java.util.function.Consumer<String> status, RoleChooser chooser)
 	{
-		searchPanel.joinByCode(code, status, true);
+		searchPanel.joinByCode(code, status, true, chooser);
+	}
+
+	/** Apply to a party fetched outside the panel — a clickable {@code !osparty} chat line — with the Search panel's checks. */
+	public void applyTo(Advertisement ad, java.util.function.Consumer<String> status, RoleChooser chooser)
+	{
+		searchPanel.applyTo(ad, chooser, status);
 	}
 
 	/** Register what the sidebar invite banner's Accept/Decline buttons do. */
@@ -806,6 +874,172 @@ public class OSPartyPanel extends PluginPanel
 			invitePanel.revalidate();
 			invitePanel.repaint();
 		}
+	}
+
+	/** Sidebar mirror of the in-game "party found" card, in the same notices strip as an invite. */
+	public void addMatch(MatchOffer offer, Consumer<MatchOffer> onJoin, Consumer<MatchOffer> onDismiss)
+	{
+		Advertisement ad = offer.ad();
+		if (ad == null || ad.getId() == null || inviteBanners.containsKey(ad.getId()))
+		{
+			return;
+		}
+		JPanel banner = buildMatchBanner(offer, onJoin, onDismiss);
+		inviteBanners.put(ad.getId(), banner);
+		inviteExpiry.put(ad.getId(), System.currentTimeMillis() + INVITE_TTL_MS);
+		invitePanel.add(banner);
+		invitePanel.revalidate();
+		invitePanel.repaint();
+		startInviteSweep();
+	}
+
+	private JPanel buildMatchBanner(MatchOffer offer, Consumer<MatchOffer> onJoin,
+		Consumer<MatchOffer> onDismiss)
+	{
+		Advertisement ad = offer.ad();
+		net.osparty.model.Activity activity = net.osparty.model.Activity.fromId(ad.getActivity());
+		String label = activity != null ? activity.displayName(ad.isHardMode(), ad.getInvocation()) : "a party";
+		String size = ad.getCapacity() > 0 ? " (" + ad.getSize() + "/" + ad.getCapacity() + ")" : "";
+
+		JPanel banner = new JPanel(new BorderLayout(0, 4));
+		banner.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		banner.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(0, 0, 1, 0, ColorScheme.MEDIUM_GRAY_COLOR),
+			BorderFactory.createEmptyBorder(6, 8, 6, 8)));
+
+		JLabel text = new JLabel("<html><body style='width:170px'><b>" + ad.getHost() + "</b> is running "
+			+ label + size + "</body></html>");
+		text.setForeground(Color.WHITE);
+		text.setFont(FontManager.getRunescapeSmallFont());
+		banner.add(text, BorderLayout.NORTH);
+
+		JPanel buttons = new JPanel(new GridLayout(1, 2, 4, 0));
+		buttons.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		// "Request" rather than "Join": the host still has to admit them.
+		JButton join = new JButton("Request");
+		join.setFocusPainted(false);
+		join.addActionListener(e -> onJoin.accept(offer));
+		JButton dismiss = new JButton("Not now");
+		dismiss.setFocusPainted(false);
+		dismiss.addActionListener(e -> onDismiss.accept(offer));
+		buttons.add(join);
+		buttons.add(dismiss);
+		banner.add(buttons, BorderLayout.SOUTH);
+		return banner;
+	}
+
+	/**
+	 * Register where a "this is already running" prompt is shown. The inline block in the Create tab is
+	 * always one of them — the click that raises it was made there — and {@code inGame} adds the card.
+	 */
+	public void setSimilarHandler(Consumer<SimilarParties> inGame, RoleChooser chooser,
+		Runnable onAnswered)
+	{
+		createPanel.setSimilarHandlers(
+			similar ->
+			{
+				createPanel.showSimilar(similar, chooser, onAnswered);
+				if (inGame != null)
+				{
+					inGame.accept(similar);
+				}
+			},
+			(ad, roleChooser) -> searchPanel.applyTo(ad, roleChooser, gameMessage));
+	}
+
+	/** Take the inline similar-parties prompt down, when it was answered somewhere else. */
+	public void hideSimilar()
+	{
+		createPanel.hideSimilar();
+	}
+
+	/** Key of the raid-party offer banner; one party is made at a time, so there is never more than one. */
+	private static final String RAID_OFFER_KEY = "raid-party-offer";
+
+	/** The roles the raid-party card can offer, worked out the way the form will be filled. Any thread. */
+	public List<Role> raidRoleOptions(RaidPartyDetected detected)
+	{
+		return createPanel.raidRoleOptions(detected);
+	}
+
+	/**
+	 * Advertise the raid party the player just made in-game, through the create form so every check the
+	 * button makes still runs. EDT only.
+	 *
+	 * @return whether a create was started; false leaves the form up for the player to finish
+	 */
+	public boolean createFromRaid(RaidPartyDetected detected, String hostRoleId)
+	{
+		if (partyState.isInParty() || editing)
+		{
+			return false;
+		}
+		tabGroup.select(createTab);
+		return createPanel.createFromRaid(detected, hostRoleId);
+	}
+
+	/** Sidebar mirror of the in-game "advertise this raid party?" card, replacing any earlier one. EDT only. */
+	public void addRaidPartyOffer(RaidPartyDetected detected, Runnable onAdvertise, Runnable onDismiss)
+	{
+		removeInvite(RAID_OFFER_KEY);
+		JPanel banner = buildRaidPartyBanner(detected, onAdvertise, onDismiss);
+		inviteBanners.put(RAID_OFFER_KEY, banner);
+		inviteExpiry.put(RAID_OFFER_KEY, System.currentTimeMillis() + INVITE_TTL_MS);
+		invitePanel.add(banner);
+		invitePanel.revalidate();
+		invitePanel.repaint();
+		startInviteSweep();
+	}
+
+	/** Take the raid-party offer down, when it was answered or the party is gone. EDT only. */
+	public void removeRaidPartyOffer()
+	{
+		removeInvite(RAID_OFFER_KEY);
+	}
+
+	private JPanel buildRaidPartyBanner(RaidPartyDetected detected, Runnable onAdvertise, Runnable onDismiss)
+	{
+		JPanel banner = new JPanel(new BorderLayout(0, 4));
+		banner.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		banner.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(0, 0, 1, 0, ColorScheme.MEDIUM_GRAY_COLOR),
+			BorderFactory.createEmptyBorder(6, 8, 6, 8)));
+
+		JLabel text = new JLabel("<html><body style='width:170px'><b>Advertise on OSParty?</b> You just made a "
+			+ detected.label() + " party.</body></html>");
+		text.setForeground(Color.WHITE);
+		text.setFont(FontManager.getRunescapeSmallFont());
+		banner.add(text, BorderLayout.NORTH);
+
+		JPanel buttons = new JPanel(new GridLayout(1, 2, 4, 0));
+		buttons.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		JButton advertise = new JButton("Advertise");
+		advertise.setFocusPainted(false);
+		advertise.addActionListener(e -> onAdvertise.run());
+		JButton dismiss = new JButton("Not now");
+		dismiss.setFocusPainted(false);
+		dismiss.addActionListener(e -> onDismiss.run());
+		buttons.add(advertise);
+		buttons.add(dismiss);
+		banner.add(buttons, BorderLayout.SOUTH);
+		return banner;
+	}
+
+	/** Register where a party found while looking should be shown, and what the answers do. */
+	public void setMatchHandler(Consumer<MatchOffer> handler)
+	{
+		searchPanel.setMatchHandler(handler);
+	}
+
+	public void setOnLookingChanged(Runnable listener)
+	{
+		searchPanel.setOnLookingChanged(listener);
+	}
+
+	/** Stop looking — used when the player joins or hosts a party by any other route. */
+	public void stopLooking()
+	{
+		searchPanel.setLooking(false);
 	}
 
 	private JPanel buildInviteBanner(net.osparty.api.PartyInvite invite)
@@ -939,6 +1173,7 @@ public class OSPartyPanel extends PluginPanel
 		boolean inParty = partyState.isInParty();
 		// Mirror the current backend party so the in-game invite menu (client thread) can read it safely.
 		contextAd = partyState.getCurrentAd();
+		contextHost = partyState.isHost();
 
 		// The party ended while editing — drop edit mode (and its tab layout) first.
 		if (!inParty && editing)
@@ -967,6 +1202,8 @@ public class OSPartyPanel extends PluginPanel
 
 		if (inParty && !wasInParty)
 		{
+			// Whatever party this is, the offer to advertise another one no longer applies.
+			removeInvite(RAID_OFFER_KEY);
 			// Entered a party. Only admitted players get a history row; a joiner's record is deferred
 			// to syncHistoryRoster() until the host admits them.
 			Advertisement ad = partyState.getCurrentAd();

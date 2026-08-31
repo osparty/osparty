@@ -1,6 +1,5 @@
 package net.osparty.service;
 
-import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -12,31 +11,31 @@ import net.osparty.store.PlayerFlag;
 /**
  * Locally-stored avoid/block list — the inverse of {@link FavoritesService}. A party
  * is considered blocked when its host (or any listed member) is on the list; such
- * parties are hidden from search by default. Entries are keyed by accountHash when
+ * parties are hidden from search by default. Entries are keyed by playerId when
  * known so a block survives the blocked player changing their name.
  */
 @Singleton
 public class BlockListService extends PlayerFlagService
 {
-	private volatile LongSupplier selfHashSupplier;
+	private volatile Supplier<String> selfIdSupplier;
 	private volatile Supplier<String> selfNameSupplier;
 
 	@Inject
-    public BlockListService(PartyStore store)
+	public BlockListService(PartyStore store)
 	{
 		super(store, FlagKind.BLOCK);
 	}
 
 	/** Register the local player's identity so we never let them block themselves. */
-	public void setSelf(LongSupplier selfHashSupplier, Supplier<String> selfNameSupplier)
+	public void setSelf(Supplier<String> selfIdSupplier, Supplier<String> selfNameSupplier)
 	{
-		this.selfHashSupplier = selfHashSupplier;
+		this.selfIdSupplier = selfIdSupplier;
 		this.selfNameSupplier = selfNameSupplier;
 	}
 
-	public boolean isBlocked(long accountHash, String name)
+	public boolean isBlocked(String playerId, String name)
 	{
-		return isFlagged(accountHash, name);
+		return isFlagged(playerId, name);
 	}
 
 	public boolean isBlocked(String name)
@@ -50,13 +49,13 @@ public class BlockListService extends PlayerFlagService
 	}
 
 	/**
-	 * @return true when {@code accountHash}/{@code name} is the local player. Used to refuse
-	 * a self-block (you can't block yourself), matching by hash when known, else by name.
+	 * @return true when {@code playerId}/{@code name} is the local player. Used to refuse
+	 * a self-block (you can't block yourself), matching by id when both are known, else by name.
 	 */
-	public boolean isSelf(long accountHash, String name)
+	public boolean isSelf(String playerId, String name)
 	{
-		long myHash = selfHashSupplier != null ? selfHashSupplier.getAsLong() : PlayerFlag.UNKNOWN_HASH;
-		if (PlayerFlag.isKnown(accountHash) && PlayerFlag.isKnown(myHash) && accountHash == myHash)
+		String myId = selfIdSupplier != null ? selfIdSupplier.get() : null;
+		if (PlayerFlag.isKnown(playerId) && PlayerFlag.isKnown(myId) && playerId.equals(myId))
 		{
 			return true;
 		}
@@ -66,12 +65,12 @@ public class BlockListService extends PlayerFlagService
 
 	/** Refuse to add yourself to the block list; unblocking (if somehow present) still works. */
 	@Override
-	public synchronized void toggle(long accountHash, String name)
+	public synchronized void toggle(String playerId, String name)
 	{
-		if (!isBlocked(accountHash, name) && isSelf(accountHash, name))
+		if (!isBlocked(playerId, name) && isSelf(playerId, name))
 		{
 			return;
 		}
-		super.toggle(accountHash, name);
+		super.toggle(playerId, name);
 	}
 }

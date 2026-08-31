@@ -122,6 +122,9 @@ public class OSPartySocket extends WebSocketListener
 	private volatile long boardSeq;
 	// One-shot lookups awaiting a directed byCode/byHost reply, keyed by the echoed code/host.
 	private final Map<String, Consumer<Advertisement>> pendingByCode = new ConcurrentHashMap<>();
+	/** The outstanding {@code similar} lookup, if any. One at a time; see {@link #fetchSimilar}. */
+	private final java.util.concurrent.atomic.AtomicReference<Consumer<List<Advertisement>>> pendingSimilar =
+		new java.util.concurrent.atomic.AtomicReference<>();
 	private final Map<String, Consumer<Advertisement>> pendingByHost = new ConcurrentHashMap<>();
 	// Host createVoiceChannel requests awaiting a voiceChannel reply (or a matching error), keyed by party id.
 	private final Map<String, VoicePending> pendingVoiceChannel = new ConcurrentHashMap<>();
@@ -575,6 +578,33 @@ public class OSPartySocket extends WebSocketListener
 		send(gson.toJson(new LookupFrame("getByCode", code, null)));
 	}
 
+	/**
+	 * Ask what is already running the thing we are about to advertise. {@code onResult} gets the parties
+	 * worth joining instead, closest to full first, or an empty list when there are none or we are offline.
+	 *
+	 * <p>Only one lookup is outstanding at a time: it is asked once, on the way through a create the user
+	 * is waiting on, so a second would mean they clicked Create twice.
+	 */
+	public void fetchSimilar(String activityId, boolean hardMode, Consumer<List<Advertisement>> onResult)
+	{
+		if (activityId == null || !connected)
+		{
+			onResult.accept(java.util.Collections.emptyList());
+			return;
+		}
+		pendingSimilar.set(onResult);
+		send(gson.toJson(new SimilarFrame(activityId, hardMode)));
+	}
+
+	private void completeSimilar(Advertisement[] ads)
+	{
+		Consumer<List<Advertisement>> callback = pendingSimilar.getAndSet(null);
+		if (callback != null)
+		{
+			callback.accept(ads == null ? java.util.Collections.emptyList() : java.util.Arrays.asList(ads));
+		}
+	}
+
 	/** Look up the ad hosted by a player; {@code onResult} gets the ad, or null if none/offline. */
 	public void fetchByHost(String host, Consumer<Advertisement> onResult)
 	{
@@ -657,22 +687,22 @@ public class OSPartySocket extends WebSocketListener
 	}
 
 	/** Host action: ask the backend bot to disconnect a kicked member from the party's voice channel. */
-	public void kickVoiceMember(String id, String key, long accountHash)
+	public void kickVoiceMember(String id, String key, String playerId)
 	{
-		if (id == null || !connected)
+		if (id == null || playerId == null || !connected)
 		{
 			return;
 		}
-		send(gson.toJson(new KickVoiceFrame(id, key, accountHash)));
+		send(gson.toJson(new KickVoiceFrame(id, key, playerId)));
 	}
 
-	public void reportAd(String id)
+	public void reportAd(String id, String description)
 	{
 		if (id == null || !connected)
 		{
 			return;
 		}
-		send(gson.toJson(new ReportFrame(id)));
+		send(gson.toJson(new ReportFrame(id, description)));
 	}
 
 	/**
@@ -935,6 +965,9 @@ public class OSPartySocket extends WebSocketListener
 				break;
 			case "byHost":
 				completeLookup(pendingByHost, frame.id, frame.ad);
+				break;
+			case "similar":
+				completeSimilar(frame.ads);
 				break;
 			case "presence":
 				onlineUsers = frame.online;
@@ -1210,7 +1243,7 @@ public class OSPartySocket extends WebSocketListener
 	private void handleAuthIssued(String token, List<String> recoveryCodes)
 	{
 		long account = accountHash;
-		if (token == null || token.isEmpty() || !net.osparty.store.PlayerFlag.isKnown(account))
+		if (token == null || token.isEmpty() || !net.osparty.store.AccountHash.isKnown(account))
 		{
 			return;
 		}
@@ -1363,7 +1396,7 @@ public class OSPartySocket extends WebSocketListener
 	public void retryAuth()
 	{
 		long account = accountHash;
-		if (!connected || !net.osparty.store.PlayerFlag.isKnown(account))
+		if (!connected || !net.osparty.store.AccountHash.isKnown(account))
 		{
 			return;
 		}
@@ -1379,7 +1412,7 @@ public class OSPartySocket extends WebSocketListener
 	public void requestCouplingCode()
 	{
 		long account = accountHash;
-		if (!connected || !net.osparty.store.PlayerFlag.isKnown(account))
+		if (!connected || !net.osparty.store.AccountHash.isKnown(account))
 		{
 			return;
 		}
@@ -1417,7 +1450,7 @@ public class OSPartySocket extends WebSocketListener
 	public void redeemRecoveryCode(String code)
 	{
 		long account = accountHash;
-		if (!connected || code == null || !net.osparty.store.PlayerFlag.isKnown(account))
+		if (!connected || code == null || !net.osparty.store.AccountHash.isKnown(account))
 		{
 			return;
 		}
@@ -1446,7 +1479,7 @@ public class OSPartySocket extends WebSocketListener
 	public void startDiscordRecovery()
 	{
 		long account = accountHash;
-		if (!connected || !net.osparty.store.PlayerFlag.isKnown(account))
+		if (!connected || !net.osparty.store.AccountHash.isKnown(account))
 		{
 			return;
 		}
@@ -2001,6 +2034,19 @@ public class OSPartySocket extends WebSocketListener
 		}
 	}
 
+	private static final class SimilarFrame
+	{
+		final String type = "similar";
+		final String activity;
+		final boolean hardMode;
+
+		SimilarFrame(String activity, boolean hardMode)
+		{
+			this.activity = activity;
+			this.hardMode = hardMode;
+		}
+	}
+
 	private static final class LookupFrame
 	{
 		final String type;
@@ -2087,19 +2133,22 @@ public class OSPartySocket extends WebSocketListener
 		}
 	}
 
-	/** Host-authorised kick of a member from the party's voice channel, by their accountHash. */
+	/**
+	 * Host-authorised kick of a member from the party's voice channel, by their public id -- the only
+	 * identity this client holds for another player; the server maps it back to the account itself.
+	 */
 	private static final class KickVoiceFrame
 	{
 		final String type = "kickVoiceMember";
 		final String id;
 		final String key;
-		final long accountHash;
+		final String playerId;
 
-		KickVoiceFrame(String id, String key, long accountHash)
+		KickVoiceFrame(String id, String key, String playerId)
 		{
 			this.id = id;
 			this.key = key;
-			this.accountHash = accountHash;
+			this.playerId = playerId;
 		}
 	}
 
@@ -2107,10 +2156,12 @@ public class OSPartySocket extends WebSocketListener
 	{
 		final String type = "report";
 		final String id;
+		final String description;
 
-		ReportFrame(String id)
+		ReportFrame(String id, String description)
 		{
 			this.id = id;
+			this.description = description;
 		}
 	}
 

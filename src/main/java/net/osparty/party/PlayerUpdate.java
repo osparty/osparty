@@ -24,18 +24,15 @@ public class PlayerUpdate
 	 */
 	private long memberId;
 
-	private String name;
 	/**
-	 * The member's stable accountHash, and no longer sent by this client -- {@code 0} on anything we
-	 * produce, non-zero only on a snapshot from a plugin old enough to still include it.
-	 *
-	 * <p>It was removed because this whole object is relayed verbatim to everyone attached to the party,
-	 * applicants included, which made every member's account hash readable by anyone who knew the room key.
-	 * The hash is what a client asserts to claim an identity, so a harvested one is a squattable account.
-	 * The field stays for the clients still sending it; account hashes now come from the server-built
-	 * roster, which is not shown to applicants (see {@code LiveParty.accountHashForMember}).
+	 * The member's name. Deliberately the only identity here: this whole object is relayed verbatim to
+	 * everyone attached to the party, applicants included. An account hash used to ride beside it, which
+	 * made every member's readable by anyone who knew the room key -- and the hash is what a client asserts
+	 * to claim an identity, so a harvested one was a squattable account. Identity now comes from the
+	 * server-built roster as a public id ({@code LiveParty.playerIdForMember}); a snapshot from a plugin
+	 * old enough to still send a hash has it skipped on read.
 	 */
-	private long accountHash;
+	private String name;
 	private int combatLevel;
 
 	/** In {@link net.osparty.model.Applicant.EquipmentSlot} order; {@code <= 0} = empty. */
@@ -72,6 +69,9 @@ public class PlayerUpdate
 	private int specialPercent = -1;
 	/** Run energy, 0-100. */
 	private int runEnergy = -1;
+
+	/** Whether Vengeance is up: cast, and not yet spent on a hit. */
+	private boolean vengeance;
 
 	/** Active spellbook: 0 standard, 1 ancient, 2 lunar, 3 arceuus; {@code -1} when unknown. */
 	private int spellbook = -1;

@@ -13,7 +13,7 @@ import net.runelite.client.config.ConfigManager;
 /**
  * Locally-stored list of "favourite" players. A party is flagged as having a
  * favourite when its host (or any listed member) is favourited. Entries are keyed by
- * accountHash when known (so they survive name changes) and persisted in
+ * playerId when known (so they survive name changes) and persisted in
  * {@link PartyStore}; see {@link PlayerFlagService} for the shared logic.
  *
  * <p>On first run the legacy name-only favourites (stored as a CSV under the OSParty
@@ -44,17 +44,17 @@ public class FavoritesService extends PlayerFlagService
 			String trimmed = name.trim();
 			if (!trimmed.isEmpty())
 			{
-				// Hash unknown for legacy favourites; backfilled when next seen in a party.
-				importFlag(PlayerFlag.UNKNOWN_HASH, trimmed);
+				// Id unknown for legacy favourites; backfilled when next seen in a party.
+				importFlag(null, trimmed);
 			}
 		}
 		// Clear the old key so we don't re-import (the store is now the source of truth).
 		configManager.setConfiguration(OSPartyConfig.GROUP, LEGACY_KEY, "");
 	}
 
-	public boolean isFavorite(long accountHash, String name)
+	public boolean isFavorite(String playerId, String name)
 	{
-		return isFlagged(accountHash, name);
+		return isFlagged(playerId, name);
 	}
 
 	public boolean isFavorite(String name)

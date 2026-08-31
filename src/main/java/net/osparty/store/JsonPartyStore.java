@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import net.runelite.client.RuneLite;
@@ -18,7 +19,8 @@ import net.runelite.client.RuneLite;
 public class JsonPartyStore implements PartyStore
 {
 	private static final String FILE_NAME = "flags.json";
-	private static final int SCHEMA_VERSION = 1;
+	/** v2 keys rows by {@code playerId}; a v1 file (keyed by account hash) is rewritten without the hashes on load. */
+	private static final int SCHEMA_VERSION = 2;
 
 	private final JsonFile<Data> store;
 	/** kind -&gt; its persisted flags. Guarded by the instance monitor. */
@@ -65,6 +67,12 @@ public class JsonPartyStore implements PartyStore
 				flags.put(e.getKey(), new ArrayList<>(e.getValue()));
 			}
 		}
+		if (data.version < SCHEMA_VERSION)
+		{
+			// A v1 row's account hash was skipped on read, so it is already a name-only row here; rewrite now
+			// so the hash stops sitting on disk too, rather than only once the next toggle happens to.
+			save();
+		}
 	}
 
 	private void save()
@@ -86,17 +94,17 @@ public class JsonPartyStore implements PartyStore
 	{
 		List<PlayerFlag> list = flags.computeIfAbsent(kind, k -> new ArrayList<>());
 		String norm = lower(flag.getUsername());
-		if (flag.hasKnownHash())
+		if (flag.hasKnownId())
 		{
-			// Replace any same-hash row and fold in a stale name-only row (hash backfill).
-			list.removeIf(f -> f.getAccountHash() == flag.getAccountHash()
-				|| (!f.hasKnownHash() && lower(f.getUsername()).equals(norm)));
+			// Replace any same-id row and fold in a stale name-only row (id backfill).
+			list.removeIf(f -> Objects.equals(f.getPlayerId(), flag.getPlayerId())
+				|| (!f.hasKnownId() && lower(f.getUsername()).equals(norm)));
 		}
 		else
 		{
-			list.removeIf(f -> !f.hasKnownHash() && lower(f.getUsername()).equals(norm));
+			list.removeIf(f -> !f.hasKnownId() && lower(f.getUsername()).equals(norm));
 		}
-		list.add(new PlayerFlag(flag.getAccountHash(), flag.getUsername()));
+		list.add(new PlayerFlag(flag.getPlayerId(), flag.getUsername()));
 		save();
 	}
 
@@ -108,14 +116,14 @@ public class JsonPartyStore implements PartyStore
 		{
 			return;
 		}
-		if (flag.hasKnownHash())
+		if (flag.hasKnownId())
 		{
-			list.removeIf(f -> f.getAccountHash() == flag.getAccountHash());
+			list.removeIf(f -> Objects.equals(f.getPlayerId(), flag.getPlayerId()));
 		}
 		else
 		{
 			String norm = lower(flag.getUsername());
-			list.removeIf(f -> !f.hasKnownHash() && lower(f.getUsername()).equals(norm));
+			list.removeIf(f -> !f.hasKnownId() && lower(f.getUsername()).equals(norm));
 		}
 		save();
 	}

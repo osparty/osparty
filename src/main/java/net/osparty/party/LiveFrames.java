@@ -225,6 +225,17 @@ final class LiveFrames {
 		}
 	}
 
+	/** One line of party chat. Only the text: the server stamps who it came from. */
+	static final class ChatFrame {
+		@SerializedName("t")
+		final String type = "chat";
+		final String text;
+
+		ChatFrame(String text) {
+			this.text = text;
+		}
+	}
+
 	/** Host to member: how to actually get into the raid. Named {@code fcRequest} on the wire. */
 	static final class JoinPromptFrame {
 		@SerializedName("t")

@@ -15,12 +15,13 @@ import org.junit.Before;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /**
  * Exercises {@link PlayerFlagService} logic (via {@link BlockListService}) over a real
- * {@link JsonPartyStore}: name/hash matching, persistence across a reopen, name-change
- * rename and hash backfill, and party-level matching.
+ * {@link JsonPartyStore}: name/id matching, persistence across a reopen, name-change
+ * rename and id backfill, party-level matching, and the migration off account hashes.
  */
 public class BlockListServiceTest
 {
@@ -46,30 +47,30 @@ public class BlockListServiceTest
 	}
 
 	@Test
-	public void togglesByNameWhenHashUnknown()
+	public void togglesByNameWhenIdUnknown()
 	{
-		assertFalse(blocks.isBlocked(0L, "Zezima"));
-		blocks.toggle(0L, "Zezima");
+		assertFalse(blocks.isBlocked(null, "Zezima"));
+		blocks.toggle(null, "Zezima");
 		assertTrue(blocks.isBlocked("Zezima"));
-		assertTrue("case/whitespace-insensitive", blocks.isBlocked(0L, "  zezima "));
+		assertTrue("case/whitespace-insensitive", blocks.isBlocked(null, "  zezima "));
 
-		blocks.toggle(0L, "Zezima");
+		blocks.toggle(null, "Zezima");
 		assertFalse(blocks.isBlocked("Zezima"));
 	}
 
 	@Test
 	public void persistsAcrossReopen()
 	{
-		blocks.toggle(123L, "Durial321");
+		blocks.toggle("DUR0-0000-0321", "Durial321");
 		store.close();
 
 		PartyStore reopened = new JsonPartyStore(dir, new Gson());
 		try
 		{
 			BlockListService reloaded = new BlockListService(reopened);
-			assertTrue(reloaded.isBlocked(123L, "Durial321"));
-			// Matches by hash even under a new name (survives a rename).
-			assertTrue(reloaded.isBlocked(123L, "NewName"));
+			assertTrue(reloaded.isBlocked("DUR0-0000-0321", "Durial321"));
+			// Matches by id even under a new name (survives a rename).
+			assertTrue(reloaded.isBlocked("DUR0-0000-0321", "NewName"));
 		}
 		finally
 		{
@@ -78,74 +79,84 @@ public class BlockListServiceTest
 	}
 
 	@Test
-	public void observeRenamesByHash()
+	public void observeRenamesById()
 	{
-		blocks.toggle(55L, "OldName");
-		blocks.observe(55L, "FreshName");
+		blocks.toggle("ID00-0000-0055", "OldName");
+		blocks.observe("ID00-0000-0055", "FreshName");
 
-		assertTrue(blocks.isBlocked(55L, "FreshName"));
-		assertFalse("old name no longer matches by name", blocks.isBlocked(0L, "OldName"));
+		assertTrue(blocks.isBlocked("ID00-0000-0055", "FreshName"));
+		assertFalse("old name no longer matches by name", blocks.isBlocked(null, "OldName"));
 		assertEquals(1, blocks.entries().size());
 	}
 
 	@Test
-	public void observeBackfillsHashOntoNameOnlyEntry()
+	public void observeBackfillsIdOntoNameOnlyEntry()
 	{
-		blocks.toggle(0L, "Ghostblade"); // hash unknown
-		blocks.observe(77L, "Ghostblade"); // now we learn the hash
+		blocks.toggle(null, "Ghostblade"); // id unknown
+		blocks.observe("ID00-0000-0077", "Ghostblade"); // now we learn the id
 
-		assertTrue(blocks.isBlocked(77L, "Ghostblade"));
+		assertTrue(blocks.isBlocked("ID00-0000-0077", "Ghostblade"));
 		PlayerFlag only = blocks.entries().get(0);
-		assertEquals(77L, only.getAccountHash());
+		assertEquals("ID00-0000-0077", only.getPlayerId());
 		assertEquals(1, blocks.entries().size());
 	}
 
 	@Test
-	public void handlesNegativeAccountHash()
+	public void aBlankIdIsUnknown()
 	{
-		// RuneLite account hashes span the full signed-long range; negatives must be
-		// treated as real, not folded into the "unknown" (-1) bucket.
-		long negative = -8_234_567_890_123_456L;
-		blocks.toggle(negative, "protodefend");
+		blocks.toggle("", "protodefend");
 
-		assertTrue(blocks.isBlocked(negative, "protodefend"));
-		assertEquals("stored as a real hash, not unknown", negative, blocks.entries().get(0).getAccountHash());
-
-		// Survives the player renaming (matches by the negative hash).
-		blocks.observe(negative, "ProtoRenamed");
-		assertTrue(blocks.isBlocked(negative, "ProtoRenamed"));
-		assertFalse(blocks.isBlocked(0L, "protodefend"));
+		assertTrue(blocks.isBlocked("   ", "protodefend"));
+		assertNull("stored as name-only, not under an empty id", blocks.entries().get(0).getPlayerId());
 		assertEquals(1, blocks.entries().size());
 	}
 
 	@Test
-	public void backfillsNegativeHashOntoNameOnlyEntry()
+	public void hasAnyBlockedMatchesHostById()
 	{
-		blocks.toggle(0L, "protodefend"); // blocked before the host's hash was known
-		blocks.observe(-42L, "protodefend"); // ad arrives carrying a negative hash
-
-		assertEquals(-42L, blocks.entries().get(0).getAccountHash());
-		assertEquals(1, blocks.entries().size());
-	}
-
-	@Test
-	public void hasAnyBlockedMatchesHostByHash()
-	{
-		blocks.toggle(999L, "BadHost");
+		blocks.toggle("BAD0-HOST-0999", "BadHost");
 
 		Advertisement ad = new Advertisement();
 		ad.setHost("BadHost");
-		ad.setMembers(Collections.singletonList(new Member("BadHost", 999L)));
+		ad.setMembers(Collections.singletonList(new Member("BadHost", "BAD0-HOST-0999")));
 		assertTrue(blocks.hasAnyBlocked(ad));
 
 		Advertisement renamedHost = new Advertisement();
 		renamedHost.setHost("BadHostRenamed");
-		renamedHost.setMembers(Arrays.asList(new Member("BadHostRenamed", 999L)));
+		renamedHost.setHostPlayerId("BAD0-HOST-0999");
+		renamedHost.setMembers(Arrays.asList(new Member("BadHostRenamed", "BAD0-HOST-0999")));
 		assertTrue("still blocked after the host renamed", blocks.hasAnyBlocked(renamedHost));
 
 		Advertisement clean = new Advertisement();
 		clean.setHost("GoodHost");
-		clean.setMembers(Collections.singletonList(new Member("GoodHost", 1L)));
+		clean.setMembers(Collections.singletonList(new Member("GoodHost", "GOOD-HOST-0001")));
 		assertFalse(blocks.hasAnyBlocked(clean));
+	}
+
+	/**
+	 * A flags file from before public ids was keyed by the raw account hash of every blocked player.
+	 * Opening it must keep the blocks (by name, until each player is next seen and re-keyed by id) and
+	 * rewrite the file without the hashes straight away.
+	 */
+	@Test
+	public void openingAHashKeyedFileKeepsTheNamesAndDropsTheHashes() throws Exception
+	{
+		store.close();
+		File flagsFile = new File(dir, "flags.json");
+		Files.writeString(flagsFile.toPath(), "{\"version\":1,\"flags\":{\"BLOCK\":["
+			+ "{\"accountHash\":424242,\"username\":\"durial321\"},"
+			+ "{\"accountHash\":-1,\"username\":\"nameonly\"}]}}");
+
+		store = new JsonPartyStore(dir, new Gson());
+		blocks = new BlockListService(store);
+
+		assertTrue("kept by name", blocks.isBlocked("Durial321"));
+		assertTrue(blocks.isBlocked("NameOnly"));
+		assertNull(blocks.entries().get(0).getPlayerId());
+		assertFalse("hash gone from disk on open", Files.readString(flagsFile.toPath()).contains("424242"));
+
+		// The next sighting re-keys the row by id, so a later rename still matches.
+		blocks.observe("DUR0-0000-0321", "Durial321");
+		assertTrue(blocks.isBlocked("DUR0-0000-0321", "SomebodyElse"));
 	}
 }

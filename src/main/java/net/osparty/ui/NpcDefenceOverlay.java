@@ -2,7 +2,6 @@ package net.osparty.ui;
 
 import net.osparty.OSPartyConfig;
 import net.osparty.enums.DefenceOverlayPosition;
-import net.osparty.enums.MagicDefenceDisplay;
 import net.osparty.tools.DefenceTracker;
 import net.osparty.tools.DefenceTracker.DefenceState;
 import java.awt.Color;
@@ -11,6 +10,10 @@ import java.awt.FontMetrics;
 import java.awt.Graphics2D;
 import java.awt.Polygon;
 import java.awt.image.BufferedImage;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import lombok.Value;
 import net.runelite.api.Client;
 import net.runelite.api.NPC;
 import net.runelite.api.Point;
@@ -19,18 +22,30 @@ import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
 import net.runelite.client.ui.overlay.OverlayUtil;
 
-/** Draws a monster's live defence by its health bar: Defence icon, current level, and drain amount. */
+/** Draws a monster's live defence by its health bar: Defence icon, level and drain, plus an optional magic-defence readout. */
 public class NpcDefenceOverlay extends Overlay
 {
-	private static final Color DRAIN_COLOR = new Color(255, 80, 80);
 	private static final Color PLATE_COLOR = new Color(0, 0, 0, 150);
 	private static final int GAP = 3;
+	/** Space between the Defence and magic readouts when they share a row. */
+	private static final int SEGMENT_GAP = 8;
+	private static final int ARROW_WIDTH = 7;
 
 	private final Client client;
 	private final DefenceTracker tracker;
 	private final OSPartyConfig config;
 	private final BufferedImage icon;
 	private final BufferedImage magicIcon;
+
+	/** One {@code [icon] value ↓drain} block; a row holds one or two. */
+	@Value
+	private static class Segment
+	{
+		BufferedImage icon;
+		String text;
+		Color color;
+		String drain;
+	}
 
 	public NpcDefenceOverlay(Client client, DefenceTracker tracker, OSPartyConfig config, BufferedImage icon,
 		BufferedImage magicIcon)
@@ -74,62 +89,86 @@ public class NpcDefenceOverlay extends Overlay
 			return null;
 		}
 		int centreX = anchor.getX() + position.getXNudge();
-		int baseline = anchor.getY();
+		int baseline = anchor.getY() - config.defenceHpBarYOffset();
 
-		long shown = config.defenceShowFullLevel()
-			? state.getCurrent()
-			: state.getCurrent() - state.getMin();
-		long drained = Math.max(0, state.getBase() - state.getCurrent());
-		drawRow(graphics, fm, centreX, baseline, icon, Long.toString(Math.max(0, shown)), colorFor(state),
-			drained > 0 ? Long.toString(drained) : null);
-
-		if (config.magicDefence())
+		Segment defence = defenceSegment(state);
+		Segment magic = config.magicDefence() ? magicSegment(state) : null;
+		if (magic == null)
 		{
-			String magicStr = magicText(state);
-			if (magicStr != null)
-			{
-				// Only the bonus readout has a drain to count off; the percentage is
-				// already relative to where the monster started.
-				long magicDrained = Math.max(0, state.getMagicBaseDef() - state.getMagicDef());
-				boolean showDrain = magicDrained > 0 && config.magicDefenceDisplay() != MagicDefenceDisplay.PERCENT;
-				drawRow(graphics, fm, centreX, baseline + fm.getHeight(), magicIcon, magicStr,
-					config.magicDefenceColor(), showDrain ? Long.toString(magicDrained) : null);
-			}
+			drawRow(graphics, fm, centreX, baseline, Collections.singletonList(defence));
+		}
+		else if (config.magicDefenceSameRow())
+		{
+			drawRow(graphics, fm, centreX, baseline, Arrays.asList(defence, magic));
+		}
+		else
+		{
+			drawRow(graphics, fm, centreX, baseline, Collections.singletonList(defence));
+			drawRow(graphics, fm, centreX, baseline + fm.getHeight(), Collections.singletonList(magic));
 		}
 		return null;
 	}
 
-	/** @return the magic-defence text for the configured mode, or null to draw nothing. */
-	private String magicText(DefenceState state)
+	private Segment defenceSegment(DefenceState state)
 	{
-		long percent = state.getMagicBaseRoll() > 0
-			? Math.max(0, Math.round(state.getMagicRoll() * 100.0 / state.getMagicBaseRoll()))
-			: 100;
+		boolean full = config.defenceShowFullLevel();
+		long current = DefenceReadout.shownDefence(state, full);
+		long base = DefenceReadout.shownBaseDefence(state, full);
+		return new Segment(iconOrNull(icon),
+			DefenceReadout.value(config.defenceValueFormat(), current, base),
+			DefenceReadout.defenceColor(state, config),
+			DefenceReadout.drain(config.defenceDrainFormat(), current, base));
+	}
+
+	/** @return the magic-defence block for the configured mode, or null to draw nothing. */
+	private Segment magicSegment(DefenceState state)
+	{
+		long rollPercent = DefenceReadout.percentRemaining(state.getMagicRoll(), state.getMagicBaseRoll());
+		String text;
+		String drain = null;
 		switch (config.magicDefenceDisplay())
 		{
 			case BONUS:
-				return Long.toString(state.getMagicDef());
+				text = DefenceReadout.value(config.defenceValueFormat(), state.getMagicDef(), state.getMagicBaseDef());
+				drain = DefenceReadout.drain(config.defenceDrainFormat(), state.getMagicDef(), state.getMagicBaseDef());
+				break;
+			case LEVEL:
+				text = DefenceReadout.value(config.defenceValueFormat(), state.getMagicLevel(), state.getMagicBaseLevel());
+				drain = DefenceReadout.drain(config.defenceDrainFormat(), state.getMagicLevel(), state.getMagicBaseLevel());
+				break;
 			case PERCENT:
-				return percent < 100 ? percent + "%" : null;
+				// Already relative to where the monster started, so there's no drain to count off.
+				if (rollPercent >= 100)
+				{
+					return null;
+				}
+				text = rollPercent + "%";
+				break;
 			case BOTH:
-				return percent < 100
-					? state.getMagicDef() + "  " + percent + "%"
+				text = rollPercent < 100
+					? state.getMagicDef() + "  " + rollPercent + "%"
 					: Long.toString(state.getMagicDef());
+				drain = DefenceReadout.drain(config.defenceDrainFormat(), state.getMagicDef(), state.getMagicBaseDef());
+				break;
 			default:
 				return null;
 		}
+		return new Segment(iconOrNull(magicIcon), text, config.magicDefenceColor(), drain);
 	}
 
-	/** One centred {@code [icon] value ↓drain} row. */
-	private void drawRow(Graphics2D graphics, FontMetrics fm, int centreX, int baseline, BufferedImage image,
-		String text, Color color, String drain)
+	private BufferedImage iconOrNull(BufferedImage image)
 	{
-		int iconW = image != null ? image.getWidth() : 0;
-		int iconH = image != null ? image.getHeight() : 0;
-		int textW = fm.stringWidth(text);
-		int arrowW = 7;
-		int drainBlockW = drain != null ? (GAP + arrowW + 2 + fm.stringWidth(drain)) : 0;
-		int totalW = iconW + GAP + textW + drainBlockW;
+		return config.defenceShowIcons() ? image : null;
+	}
+
+	/** One row of blocks, centred on {@code centreX}, under a single plate. */
+	private void drawRow(Graphics2D graphics, FontMetrics fm, int centreX, int baseline, List<Segment> segments)
+	{
+		int totalW = SEGMENT_GAP * (segments.size() - 1);
+		for (Segment segment : segments)
+		{
+			totalW += width(fm, segment);
+		}
 		int x = centreX - totalW / 2;
 
 		if (config.defenceTextPlate())
@@ -137,49 +176,62 @@ public class NpcDefenceOverlay extends Overlay
 			graphics.setColor(PLATE_COLOR);
 			graphics.fillRect(x - 2, baseline - fm.getAscent() - 1, totalW + 4, fm.getHeight() + 2);
 		}
-		if (image != null)
+		for (Segment segment : segments)
 		{
-			graphics.drawImage(image, x, baseline - iconH + 2, null);
-		}
-
-		int cursor = x + iconW + GAP;
-		OverlayUtil.renderTextLocation(graphics, new Point(cursor, baseline), text, color);
-		cursor += textW;
-
-		if (drain != null)
-		{
-			cursor += GAP;
-			drawDownArrow(graphics, cursor, baseline, arrowW, fm.getAscent());
-			cursor += arrowW + 2;
-			OverlayUtil.renderTextLocation(graphics, new Point(cursor, baseline), drain, DRAIN_COLOR);
+			x = drawSegment(graphics, fm, x, baseline, segment) + SEGMENT_GAP;
 		}
 	}
 
+	private static int width(FontMetrics fm, Segment segment)
+	{
+		int w = fm.stringWidth(segment.getText());
+		if (segment.getIcon() != null)
+		{
+			w += segment.getIcon().getWidth() + GAP;
+		}
+		if (segment.getDrain() != null)
+		{
+			w += GAP + ARROW_WIDTH + 2 + fm.stringWidth(segment.getDrain());
+		}
+		return w;
+	}
+
+	/** @return the x just past the drawn block. */
+	private int drawSegment(Graphics2D graphics, FontMetrics fm, int x, int baseline, Segment segment)
+	{
+		int cursor = x;
+		BufferedImage image = segment.getIcon();
+		if (image != null)
+		{
+			graphics.drawImage(image, cursor, baseline - image.getHeight() + 2, null);
+			cursor += image.getWidth() + GAP;
+		}
+		OverlayUtil.renderTextLocation(graphics, new Point(cursor, baseline), segment.getText(), segment.getColor());
+		cursor += fm.stringWidth(segment.getText());
+
+		if (segment.getDrain() != null)
+		{
+			cursor += GAP;
+			drawDownArrow(graphics, cursor, baseline, fm.getAscent());
+			cursor += ARROW_WIDTH + 2;
+			OverlayUtil.renderTextLocation(graphics, new Point(cursor, baseline), segment.getDrain(),
+				config.defenceDrainColor());
+			cursor += fm.stringWidth(segment.getDrain());
+		}
+		return cursor;
+	}
+
 	/** A small filled down-pointing triangle (the in-game font lacks an arrow glyph). */
-	private void drawDownArrow(Graphics2D graphics, int x, int baseline, int width, int ascent)
+	private void drawDownArrow(Graphics2D graphics, int x, int baseline, int ascent)
 	{
 		int top = baseline - ascent + 2;
 		int bottom = baseline - 1;
 		Polygon tri = new Polygon();
 		tri.addPoint(x, top);
-		tri.addPoint(x + width, top);
-		tri.addPoint(x + width / 2, bottom);
-		graphics.setColor(DRAIN_COLOR);
+		tri.addPoint(x + ARROW_WIDTH, top);
+		tri.addPoint(x + ARROW_WIDTH / 2, bottom);
+		graphics.setColor(config.defenceDrainColor());
 		graphics.fill(tri);
-	}
-
-	private Color colorFor(DefenceState state)
-	{
-		long relative = Math.max(state.getCurrent() - state.getMin(), 0);
-		if (relative == 0)
-		{
-			return config.defenceCappedColor();
-		}
-		if (relative <= config.defenceLowThreshold())
-		{
-			return config.defenceLowColor();
-		}
-		return config.defenceHighColor();
 	}
 
 	private NPC npcByIndex(int index)

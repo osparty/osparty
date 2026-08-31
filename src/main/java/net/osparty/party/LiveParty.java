@@ -16,8 +16,10 @@ import javax.inject.Singleton;
 import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
 import net.osparty.OSPartyConfig;
+import net.osparty.model.AccountTypes;
 import net.osparty.model.Member;
 import net.osparty.party.LiveFrames.CapacityFrame;
+import net.osparty.party.LiveFrames.ChatFrame;
 import net.osparty.party.LiveFrames.CommandFrame;
 import net.osparty.party.LiveFrames.DiscordFrame;
 import net.osparty.party.LiveFrames.HeartbeatFrame;
@@ -38,6 +40,8 @@ import net.osparty.tools.PersonalBests;
 import net.runelite.api.Client;
 import net.runelite.api.Skill;
 import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.gameval.VarbitID;
+import net.runelite.api.vars.AccountType;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.EventBus;
 
@@ -47,7 +51,7 @@ import net.runelite.client.eventbus.EventBus;
  * parts that changed and merged on receipt.
  *
  * <p>Everything the party does goes through here: host and join, live state, admission and kick, map pings,
- * ready checks, spec drains, friends-chat prompts and the host-transfer handshake.
+ * ready checks, spec drains, party chat, friends-chat prompts and the host-transfer handshake.
  */
 @Slf4j
 @Singleton
@@ -141,7 +145,12 @@ public class LiveParty implements LivePartyBackend {
 	private volatile int sentPrayer = -1;
 	private volatile int sentSpec = -1;
 	private volatile int sentRunEnergy = -1;
-	/** Whether the vitals built for the frame being assembled include one that moved down. Set by {@link #vitals}. */
+	/** Vengeance as last sent: 1 up, 0 down, -1 never sent. */
+	private volatile int sentVengeance = -1;
+	/**
+	 * Whether the vitals built for the frame being assembled include one that moved down, or Vengeance
+	 * flipping. Set by {@link #vitals}.
+	 */
 	private boolean vitalsUrgent;
 	private volatile int lastSentWorld = -1;
 	private final Map<Skill, Integer> sentRealLevels = new ConcurrentHashMap<>();
@@ -341,6 +350,7 @@ public class LiveParty implements LivePartyBackend {
 		sentPrayer = -1;
 		sentSpec = -1;
 		sentRunEnergy = -1;
+		sentVengeance = -1;
 		lastSentWorld = -1;
 		sentRealLevels.clear();
 		pings.clear();
@@ -435,6 +445,9 @@ public class LiveParty implements LivePartyBackend {
 				break;
 			case "specDrain":
 				applySpecDrain(frame);
+				break;
+			case "chat":
+				applyChat(frame);
 				break;
 			case "fcRequest":
 				applyJoinPrompt(frame);
@@ -668,11 +681,11 @@ public class LiveParty implements LivePartyBackend {
 	 * has no server-side aggregation and so has always had to do this in the client.
 	 *
 	 * <p>Aggregation on our side batches the fan-out but cannot remove the inbound frame; this can, which
-	 * is why both are worth having. Anything urgent — damage taken, prayer drained, a spec spent — ignores
-	 * this entirely, so nothing anyone reacts to is ever delayed by it.
+	 * is why both are worth having. Anything urgent — damage taken, prayer drained, a spec spent, Vengeance
+	 * cast or spent — ignores this entirely, so nothing anyone reacts to is ever delayed by it.
 	 */
 	private boolean dueThisTick() {
-		if (itemsDirty || profileDirty || vitalsDropped()) {
+		if (itemsDirty || profileDirty || vitalsUrgentNow()) {
 			// Items and profile are rare by construction; holding them back saves nothing worth having.
 			return true;
 		}
@@ -727,20 +740,32 @@ public class LiveParty implements LivePartyBackend {
 		return client.getBoostedSkillLevel(Skill.HITPOINTS) != sentHp
 			|| client.getBoostedSkillLevel(Skill.PRAYER) != sentPrayer
 			|| client.getVarpValue(300) / 10 != sentSpec
-			|| runEnergy() != sentRunEnergy;
+			|| runEnergy() != sentRunEnergy
+			|| vengeance() != sentVengeance;
 	}
 
 	/**
-	 * Whether a vital has moved down since the last send, without disturbing anything.
+	 * Whether a vital has moved down, or Vengeance flipped, since the last send, without disturbing anything.
 	 *
 	 * <p>Read before deciding whether a tick may be skipped, which is why it cannot be the flag
 	 * {@link #vitals()} sets — that one is a record of the frame being built, and by then the decision has
 	 * been made.
 	 */
-	private boolean vitalsDropped() {
+	private boolean vitalsUrgentNow() {
 		return client.getBoostedSkillLevel(Skill.HITPOINTS) < sentHp
 			|| client.getBoostedSkillLevel(Skill.PRAYER) < sentPrayer
-			|| client.getVarpValue(300) / 10 < sentSpec;
+			|| client.getVarpValue(300) / 10 < sentSpec
+			|| vengeanceFlipped(vengeance());
+	}
+
+	/** Vengeance as reported: 1 while the spell is up, else 0. */
+	private int vengeance() {
+		return client.getVarbitValue(VarbitID.VENGEANCE_REBOUND) == 1 ? 1 : 0;
+	}
+
+	/** Whether {@code veng} differs from what a peer holds; a first send after a reset is not a flip. */
+	private boolean vengeanceFlipped(int veng) {
+		return sentVengeance != -1 && veng != sentVengeance;
 	}
 
 	/** Run energy as reported: rounded to {@link #RUN_ENERGY_STEP}, with empty and full kept exact. */
@@ -763,6 +788,8 @@ public class LiveParty implements LivePartyBackend {
 		itemsDirty = true;
 		profileDirty = true;
 		codec.resetSlots();
+		// Vengeance rides the vitals frame only when it flips, so it is a baseline to forget too.
+		sentVengeance = -1;
 	}
 
 	@Override
@@ -800,6 +827,7 @@ public class LiveParty implements LivePartyBackend {
 			}
 			stripPrivate(update);
 			update.setRunEnergy(runEnergy());
+			update.setVengeance(vengeance() == 1);
 			update.setPbSeconds(PersonalBests.read(configManager, currentActivityId, capacity));
 			update.setRole(localRole);
 			update.setLearner(localLearner);
@@ -847,16 +875,18 @@ public class LiveParty implements LivePartyBackend {
 		playerData.put(localMemberId, gson.fromJson(LiveStateCodec.fromWire(merged), PlayerUpdate.class));
 	}
 
-	/** The four numbers that actually move, and nothing else. Built without a full snapshot. */
+	/** The numbers that actually move, and nothing else. Built without a full snapshot. */
 	private JsonObject vitals() {
 		int hp = client.getBoostedSkillLevel(Skill.HITPOINTS);
 		int prayer = client.getBoostedSkillLevel(Skill.PRAYER);
 		int spec = client.getVarpValue(300) / 10;
+		int veng = vengeance();
 		// A vital moving down is damage taken, prayer drained or a spec spent — the moments a peer reacts to,
 		// and the only ones worth interrupting the owner node's idle window for. Everything that moves up
-		// (regen, restores, spec recharging) can travel with the next round. The first send after a reset
-		// compares against -1, so a reconnect is never mistaken for a drop.
-		vitalsUrgent = hp < sentHp || prayer < sentPrayer || spec < sentSpec;
+		// (regen, restores, spec recharging) can travel with the next round. Vengeance is urgent both ways:
+		// whether it is up right now is the whole point of showing it. The first send after a reset
+		// compares against -1, so a reconnect is never mistaken for a drop or a flip.
+		vitalsUrgent = hp < sentHp || prayer < sentPrayer || spec < sentSpec || vengeanceFlipped(veng);
 		sentHp = hp;
 		sentPrayer = prayer;
 		sentSpec = spec;
@@ -868,6 +898,12 @@ public class LiveParty implements LivePartyBackend {
 		out.addProperty("pr", sentPrayer);
 		out.addProperty("sp", sentSpec);
 		out.addProperty("re", sentRunEnergy);
+		// Named only when it changed: the four above go out on nearly every tick, and this flips once a
+		// fight. A peer holds the last value it was told, so silence means "still the same".
+		if (veng != sentVengeance) {
+			sentVengeance = veng;
+			out.addProperty("vg", veng == 1);
+		}
 		echoLocally(out);
 		return out;
 	}
@@ -1134,11 +1170,11 @@ public class LiveParty implements LivePartyBackend {
 			}
 		}
 		if (host != null) {
-			out.add(new Member(nameFor(host), accountHashFor(host)));
+			out.add(new Member(nameFor(host), host.playerId));
 		}
 		others.sort(Comparator.comparingLong(e -> e.memberId));
 		for (LivePartyChannel.RosterEntry entry : others) {
-			out.add(new Member(nameFor(entry), accountHashFor(entry)));
+			out.add(new Member(nameFor(entry), entry.playerId));
 		}
 		return out;
 	}
@@ -1156,37 +1192,15 @@ public class LiveParty implements LivePartyBackend {
 			if (m.getStatus() == PartyStatus.PENDING || m.getData() == null || isUnresolvedName(m.getName())) {
 				continue;
 			}
-			// Through the roster fallback rather than off the live snapshot: the snapshot no longer carries
-			// an account hash, and the server-built roster is where it comes from now.
-			out.add(new Member(m.getName(), accountHashForMember(m.getMemberId()), null,
-				playerIdForMember(m.getMemberId())));
+			out.add(new Member(m.getName(), playerIdForMember(m.getMemberId())));
 		}
 		return out;
 	}
 
-	private long accountHashFor(LivePartyChannel.RosterEntry entry) {
-		PlayerUpdate data = playerData.get(entry.memberId);
-		return data != null && data.getAccountHash() != 0 ? data.getAccountHash() : entry.accountHash;
-	}
-
-	@Override
-	public long accountHashForMember(long memberId) {
-		PlayerUpdate data = playerData.get(memberId);
-		if (data != null && data.getAccountHash() != 0) {
-			return data.getAccountHash();
-		}
-		for (LivePartyChannel.RosterEntry entry : rosterEntries) {
-			if (entry.memberId == memberId) {
-				return entry.accountHash;
-			}
-		}
-		return 0L;
-	}
-
 	/**
-	 * Server-derived and roster-only: unlike {@link #accountHashForMember}, this has no live-snapshot
-	 * fallback, because {@code playerId} never rode the live payload -- it changes only when the roster
-	 * does, so there was nothing to gain by duplicating it on every tick.
+	 * Server-derived and roster-only: there is no live-snapshot fallback, because {@code playerId} never
+	 * rides the live payload -- it changes only when the roster does, so there was nothing to gain by
+	 * duplicating it on every tick.
 	 */
 	@Override
 	public String playerIdForMember(long memberId) {
@@ -1196,6 +1210,11 @@ public class LiveParty implements LivePartyBackend {
 			}
 		}
 		return null;
+	}
+
+	@Override
+	public String localPlayerId() {
+		return localMemberId == 0 ? null : playerIdForMember(localMemberId);
 	}
 
 	@Override
@@ -1544,6 +1563,43 @@ public class LiveParty implements LivePartyBackend {
 		eventBus.post(new SpecDrainEvent(frame.memberId,
 			frame.npcIndex == null ? -1 : frame.npcIndex, weapon,
 			frame.hit == null ? 0 : frame.hit, frame.world == null ? 0 : frame.world));
+	}
+
+	// ---- party chat ---------------------------------------------------------
+
+	@Override
+	public boolean sendChat(String text) {
+		if (mode == Mode.NONE || !isLocalAdmitted() || !channel.isConnected()) {
+			return false;
+		}
+		send(new ChatFrame(text));
+		// The room relays a line to everyone but its sender, so our own is posted from here.
+		eventBus.post(new PartyChatEvent(localMemberId, localName, accountTypeOf(localMemberId), text));
+		return true;
+	}
+
+	private void applyChat(LivePartyChannel.Frame frame) {
+		if (frame.memberId == null || frame.memberId == localMemberId || frame.text == null) {
+			return;
+		}
+		String name = frame.name != null ? frame.name : nameForMember(frame.memberId);
+		eventBus.post(new PartyChatEvent(frame.memberId, name, accountTypeOf(frame.memberId), frame.text));
+	}
+
+	/** A member's account type as their live snapshot reports it — ours included — or null before one has arrived. */
+	private AccountType accountTypeOf(long memberId) {
+		PlayerUpdate data = playerData.get(memberId);
+		return data == null ? null : AccountTypes.fromName(data.getAccountType());
+	}
+
+	/** The name we hold for a member — their live self-report first, then the roster — or null for a stranger. */
+	private String nameForMember(long memberId) {
+		for (LivePartyChannel.RosterEntry entry : rosterEntries) {
+			if (entry.memberId == memberId) {
+				return nameFor(entry);
+			}
+		}
+		return null;
 	}
 
 	// ---- friends-chat / join prompts ----------------------------------------

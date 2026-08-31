@@ -95,7 +95,7 @@ server can no longer answer the difference (the gap is too old) it replies with 
 | `getByCode` | `code` | Look up one ad by invite code |
 | `getByHost` | `host` | Look up the ad a player is hosting (used to rejoin after a restart) |
 | `createVoiceChannel` | `id`, `key` | Host: provision a Discord voice channel for the party |
-| `kickVoiceMember` | `id`, `key`, `accountHash` | Host: disconnect a member from the voice channel |
+| `kickVoiceMember` | `id`, `key`, `playerId` | Host: disconnect a member from the voice channel. By public id — the only identity the plugin holds for another player; the server maps it back to the account |
 | `requestVoiceAccess` | `id`, `accountHash` | Member: request per-user access to the voice channel |
 | `transferHost` | `id`, `key`, `host`, `hostAccountType`, `newKey` | Host: reassign the ad to a new host, re-keying it to `newKey`. **Requires the current host key** |
 | `startDiscordLink` | `accountHash` | Begin an OAuth2 Discord account link |
@@ -189,13 +189,13 @@ below were checked field-for-field against the source.
 server-assigned `id`/`inviteCode`, the live `size`/`layout`/`neededRoles`, and the node hint:
 
 ```json
-{ "id": "abc123", "activity": "tob", "host": "Zezima", "hostAccountHash": 123456789012345,
+{ "id": "abc123", "activity": "tob", "host": "Zezima", "hostPlayerId": "ABCD-EFGH-JKMN",
   "description": "Learners welcome, ~30 min", "size": 1, "capacity": 3, "world": "420",
   "layout": null, "hardMode": false, "invocation": 0, "coxScale": "",
   "createdAt": 1732000000000,
   "passphrase": "wine-of-zamorak-widow",
   "members": [
-    { "name": "Zezima", "accountHash": 123456789012345, "badges": ["developer"], "playerId": "pl_9f2ac3" }
+    { "name": "Zezima", "badges": ["developer"], "playerId": "ABCD-EFGH-JKMN" }
   ],
   "minKillCount": 500, "minHardModeKillCount": 50, "privateAd": false,
   "node": "pod-3", "inviteCode": "Y2Y3D9", "lootRule": "SPLIT", "ironmanOnly": false,
@@ -206,14 +206,19 @@ server-assigned `id`/`inviteCode`, the live `size`/`layout`/`neededRoles`, and t
 ```
 
 Note `privateAd`, not `privateParty`, and that `members` is a list of **objects**
-(`name`, `accountHash`, `badges?`, `playerId?`), not bare strings. A bare-string member (e.g.
-`"Zezima"`) is accepted on read as a legacy fallback — it deserialises to a hash-less member —
+(`name`, `playerId?`, `badges?`), not bare strings. A bare-string member (e.g.
+`"Zezima"`) is accepted on read as a legacy fallback — it deserialises to an id-less member —
 but the plugin never writes that shape; see
-[`Member.MemberAdapter`](../src/main/java/net/osparty/model/Member.java#L52-L136).
-`hostAccountHash` is `0` from a server old enough to predate the field; callers should read it
-through `Advertisement.getHostAccountHash()`, which falls back to `members.get(0)` for that case
-(wrong after a host transfer, which is exactly why the server now sends the hash directly). The
-host key itself never appears in an `Advertisement` — see [Host authentication](#host-authentication).
+[`Member.MemberAdapter`](../src/main/java/net/osparty/model/Member.java).
+**No account hash rides an ad in either direction.** The plugin sends only its *own* hash
+(`hostAccountHash` in the `host` request, `accountHash` in `identify`); the server keeps it
+to itself and derives the public `playerId`s it broadcasts. When the host reports its roster
+in a heartbeat it names the members by `playerId`, and an `accountHash` a server old enough to
+still send one is skipped on read. `hostPlayerId` is `null` from a server that predates the
+field; callers should read it through `Advertisement.getHostPlayerId()`, which falls back to
+`members.get(0)` for that case (wrong after a host transfer, which is exactly why the server
+sends the id directly). The host key itself never appears in an `Advertisement` — see
+[Host authentication](#host-authentication).
 
 **`AdvertisementDelta`** — the partial form used inside a `batch`'s `updated[]`
 ([`model/AdvertisementDelta.java`](../src/main/java/net/osparty/model/AdvertisementDelta.java)):
@@ -330,8 +335,8 @@ the server holds no durable live state across a reconnect.
 ## The LIVE channel (`Mux.LIVE = 2`)
 
 The live channel carries the party room itself: the server-authoritative roster, per-member live
-state, map pings, ready checks, spec-drain broadcasts, join prompts and the host-transfer
-handshake. It rides the same connection as the board, tagged with `Mux.LIVE` instead of
+state, map pings, ready checks, spec-drain broadcasts, party chat, join prompts and the
+host-transfer handshake. It rides the same connection as the board, tagged with `Mux.LIVE` instead of
 `Mux.BOARD`, and is attached/detached as a unit by
 [`LivePartyChannel`](../src/main/java/net/osparty/party/LivePartyChannel.java) whenever the
 client hosts, joins, or leaves a party — there is no live-channel traffic for a client that isn't
@@ -341,8 +346,8 @@ Frame shapes on this channel use a **short field key for `type`**: every outboun
 [`LiveFrames`](../src/main/java/net/osparty/party/LiveFrames.java) declares
 `@SerializedName("t") final String type = "…"`, so on the wire the discriminator is `"t"`, not
 `"type"` (unlike the board channel, which uses `"type"` in full). Several other fields are
-similarly shortened for size — a live update's vitals go out as `hp`/`pr`/`sp`/`re`, for
-example — via [`LiveStateCodec`](../src/main/java/net/osparty/party/LiveStateCodec.java); this
+similarly shortened for size — a live update's vitals go out as `hp`/`pr`/`sp`/`re`, plus `vg`
+(Vengeance up) only on the tick it flips, for example — via [`LiveStateCodec`](../src/main/java/net/osparty/party/LiveStateCodec.java); this
 document spells out the long/short names per frame below but doesn't exhaustively cover the
 per-field codec.
 
@@ -381,7 +386,7 @@ the connection outlived.
 | `host` | `room`, `hostName`, `activityId`, `capacity`, `locked`, `role`, `learner`, `teacher`, `accountHash` | Open (or re-announce) a room as its host |
 | `join` | `room`, `activityId`, `role`, `learner`, `teacher`, `invited`, `name`, `accountHash` | Join (or rejoin) a room as a member; `invited` claims prior admission (client-asserted) so a handover doesn't dump an admitted member back into the applicant queue |
 | `heartbeat` | (none) | Proof of life, sent only when nothing else went out within 5 s |
-| `update` | `s` (state — partial `PlayerUpdate`, short-keyed), `g?` (urgent) | Report changed vitals/items/profile fields; `g: true` asks the owner node to relay without waiting out its idle window (only a vital moving *down* sets it) |
+| `update` | `s` (state — partial `PlayerUpdate`, short-keyed), `g?` (urgent) | Report changed vitals/items/profile fields; `g: true` asks the owner node to relay without waiting out its idle window (only a vital moving *down*, or Vengeance coming up or going, sets it) |
 | `ping` | `x`, `y`, `plane`, `color`, `name` | Drop a map ping |
 | `command` | `action` (`ADMIT` / `KICK` / `REJECT`), `target` (memberId), `name` | Host roster action |
 | `setCapacity` | `capacity` | Host changes party size |
@@ -392,6 +397,7 @@ the connection outlived.
 | `readyStart` | `checkId`, `starter` | Start a ready check (any member may) |
 | `ready` | `checkId` | Mark ready for the named check |
 | `specDrain` | `npcIndex`, `weapon`, `hit`, `world` | Broadcast a defence-draining special attack |
+| `chat` | `text` | Say something to the party. Relayed to every admitted member but the sender, under the name the room holds for them; the text is trimmed, capped at 80 characters (the chatbox's own limit) and held to 10 lines per 10 s per member |
 | `fcRequest` | `target` (memberId), `kind`, `friendsChat` | Host → one member: how to actually get into the raid (`kind`: `FC` / `NOTICE_BOARD` / `OBELISK`) |
 | `transferHost` | `kind` (`OFFER`/`ACCEPT`/`COMMIT`/`ABORT`), `target` (memberId), `newHostKey?`, `newHostName?`, `hostStays` | One step of the host-transfer handshake — see below |
 
@@ -402,7 +408,7 @@ Frame shapes: [`LiveFrames`](../src/main/java/net/osparty/party/LiveFrames.java)
 | Frame (`t`) | Payload | Meaning |
 |---|---|---|
 | `welcome` | `m` (memberId), `status`, `nodeId?` | Seated: our own status, and (host only) the pod the room landed on |
-| `roster` | `members[]` (`m`, `name`, `accountHash`, `playerId`, `status`, `role`, `learner`, `teacher`, `offline`), `host`, `capacity`, `locked`, `discordUrl`, `closed?` | The authoritative roster and room settings. `closed: true` ends the party for everyone |
+| `roster` | `members[]` (`m`, `name`, `playerId`, `status`, `role`, `learner`, `teacher`, `offline`), `host`, `capacity`, `locked`, `discordUrl`, `closed?` | The authoritative roster and room settings. `closed: true` ends the party for everyone |
 | `mu` | `u[]` of (`m`, `s`) | One aggregation window's worth of every other member's state changes |
 | `resync` | (none) | We were just seated with no picture of the room (the owner keeps no live state); treat everything we hold as stale and resend it all |
 | `alive` | `m` | A peer's heartbeat, relayed — presence only, no state change |
@@ -412,6 +418,7 @@ Frame shapes: [`LiveFrames`](../src/main/java/net/osparty/party/LiveFrames.java)
 | `readyStart` | `checkId`, `starter`, `m` | Someone started a ready check |
 | `ready` | `checkId`, `m` | A member marked ready |
 | `specDrain` | `m`, `npcIndex`, `weapon`, `hit`, `world` | A relayed defence-draining special |
+| `chat` | `m`, `name`, `text` | A peer's party chat line; `name` is the room's record of the sender, not the sender's claim |
 | `fcRequest` | `host`, `kind`, `friendsChat`, `m` | Targeted join prompt (delivered only to its target) |
 | `transferHost` | `kind`, `m`, `newHostKey?`, `newHostName?`, `hostStays` | Targeted host-transfer step (delivered only to its target) |
 | `kicked` | (none) | The host removed us; delivered only to the removed member |

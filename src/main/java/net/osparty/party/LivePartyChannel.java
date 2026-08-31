@@ -272,6 +272,8 @@ public class LivePartyChannel implements OSPartySocket.LiveChannel {
 		public String newHostKey;
 		public String newHostName;
 		public Boolean hostStays;
+		// Party chat; the sender's name rides in {@link #name}.
+		public String text;
 	}
 
 	/** One member's live update inside an {@code mu} frame. */
@@ -287,8 +289,10 @@ public class LivePartyChannel implements OSPartySocket.LiveChannel {
 		@SerializedName("m")
 		public long memberId;
 		public String name;
-		public long accountHash;
-		/** This member's public, non-reversible id -- stable across a rename, safe to store or show. */
+		/**
+		 * This member's public, non-reversible id -- stable across a rename, safe to store or show, and the
+		 * only identity the roster carries: the account hash behind it never leaves the server.
+		 */
 		public String playerId;
 		public String status;
 		public String role;

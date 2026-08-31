@@ -33,6 +33,8 @@ your party, and optional Discord role badges and voice channels if your communit
   still needs.
 - **Invite friends directly** from your in-game friends list; accepted invites skip the
   applicant queue.
+- **Party chat in the game chatbox** — type `!p` and a message to talk to your party; it shows
+  up like a friends-chat line, `[OSParty] Name: message`.
 - **Learner and teacher tagging**, so new raiders and experienced ones can find each other on
   purpose.
 - **RuneWatch warnings, a block list and reporting**, so you know who you're about to raid with.
@@ -83,8 +85,9 @@ activities:
 
 - **Raids:** Chambers of Xeric (CoX) · Theatre of Blood · Tombs of Amascut
 - **Godwars:** Kree'arra · General Graardor · K'ril Tsutsaroth · Commander Zilyana · Nex
-- **Other:** The Nightmare · Corporeal Beast · Barbarian Assault\* · Zalcano · The Hueycoatl ·
-  Yama · Royal Titans · Volcanic Mine\* · Castle Wars\* · Guardians of the Rift · Wintertodt
+- **Other:** The Nightmare · Corporeal Beast · Dagannoth Kings · Barbarian Assault\* · Zalcano ·
+  The Hueycoatl · Yama · Royal Titans · Volcanic Mine\* · Castle Wars\* · Guardians of the Rift ·
+  Wintertodt
 
 \* No hiscore kill count exists for Barbarian Assault, Volcanic Mine or Castle Wars, so there's
 no min-KC bar to set for these three.
@@ -139,6 +142,14 @@ Create party opens the live room and switches the tab to Save changes for as lon
 editing.
 
 ![Create form filled in for a CoX raid](docs/images/create.png)
+
+**Made the party in-game first?** When you make a raid party at the Chambers of Xeric board, the
+Theatre of Blood notice board or the Tombs of Amascut obelisk, OSParty offers to advertise it — a
+card in the chatbox and a banner on the panel — with the form filled in from the game (CM, the
+invocation level, the preferred size) and from whatever you last used for that raid. Advertise,
+Not now, or Don't ask again; the Advertise in-game raid parties setting can also make it
+automatic, or turn it off. While you host a CoX or ToA party, the ad also follows the board: change
+the scale or the invocation level in-game and the ad updates itself (Follow the in-game board).
 
 Once hosting, the tab becomes a management view: the roster, pending applicants with Accept and
 Decline (you see their real gear, stats and KC before deciding), and the still-needed roles.
@@ -219,20 +230,31 @@ toggles, and each role's tile colour is configurable — see the Player markers 
 
 ## In-game extras
 
+- **Party chat** — type `!p` (configurable) and a message in the normal chatbox to send it to
+  your party; the line never reaches public or clan chat. Everyone's lines, yours included, show
+  as `[OSParty] Name: message` — ironman icon and all, like a friends-chat line — in the Channel
+  tab, or in the Clan or Game tab if you prefer. RuneLite's chat commands work inside a party
+  line too (`!p !kc cox`), except in the Game tab. Lines from anyone on your block list are
+  dropped. Type `!p` on its own to switch **party chat mode** on, like the game's `/@c`:
+  everything you type then goes to the party, apart from lines you route elsewhere yourself with
+  `/` or `::`, until you type `!p` again or the party ends.
 - **Map pings** — hold the ping hotkey (default the backtick key) and left-click a tile to ping
   it for the whole party. Incoming pings animate on the scene in the sender's colour, with an
   optional arrow at the screen edge for off-screen ones.
 - **Party member names** — draws every party member's name above their head. If you also run
   RuneLite's Player Indicators plugin, OSParty defers to it instead of drawing over the top.
+- **Vengeance icons** — a party member with Vengeance up gets the spell's icon on their model in
+  the scene, and next to their vitals on the Party tab, until a hit spends it.
 - **Defence tracker** — while the party drains a boss's defence with special attacks, shows its
   live defence next to the overhead HP bar and/or as a status-bar info box. This is entirely
   self-contained: it watches your special attack energy drop, works out which weapon you used
   and its projectile delay, and matches the resulting hitsplat — it does not use, enable or
   depend on RuneLite's Special Attack Counter plugin, or any other plugin. It also tracks magic
   defence draining from the accursed sceptre, Seercull and Eye of ayak, plus BGS overkill and any
-  physical special that spills into magic defence (Ice Demon, Verzik). By default it keeps
-  tracking outside a party too — turn that off in settings if you only want it during party
-  content.
+  physical special that spills into magic defence (Ice Demon, Verzik). The readout is yours to
+  shape: current level, current over starting (`142/200`), a percentage, or both, with the drain
+  after the arrow as an amount or a percent — or hidden. By default it keeps tracking outside a
+  party too — turn that off in settings if you only want it during party content.
 
   ![Defence tracker next to a boss's HP bar](docs/images/defence.png)
 
@@ -309,18 +331,22 @@ All under RuneLite's OSParty plugin settings, grouped the same way as in the cli
 | Setting | What it does |
 |---|---|
 | Default party size | Capacity pre-filled on the create-party form. |
-| Max applicants shown | Cap on applicants listed in the in-game applicant overlay before "+N more". |
+| Check for similar parties | Before creating, look for a party already running the same thing and offer to join it instead. |
 | Blocked applicant | What happens when a blocked player applies: warn you, auto-reject and notify, or auto-reject silently. |
 | Skip disband confirmation | Don't ask for confirmation before disbanding your own party. |
+| Advertise in-game raid parties | When you make a CoX, ToB or ToA party in-game: ask whether to advertise it on OSParty, always advertise it, or do nothing. |
+| Raid party prompt | Where that question is asked: sidebar, in-game card, or both. |
+| Follow the in-game board | While hosting a CoX or ToA party, keep the ad's scale / invocation level in step with the in-game board. |
 
 ### Notifications
 
 | Setting | What it does |
 |---|---|
 | Chatbox notifications | Post OSParty events (applicants, requests, ready checks) to your chatbox. |
-| In-game join prompts | As host, also show Accept/Decline for new applicants in the chatbox, not just the panel. |
+| In-game join prompts | As host, also show an Accept/Decline card for new applicants in the chatbox, not just the panel. |
 | Desktop notifications | Send a desktop notification for invites, requests, applicants and ready checks. |
 | Friend invites | How a party invite from a friend is surfaced: sidebar, in-game, both, or off. |
+| Parties found while looking | How a party found by "Find me a party" is surfaced: sidebar, in-game, both, or off. |
 | Friends-chat join requests | Allow hosts to ask you, via a popup, to join their friends chat. |
 | Join-request popup duration (s) | How long the friends-chat/notice-board join-request popup stays up. |
 
@@ -343,6 +369,14 @@ All off by default.
 | Hide my gear | Don't share your equipped gear with the party. |
 | RuneWatch warnings | Warn when a member or applicant is on the RuneWatch / We Do Raids watchlist. |
 
+### Party chat
+
+| Setting | What it does |
+|---|---|
+| Party chat | Send and receive party chat in the game chatbox. |
+| Chat prefix | What to type in front of a message to send it to your party (default `!p`). On its own it toggles party chat mode. |
+| Show as | Which chatbox tab party lines appear in: Channel (as friends chat), Clan, or Game. |
+
 ### Map pings
 
 | Setting | What it does |
@@ -364,6 +398,7 @@ All off by default.
 | Learner colour | Colour of the learner tile marker. |
 | Party member names | Draw every party member's name above their head in the scene. |
 | Party name colour | Colour of the name drawn above party members. |
+| Vengeance icons | Show the Vengeance spell icon on party members in the scene while they have it active. |
 
 ### Defence tracker
 
@@ -371,17 +406,25 @@ All off by default.
 |---|---|
 | Show next to HP bar | Show a monster's live defence on the scene, next to its health bar. |
 | HP-bar position | Where the scene defence display sits relative to the monster. |
+| Vertical nudge | Shift the scene display up (or down, if negative) by a number of pixels. |
 | Show in status bar | Also show the monster's live defence as an info box in the status bar. |
+| Status bar shows | Whether the info box shows the current defence, the percent remaining, or the amount drained; hovering it gives the full breakdown. |
 | Show before any spec | Show defence at its starting level immediately, instead of waiting for the first drain. |
+| Defence shown as | Write levels as the current value (`142`), current over starting (`142/200`), the percent remaining (`71%`), or current with the percent (`142 (71%)`). |
+| Drain shown as | What follows the down arrow: the amount drained, the percent drained, or nothing. |
 | Show full level | For monsters with a defence floor, show the full level rather than the amount above it. |
+| Show skill icons | Draw the Defence and Magic icons in front of the scene readouts. |
+| Scene text size | Font size for the on-scene defence display. |
+| Scene text background | Draw a translucent plate behind the scene text for legibility. |
 | Low defence threshold | Defence at or below this (above the floor) uses the low-defence colour. |
+| Threshold unit | Read the threshold as levels, or as a percent of what can be drained. |
 | High defence colour | Colour when defence is above the low threshold. |
 | Low defence colour | Colour when defence is at or below the low threshold. |
 | Capped defence colour | Colour when defence is fully drained. |
-| Scene text size | Font size for the on-scene defence display. |
-| Scene text background | Draw a translucent plate behind the scene text for legibility. |
+| Drain colour | Colour of the down arrow and drained amount. |
 | Show magic defence | Also show magic defence draining from the accursed sceptre, Seercull or Eye of ayak. |
-| Magic defence as | Show the magic-defence bonus, the percentage of the starting roll, or both. |
+| Magic defence as | Show the magic-defence bonus, the Magic level, the percentage of the starting roll, or bonus and percentage. |
+| Magic defence on same row | Put the magic readout beside the Defence readout instead of under it. |
 | Magic defence colour | Colour of the magic-defence readout. |
 | Track outside a party | Keep tracking defence drains outside a party too (on by default). |
 

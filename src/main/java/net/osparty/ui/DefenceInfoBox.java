@@ -12,24 +12,21 @@ import net.runelite.client.ui.overlay.infobox.InfoBox;
  * Status-bar (info-box) display of the monster's live defence, an alternative or
  * complement to the {@link NpcDefenceOverlay} scene display. Reads the value from
  * {@link DefenceTracker} on every render so it stays current without per-tick updates.
+ * The box only fits a few characters, so the full picture lives in its tooltip.
  */
 public class DefenceInfoBox extends InfoBox
 {
-	private static final String PLAIN_TOOLTIP = "Monster defence";
-
 	private final DefenceTracker tracker;
 	private final OSPartyConfig config;
-	/** What the pushed tooltip was built from, so a per-frame render only rebuilds it on a change. */
-	private boolean tipMagic;
-	private long tipMagicDef = Long.MIN_VALUE;
-	private long tipPercent = Long.MIN_VALUE;
+	/** The last tooltip pushed, so a per-frame render only rebuilds it on a change. */
+	private String tooltip = "";
 
 	public DefenceInfoBox(BufferedImage image, Plugin plugin, DefenceTracker tracker, OSPartyConfig config)
 	{
 		super(image, plugin);
 		this.tracker = tracker;
 		this.config = config;
-		setTooltip(PLAIN_TOOLTIP);
+		setTooltip("Monster defence");
 	}
 
 	@Override
@@ -41,45 +38,54 @@ public class DefenceInfoBox extends InfoBox
 			return "";
 		}
 		updateTooltip(state);
-		long shown = config.defenceShowFullLevel() ? state.getCurrent() : state.getCurrent() - state.getMin();
-		return Long.toString(Math.max(0, shown));
+		boolean full = config.defenceShowFullLevel();
+		long current = DefenceReadout.shownDefence(state, full);
+		long base = DefenceReadout.shownBaseDefence(state, full);
+		switch (config.defenceInfoBoxValue())
+		{
+			case PERCENT:
+				return DefenceReadout.percentRemaining(current, base) + "%";
+			case DRAINED:
+				return Long.toString(Math.max(0, base - current));
+			case CURRENT:
+			default:
+				return Long.toString(current);
+		}
 	}
 
+	/** e.g. {@code Great Olm: Defence 142/200 (71%, -58) | Magic level 250/250, bonus 180/200 (84% of starting roll)}. */
 	private void updateTooltip(DefenceState state)
 	{
-		boolean magic = config.magicDefence() && state.getMagicBaseRoll() > 0;
-		long def = magic ? state.getMagicDef() : 0;
-		long percent = magic
-			? Math.max(0, Math.round(state.getMagicRoll() * 100.0 / state.getMagicBaseRoll())) : 0;
-		if (magic == tipMagic && def == tipMagicDef && percent == tipPercent)
+		boolean full = config.defenceShowFullLevel();
+		long current = DefenceReadout.shownDefence(state, full);
+		long base = DefenceReadout.shownBaseDefence(state, full);
+		StringBuilder tip = new StringBuilder(state.getName()).append(": Defence ")
+			.append(current).append('/').append(base)
+			.append(" (").append(DefenceReadout.percentRemaining(current, base)).append('%');
+		if (base > current)
 		{
-			return;
+			tip.append(", -").append(base - current);
 		}
-		tipMagic = magic;
-		tipMagicDef = def;
-		tipPercent = percent;
-		setTooltip(magic
-			? PLAIN_TOOLTIP + " (magic defence: " + def + " bonus, " + percent + "% of starting roll)"
-			: PLAIN_TOOLTIP);
+		tip.append(')');
+		if (config.magicDefence())
+		{
+			tip.append(" | Magic level ").append(state.getMagicLevel()).append('/').append(state.getMagicBaseLevel())
+				.append(", bonus ").append(state.getMagicDef()).append('/').append(state.getMagicBaseDef())
+				.append(" (").append(DefenceReadout.percentRemaining(state.getMagicRoll(), state.getMagicBaseRoll()))
+				.append("% of starting roll)");
+		}
+		String text = tip.toString();
+		if (!text.equals(tooltip))
+		{
+			tooltip = text;
+			setTooltip(text);
+		}
 	}
 
 	@Override
 	public Color getTextColor()
 	{
 		DefenceState state = tracker.state();
-		if (state == null)
-		{
-			return Color.WHITE;
-		}
-		long relative = Math.max(state.getCurrent() - state.getMin(), 0);
-		if (relative == 0)
-		{
-			return config.defenceCappedColor();
-		}
-		if (relative <= config.defenceLowThreshold())
-		{
-			return config.defenceLowColor();
-		}
-		return config.defenceHighColor();
+		return state == null ? Color.WHITE : DefenceReadout.defenceColor(state, config);
 	}
 }

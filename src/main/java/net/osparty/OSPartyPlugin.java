@@ -11,26 +11,37 @@ import net.osparty.model.Activity;
 import net.osparty.model.Applicant;
 import net.osparty.model.Advertisement;
 import net.osparty.model.Member;
+import net.osparty.model.Role;
 import net.osparty.party.JoinPromptEvent;
 import net.osparty.party.PlayerNames;
 import net.osparty.party.HostTransferEvent;
 import net.osparty.party.LiveParty;
 import net.osparty.party.LocalPlayerSnapshot;
 import net.osparty.party.LivePartyBackend;
+import net.osparty.party.PartyChatEvent;
 import net.osparty.party.SpecDrainEvent;
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
 import net.osparty.ui.AccountRecoveryController;
 import net.osparty.ui.OSPartyPanel;
-import net.osparty.ui.ApplicantOverlay;
 import net.osparty.ui.JoinPromptOverlay;
 import net.osparty.ui.DefenceInfoBox;
+import net.osparty.ui.ChatboxCards;
+import net.osparty.ui.InvitePrompt;
+import net.osparty.ui.MatchOffer;
+import net.osparty.ui.MatchPrompt;
+import net.osparty.ui.SimilarParties;
+import net.osparty.ui.SimilarPrompt;
+import net.osparty.ui.PartyPrompt;
+import net.osparty.ui.RaidPartyPrompt;
+import net.osparty.ui.RoleChooser;
 import net.osparty.ui.NpcDefenceOverlay;
 import net.osparty.ui.PartyNameOverlay;
 import net.osparty.ui.PlayerMarkerOverlay;
 import net.osparty.ui.ReadyCheckOverlay;
 import net.osparty.ui.PingArrowOverlay;
 import net.osparty.ui.TilePingOverlay;
+import net.osparty.ui.VengeanceOverlay;
 import com.google.inject.Provides;
 import java.awt.BasicStroke;
 import java.awt.Color;
@@ -46,7 +57,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.gson.Gson;
 import javax.inject.Inject;
@@ -64,7 +75,6 @@ import net.runelite.api.MenuEntry;
 import net.runelite.api.NameableContainer;
 import net.runelite.api.Player;
 import net.runelite.api.Skill;
-import net.runelite.api.SoundEffectID;
 import net.runelite.api.Tile;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.FakeXpDrop;
@@ -73,6 +83,7 @@ import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.HitsplatApplied;
 import net.runelite.api.events.NpcDespawned;
+import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.gameval.InterfaceID;
@@ -88,8 +99,8 @@ import net.runelite.api.vars.AccountType;
 import net.runelite.client.Notifier;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.events.ChatboxInput;
 import net.runelite.client.events.ConfigChanged;
-import net.runelite.client.audio.AudioPlayer;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.input.KeyManager;
 import net.runelite.client.util.*;
@@ -111,7 +122,9 @@ import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.ui.overlay.infobox.InfoBoxManager;
 import net.osparty.api.PartyInvite;
+import net.osparty.enums.EventSound;
 import net.osparty.enums.InviteDisplay;
+import net.osparty.enums.RaidPartyAutoCreate;
 
 @Slf4j
 @PluginDescriptor(
@@ -158,10 +171,13 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private ChatboxPanelManager chatboxPanelManager;
 
 	@Inject
+	private ChatboxCards cards;
+
+	@Inject
 	private Gson gson;
 
 	@Inject
-	private AudioPlayer audioPlayer;
+	private PartySounds partySounds;
 
 	@Inject
 	private KeyManager keyManager;
@@ -173,7 +189,19 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private SpecialAttackTracker specTracker;
 
 	@Inject
+	private PartyChat partyChat;
+
+	@Inject
+	private PartyShare partyShare;
+
+	@Inject
 	private CoxRaidScanner coxRaidScanner;
+
+	@Inject
+	private RaidPartyWatcher raidPartyWatcher;
+
+	@Inject
+	private RaidBoardSync raidBoardSync;
 
 	@Inject
 	private InfoBoxManager infoBoxManager;
@@ -222,18 +250,19 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private Timer navBlinkTimer;
 	private boolean navAlertShown;
 	private volatile boolean panelActive;
-	private final ConcurrentLinkedDeque<PartyInvite> invitePromptQueue = new ConcurrentLinkedDeque<>();
 	private final Map<String, PartyInvite> activeInvites = new ConcurrentHashMap<>();
 	private static final long INVITE_COOLDOWN_MS = 30_000;
-	private static final String SOUND_READY_CHECK = "/net/osparty/sounds/readycheck.wav";
-	private static final String SOUND_ALL_READY = "/net/osparty/sounds/ready.wav";
-	private static final String SOUND_KICKED = "/net/osparty/sounds/kicked.wav";
-	private static final String SOUND_FRIENDS_CHAT = "/net/osparty/sounds/friendschatsound.wav";
 	private final Map<String, Long> lastInviteAt = new ConcurrentHashMap<>();
-	private String openInviteId;
+	/** The in-game invite or match card while it is up, so accepting turns its page instead of reopening. */
+	private PartyPrompt partyCard;
+	/** The party currently being offered by the matchmaker, on either surface; null when none is. */
+	private volatile String openMatchId;
+	/** The in-game raid party being offered for advertising, on either surface; null when none is. */
+	private final AtomicReference<RaidPartyDetected> openRaidOffer = new AtomicReference<>();
+	/** Set while an in-game role question is outstanding; see {@link #answerRole(String)}. */
+	private java.util.function.Consumer<String> pendingRolePick;
 	private long identifiedHash;
 	private String identifiedName;
-	private ApplicantOverlay applicantOverlay;
 	private JoinPromptOverlay joinPromptOverlay;
 	private ReadyCheckOverlay readyCheckOverlay;
 	private TilePingOverlay tilePingOverlay;
@@ -242,6 +271,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private PlayerMarkerOverlay playerMarkerOverlay;
 
 	private PartyNameOverlay partyNameOverlay;
+	private VengeanceOverlay vengeanceOverlay;
 	private DefenceInfoBox defenceBox;
 	private volatile boolean pingHotkeyDown;
 	private volatile String playerName;
@@ -258,9 +288,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	private int friendsSignature;
 
 	/** Filled from the EDT (the panel's refresh), drained on the client thread. */
-	private final ConcurrentLinkedDeque<PendingPrompt> promptQueue = new ConcurrentLinkedDeque<>();
-	private volatile boolean promptOpen;
-	private long openPromptMemberId;
 
 	/**
 	 * Whether a printable key would land in a text field rather than reach us. There is no such thing
@@ -303,19 +330,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 	};
 
-	private static final class PendingPrompt
-	{
-		final Applicant applicant;
-		final Activity activity;
-
-		PendingPrompt(Applicant applicant, Activity activity)
-		{
-			this.applicant = applicant;
-			this.activity = activity;
-		}
-	}
-
-
 	@Override
 	protected void startUp()
 	{
@@ -326,9 +340,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		accountRecovery = new AccountRecoveryController(socket, this::getAccountHash, this::getPlayerName);
 		accountRecovery.register();
 		socket.start();
-
-		applicantOverlay = new ApplicantOverlay(config);
-		overlayManager.add(applicantOverlay);
 
 		joinPromptOverlay = new JoinPromptOverlay();
 		overlayManager.add(joinPromptOverlay);
@@ -356,34 +367,29 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			partyService);
 		overlayManager.add(partyNameOverlay);
 
+		vengeanceOverlay = new VengeanceOverlay(client, liveParty, config, spriteManager);
+		overlayManager.add(vengeanceOverlay);
+
 		keyManager.registerKeyListener(pingHotkeyListener);
 
 		// Ready-check notifications: chat pings and an optional all-ready sound.
 		liveParty.setOnReadyCheckStarted(starter -> {
 			chat(starter + " started a ready check - ready up in the OSParty panel.", true);
 			desktopNotify(starter + " started a ready check.");
-			if (config.readyCheckSound())
-			{
-				playResourceSound(SOUND_READY_CHECK);
-			}
+			partySounds.play(EventSound.READY_CHECK_STARTED);
 		});
 		liveParty.setOnAllReady(() -> {
 			Activity activity = Activity.fromId(liveParty.currentActivityId());
 			String name = activity != null ? activity.getDisplayName() : "the activity";
 			chat("Everyone is ready for " + name + "!", true);
 			desktopNotify("Everyone is ready for " + name + "!");
-			playReadySound();
+			partySounds.play(EventSound.ALL_READY);
 		});
 		liveParty.setOnReadyExpired(() -> chat("Ready check expired.", true));
-		liveParty.setOnKicked(() -> {
-			if (config.kickSound())
-			{
-				playResourceSound(SOUND_KICKED);
-			}
-		});
+		liveParty.setOnKicked(() -> partySounds.play(EventSound.KICKED));
 		// A ping we can't see isn't worth a sound, so skip anything off-plane or outside the scene.
 		liveParty.setOnPingReceived(point -> {
-			if (!config.pings() || !config.pingSound() || point == null)
+			if (!config.pings() || point == null)
 			{
 				return;
 			}
@@ -391,7 +397,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 				if (point.getPlane() == client.getPlane()
 					&& WorldPoint.isInScene(client, point.getX(), point.getY()))
 				{
-					client.playSoundEffect(SoundEffectID.SMITH_ANVIL_TINK);
+					partySounds.play(EventSound.PING);
 				}
 			});
 		});
@@ -405,7 +411,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		worldPinger = new WorldPinger();
 
 		// A player can't block themselves.
-		blockListService.setSelf(this::getAccountHash, this::getSelfName);
+		blockListService.setSelf(this::getPlayerId, this::getSelfName);
 
 		panel = new OSPartyPanel(boardService, config, this::getPlayerName, this,
 			this::getFriendsChatOwner, this::getCurrentWorld, itemManager, liveParty, runeWatchService,
@@ -427,8 +433,39 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		clientToolbar.addNavigation(navButton);
 		panel.setOnActivated(this::onPanelActivated);
 		panel.setOnDeactivated(this::onPanelDeactivated);
-		panel.setInviteHandlers(invite -> resolveInvite(invite, true), invite -> resolveInvite(invite, false));
+		panel.setInviteHandlers(invite -> resolveInvite(invite, true, false),
+			invite -> resolveInvite(invite, false, false));
+		panel.setMatchHandler(this::onMatchFound);
+		// The Create tab always shows its own inline prompt; this adds the in-game card beside it.
+		panel.setSimilarHandler(this::onSimilarParties, inGameRoleChooser,
+			() -> clientThread.invoke(() -> cards.dismiss(SIMILAR_CARD_KEY)));
+		// Turning the toggle off has to take any offer already on screen with it.
+		panel.setOnLookingChanged(() -> clientThread.invoke(() -> cards.dismiss(openMatchId)));
 		apiClient.setInviteListener(this::onPartyInvite);
+		partyShare.setSelfName(this::getPlayerName);
+		// A chat-line apply is an invite-style join: checked and role-picked in-game, reported to the chatbox.
+		partyShare.setOnApply(ad -> SwingUtilities.invokeLater(() ->
+		{
+			OSPartyPanel currentPanel = panel;
+			if (currentPanel != null)
+			{
+				currentPanel.applyTo(ad, message -> chat(message, false), inGameRoleChooser);
+			}
+		}));
+		raidPartyWatcher.setListener(this::onRaidPartyDetected);
+		// A hosted raid ad follows the in-game board (CoX scale, ToA invocation level) while the setting is on.
+		raidBoardSync.setHostedAd(() ->
+		{
+			OSPartyPanel currentPanel = panel;
+			return currentPanel != null && config.raidBoardSync() ? currentPanel.hostedAd() : null;
+		});
+		raidBoardSync.setListener((activity, coxScale, invocation) -> SwingUtilities.invokeLater(() ->
+		{
+			if (panel != null)
+			{
+				panel.applyBoardToHostedAd(activity, coxScale, invocation);
+			}
+		}));
 		log.info("OSParty started (API {})", BoardApiClient.apiBaseUrl());
 	}
 
@@ -437,9 +474,16 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	{
 		liveParty.leave();
 		liveParty.unregister();
+		partyChat.reset();
+		partyShare.reset();
 		// These live on singletons that outlast the plugin, so a restart would otherwise stack callbacks
 		// onto a dead instance. Every setter tolerates null.
 		apiClient.setInviteListener(null);
+		raidPartyWatcher.setListener(null);
+		raidPartyWatcher.reset();
+		raidBoardSync.setListener(null);
+		raidBoardSync.setHostedAd(null);
+		raidBoardSync.reset();
 		liveParty.setOnReadyCheckStarted(null);
 		liveParty.setOnAllReady(null);
 		liveParty.setOnReadyExpired(null);
@@ -467,7 +511,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			clientToolbar.removeNavigation(navButtonAlert);
 		}
-		overlayManager.remove(applicantOverlay);
 		overlayManager.remove(joinPromptOverlay);
 		overlayManager.remove(readyCheckOverlay);
 		overlayManager.remove(tilePingOverlay);
@@ -475,6 +518,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		overlayManager.remove(defenceOverlay);
 		overlayManager.remove(playerMarkerOverlay);
 		overlayManager.remove(partyNameOverlay);
+		overlayManager.remove(vengeanceOverlay);
 		if (defenceBox != null)
 		{
 			infoBoxManager.removeInfoBox(defenceBox);
@@ -487,7 +531,6 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			worldPinger.shutdown();
 			worldPinger = null;
 		}
-		applicantOverlay = null;
 		joinPromptOverlay = null;
 		readyCheckOverlay = null;
 		tilePingOverlay = null;
@@ -495,6 +538,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		defenceOverlay = null;
 		playerMarkerOverlay = null;
 		partyNameOverlay = null;
+		vengeanceOverlay = null;
 		panel = null;
 		navButton = null;
 		navButtonAlert = null;
@@ -506,12 +550,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		accountHash = -1L;
 		// A prompt left open would keep both drain loops short-circuited for the rest of the session,
 		// and rejoinChecked would eat the once-per-login rejoin offer.
-		promptOpen = false;
-		openPromptMemberId = 0;
-		openInviteId = null;
+		partyCard = null;
+		openMatchId = null;
+		openRaidOffer.set(null);
+		pendingRolePick = null;
 		rejoinChecked = false;
-		promptQueue.clear();
-		invitePromptQueue.clear();
+		cards.clear();
 		activeInvites.clear();
 		lastInviteAt.clear();
 		friendNames = Collections.emptySet();
@@ -590,7 +634,10 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			mapRegions = null;
 			accountType = null;
 			accountHash = -1L;
-			promptQueue.clear();
+			cards.clear(ChatboxCards.Priority.JOIN_REQUEST);
+			// No game ticks arrive on the login screen, so the watcher can't see the logout itself; without
+			// this the next login's varbit replay would read as the player making a party.
+			raidPartyWatcher.reset();
 		}
 		// Re-arm the rejoin check on a real logout (not a world hop).
 		if (event.getGameState() == GameState.LOGIN_SCREEN)
@@ -610,7 +657,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		world = client.getWorld();
 		mapRegions = client.getMapRegions();
-		accountType = client.getAccountType();
+		// Mapped from the varbit ourselves: the deprecated getAccountType() has no unranked-group-ironman
+		// value and reports one as a normal account, locking them out of ironman-only parties.
+		accountType = AccountTypes.fromVarbit(client.getVarbitValue(VarbitID.IRONMAN));
 		accountHash = client.getAccountHash();
 		// Tell the socket which character it should present a credential for. Read on connect, so a switch
 		// takes effect on the next reconnect rather than mid-connection -- which is right: the credential
@@ -647,14 +696,17 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		coxRaidScanner.update();
 		coxLayout = coxRaidScanner.layout();
 
-		// Show the next in-game applicant prompt if the chatbox is free.
-		drainApplicantPrompts();
+		// Notice a raid party the player just made at the board, so it can be advertised; and keep an ad we
+		// host in step with what the board says about it.
+		raidPartyWatcher.update();
+		raidBoardSync.update();
 
-		// Show the next in-game invite prompt if the chatbox is free.
-		drainInvitePrompts();
+		// Show the next queued in-game card if the chatbox is free.
+		cards.tick();
 
 		// Push pending host state / our own live snapshot (client thread).
 		liveParty.tick();
+		partyChat.onGameTick();
 
 		// Resolve this tick's local special attack, then apply all queued drains
 		// (local and party members') and clear dead targets.
@@ -730,6 +782,24 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	}
 
 	@Subscribe
+	public void onChatboxInput(ChatboxInput event)
+	{
+		partyChat.onChatboxInput(event);
+	}
+
+	@Subscribe
+	public void onChatMessage(ChatMessage event)
+	{
+		partyShare.onChatMessage(event);
+	}
+
+	@Subscribe
+	public void onPartyChatEvent(PartyChatEvent event)
+	{
+		partyChat.onPartyChatEvent(event);
+	}
+
+	@Subscribe
 	public void onItemContainerChanged(ItemContainerChanged event)
 	{
 		// Only the two containers a snapshot actually carries. This fires for the bank, the GE and every
@@ -767,6 +837,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Subscribe
 	public void onMenuOptionClicked(MenuOptionClicked event)
 	{
+		Activity raidBoard = raidBoardClick(event);
+		if (raidBoard != null)
+		{
+			raidPartyWatcher.onBoardClicked(raidBoard, event.getMenuOption(), raidBoardComponent(event));
+		}
 		if (!pingHotkeyDown || client.isMenuOpen() || !liveParty.isInParty() || !config.pings())
 		{
 			return;
@@ -796,9 +871,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		event.consume();
 
 		WorldPoint point = selectedSceneTile.getWorldLocation();
-		if (point != null && liveParty.sendPing(point, config.pingColor()) && config.pingSound())
+		if (point != null && liveParty.sendPing(point, config.pingColor()))
 		{
-			client.playSoundEffect(SoundEffectID.SMITH_ANVIL_TINK);
+			partySounds.play(EventSound.PING);
 		}
 	}
 
@@ -841,11 +916,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		{
 			joinPromptOverlay.show(host, title, detail, config.fcRequestDurationSecs() * 1000L);
 			chat(host + " - " + detail, true);
-			desktopNotify(host + " — " + detail);
-			if (config.friendsChatRequestSound())
-			{
-				playResourceSound(SOUND_FRIENDS_CHAT);
-			}
+			desktopNotify(host + ": " + detail);
+			partySounds.play(EventSound.FRIENDS_CHAT_REQUEST);
 		}
 	}
 
@@ -968,11 +1040,19 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		return accountHash;
 	}
 
+	/**
+	 * The local player's public id, or null when not seated in a party. The server derives it from the
+	 * account hash and hands it back on the roster; it is what other players know us by.
+	 */
+	public String getPlayerId()
+	{
+		return liveParty.localPlayerId();
+	}
+
 
 	@Override
 	public void setPendingApplicants(List<Applicant> applicants, Activity activity)
 	{
-		applicantOverlay.setApplicants(applicants, activity);
 		// Badge the sidebar button while applications are waiting, not only for invites: the chat line
 		// announcing an applicant scrolls away, so otherwise nothing points at the panel. Driven by the
 		// live list rather than the one-shot announcement, so the dot lasts as long as the applications do.
@@ -996,7 +1076,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		if (applicant.isBlocked())
 		{
 			// Persistent in-game notification for a blocked applicant, since the chat line scrolls away.
-			notifier.notify(applicant.getName() + " is on your block list — applied to your "
+			notifier.notify(applicant.getName() + " is on your block list, and applied to your "
 				+ activity.getDisplayName() + " party.");
 		}
 		else
@@ -1010,14 +1090,14 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// Also offer an in-game chatbox Accept/Decline (driven on the game tick).
 		if (config.inGamePrompts() && applicant.getMemberId() != 0)
 		{
-			promptQueue.add(new PendingPrompt(applicant, activity));
+			cards.offer(applicantCard(applicant, activity));
 		}
 	}
 
 	@Override
 	public void announceAutoDeclinedBlocked(Applicant applicant, Activity activity)
 	{
-		notifier.notify("Auto-declined " + applicant.getName() + " — on your block list ("
+		notifier.notify("Auto-declined " + applicant.getName() + ", who is on your block list ("
 			+ activity.getDisplayName() + ").");
 		chat("Auto-declined " + applicant.getName() + " - on your block list.", true);
 	}
@@ -1040,6 +1120,28 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 		List<String> parts = new ArrayList<>();
 		parts.add("cb " + applicant.getCombatLevel());
+		parts.addAll(applicantParts(applicant, activity));
+		if (runeWatchService.get(applicant.getName()) != null)
+		{
+			parts.add("(!) RuneWatch listed");
+		}
+		return String.join(", ", parts);
+	}
+
+	/** What the block list and RuneWatch have to say about an applicant, or {@code null}. */
+	private String applicantWarning(Applicant applicant)
+	{
+		if (applicant.isBlocked())
+		{
+			return "On your block list";
+		}
+		return runeWatchService.get(applicant.getName()) != null ? "RuneWatch listed" : null;
+	}
+
+	/** The applicant's stats as separate facts, so the in-game card can lay them out itself. */
+	private List<String> applicantParts(Applicant applicant, Activity activity)
+	{
+		List<String> parts = new ArrayList<>();
 
 		if (applicant.getKillCount() >= 0)
 		{
@@ -1069,12 +1171,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			parts.add(tag);
 		}
 
-		if (runeWatchService.get(applicant.getName()) != null)
-		{
-			parts.add("(!) RuneWatch listed");
-		}
-
-		return String.join(", ", parts);
+		return parts;
 	}
 
 	private static int totalLevel(Applicant applicant)
@@ -1094,49 +1191,55 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		return total;
 	}
 
-	/** Host: show the next queued applicant as a chatbox Accept/Decline, one at a time. Client thread. */
-	private void drainApplicantPrompts()
+	/** Host: the queued card offering one applicant, skipped if they stop being pending before its turn. */
+	private ChatboxCards.Card applicantCard(Applicant applicant, Activity activity)
 	{
-		if (!config.inGamePrompts())
+		return new ChatboxCards.Card()
 		{
-			promptQueue.clear();
-			return;
-		}
-		if (promptOpen || promptQueue.isEmpty() || chatboxPanelManager.getCurrentInput() != null)
-		{
-			return;
-		}
-
-		// Skip anyone who's no longer a pending applicant (left, or resolved elsewhere).
-		PendingPrompt next = null;
-		while (!promptQueue.isEmpty())
-		{
-			PendingPrompt candidate = promptQueue.poll();
-			if (liveParty.isPendingApplicant(candidate.applicant.getMemberId()))
+			@Override
+			public ChatboxCards.Priority priority()
 			{
-				next = candidate;
-				break;
+				return ChatboxCards.Priority.JOIN_REQUEST;
 			}
-		}
-		if (next != null)
-		{
-			openApplicantPrompt(next);
-		}
+
+			@Override
+			public Object key()
+			{
+				return applicant.getMemberId();
+			}
+
+			@Override
+			public boolean isStale()
+			{
+				return !config.inGamePrompts() || !liveParty.isPendingApplicant(applicant.getMemberId());
+			}
+
+			@Override
+			public PartyPrompt open()
+			{
+				return openApplicantPrompt(applicant, activity);
+			}
+		};
 	}
 
-	private void openApplicantPrompt(PendingPrompt prompt)
+	private PartyPrompt openApplicantPrompt(Applicant applicant, Activity activity)
 	{
-		Applicant applicant = prompt.applicant;
-		Activity activity = prompt.activity;
+		PartyPrompt card = PartyPrompt.create(chatboxPanelManager)
+			.heading("Join request")
+			.title(applicant.getName())
+			.subtitle("Wants to join your " + activity.getDisplayName() + " party")
+			.warning(applicantWarning(applicant));
+		// A blocked applicant gets the block line and nothing else, exactly as the chat line does.
+		if (!applicant.isBlocked())
+		{
+			card.meta("cb " + applicant.getCombatLevel());
+			for (String part : applicantParts(applicant, activity))
+			{
+				card.detail(part);
+			}
+		}
 
-		String title = applicant.getName() + " - " + applicantSummary(applicant, activity);
-
-		promptOpen = true;
-		openPromptMemberId = applicant.getMemberId();
-		chatboxPanelManager.openTextMenuInput(title)
-			.option("Accept", () -> {
-				promptOpen = false;
-				openPromptMemberId = 0;
+		return card.option("Accept", PartyPrompt.ACCEPT, () -> {
 				if (liveParty.admit(applicant.getMemberId(), applicant.getName()))
 				{
 					announceResolved(applicant, activity, true);
@@ -1146,20 +1249,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 					chat("Party is full - couldn't accept " + applicant.getName() + ".", true);
 				}
 			})
-			.option("Decline", () -> {
-				promptOpen = false;
-				openPromptMemberId = 0;
+			.option("Decline", PartyPrompt.DECLINE, () -> {
 				liveParty.reject(applicant.getMemberId());
 				announceResolved(applicant, activity, false);
 			})
-			.option("Decide later", () -> {
-				promptOpen = false;
-				openPromptMemberId = 0;
-			})
-			.onClose(() -> {
-				promptOpen = false;
-				openPromptMemberId = 0;
-			})
+			.option("Decide later", PartyPrompt.NEUTRAL, () -> { })
 			.build();
 	}
 
@@ -1172,39 +1266,14 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			+ " for your " + activity.getDisplayName() + " party.", true);
 	}
 
-	/** Close the open chatbox applicant prompt if it's the one for {@code memberId}. */
+	/** Drop or close the applicant card for {@code memberId}, wherever it got to in the queue. */
 	private void dismissPromptFor(long memberId)
 	{
 		if (memberId == 0)
 		{
 			return;
 		}
-		clientThread.invoke(() -> {
-			if (openPromptMemberId == memberId)
-			{
-				chatboxPanelManager.close();
-			}
-		});
-	}
-
-	private void playReadySound()
-	{
-		if (config.readyCheckSound())
-		{
-			playResourceSound(SOUND_ALL_READY);
-		}
-	}
-
-	private void playResourceSound(String resource)
-	{
-		try
-		{
-			audioPlayer.play(getClass(), resource, 0f);
-		}
-		catch (Exception e)
-		{
-			log.warn("OSParty: failed to play sound '{}'", resource, e);
-		}
+		clientThread.invoke(() -> cards.dismiss(memberId));
 	}
 
 	/**
@@ -1214,6 +1283,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Subscribe
 	public void onMenuEntryAdded(MenuEntryAdded event)
 	{
+		partyShare.onMenuEntryAdded(event);
 		// Anchor on the friend row's "Message" option, scoped to the friends-list interface.
 		if (!"Message".equals(event.getOption())
 			|| WidgetUtil.componentToInterface(event.getActionParam1()) != InterfaceID.FRIENDS)
@@ -1336,8 +1406,8 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		desktopNotify(inviterName(invite) + " invited you to their party.");
 		if (mode.showsInGame())
 		{
-			// In-game chatbox Accept/Decline prompt (mirrors the host's applicant prompt); shown next tick.
-			invitePromptQueue.add(invite);
+			// In-game chatbox Accept/Decline card (mirrors the host's applicant card); shown once the queue frees.
+			cards.offer(inviteCardFor(invite));
 		}
 		if (mode.showsSidebar())
 		{
@@ -1353,8 +1423,11 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 	}
 
-	/** Resolve an invite (Accept or Decline) from either surface; dismisses both and joins on accept. */
-	private void resolveInvite(PartyInvite invite, boolean accept)
+	/**
+	 * Resolve an invite (Accept or Decline) from either surface; dismisses both and joins on accept.
+	 * {@code inGame} carries which surface answered, so the role question is asked in the same place.
+	 */
+	private void resolveInvite(PartyInvite invite, boolean accept, boolean inGame)
 	{
 		Advertisement ad = invite.getAd();
 		String key = ad == null ? null : ad.getId();
@@ -1375,7 +1448,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 		if (accept)
 		{
-			acceptInvite(invite);
+			acceptInvite(invite, inGame);
 		}
 		else
 		{
@@ -1383,20 +1456,14 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		}
 	}
 
-	/** Close the chatbox invite prompt if it's the one for {@code key}. */
+	/** Drop or close the invite card for {@code key}, wherever it got to in the queue. */
 	private void dismissInvitePrompt(String key)
 	{
 		if (key == null)
 		{
 			return;
 		}
-		clientThread.invoke(() ->
-		{
-			if (key.equals(openInviteId))
-			{
-				chatboxPanelManager.close();
-			}
-		});
+		clientThread.invoke(() -> cards.dismiss(key));
 	}
 
 	private static String inviterName(PartyInvite invite)
@@ -1405,57 +1472,478 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		return from != null ? from : "A friend";
 	}
 
-	/** Show the next queued invite as an in-game Accept/Decline prompt if the chatbox is free. Client thread. */
-	private void drainInvitePrompts()
+	/** The queued card offering one invite, skipped if the side panel answers it first. */
+	private ChatboxCards.Card inviteCardFor(PartyInvite invite)
 	{
-		if (invitePromptQueue.isEmpty() || promptOpen || chatboxPanelManager.getCurrentInput() != null)
+		String key = invite.getAd().getId();
+		return new ChatboxCards.Card()
+		{
+			@Override
+			public ChatboxCards.Priority priority()
+			{
+				return ChatboxCards.Priority.INVITE;
+			}
+
+			@Override
+			public Object key()
+			{
+				return key;
+			}
+
+			@Override
+			public boolean isStale()
+			{
+				return key == null || !activeInvites.containsKey(key);
+			}
+
+			@Override
+			public PartyPrompt open()
+			{
+				return openInvitePrompt(invite);
+			}
+		};
+	}
+
+	/** Open the Accept/Decline card for a received invite; Accept turns it to the role question. */
+	private PartyPrompt openInvitePrompt(PartyInvite invite)
+	{
+		// Accepting turns this card to the role question rather than closing it, so it is kept until
+		// the join is settled one way or the other.
+		partyCard = InvitePrompt.open(chatboxPanelManager, invite, inviterName(invite),
+			() -> resolveInvite(invite, true, true),
+			() -> resolveInvite(invite, false, true),
+			() ->
+			{
+				partyCard = null;
+				answerRole(null);
+			});
+		return partyCard;
+	}
+
+	/** Identity of the similar-parties card. There is only ever one, so it needs no per-party key. */
+	private static final Object SIMILAR_CARD_KEY = new Object();
+
+	/**
+	 * The player is creating a party and something is already running it. Queued at the top priority:
+	 * they clicked Create and nothing happens until this is answered.
+	 */
+	private void onSimilarParties(SimilarParties similar)
+	{
+		InviteDisplay mode = config.matchDisplay();
+		if (mode == null || !mode.showsInGame())
+		{
+			return; // the Create tab's own inline prompt is the only surface asked for
+		}
+		cards.offer(new ChatboxCards.Card()
+		{
+			@Override
+			public ChatboxCards.Priority priority()
+			{
+				return ChatboxCards.Priority.ACTION;
+			}
+
+			@Override
+			public Object key()
+			{
+				return SIMILAR_CARD_KEY;
+			}
+
+			@Override
+			public PartyPrompt open()
+			{
+				partyCard = SimilarPrompt.open(chatboxPanelManager, similar,
+					() ->
+					{
+						Advertisement best = similar.matches().get(0);
+						// Turn the page first so the card never blanks while the application goes out.
+						SimilarPrompt.showRequesting(partyCard, best);
+						hideSimilarPanel();
+						similar.requestJoin(best, inGameRoleChooser);
+					},
+					() ->
+					{
+						hideSimilarPanel();
+						similar.createAnyway();
+					},
+					() ->
+					{
+						hideSimilarPanel();
+						similar.createAndStopAsking();
+					},
+					() ->
+					{
+						partyCard = null;
+						answerRole(null);
+					});
+				return partyCard;
+			}
+		});
+	}
+
+	/** Answering in-game takes the Create tab's inline copy of the question down with it. */
+	private void hideSimilarPanel()
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			if (panel != null)
+			{
+				panel.hideSimilar();
+			}
+		});
+	}
+
+	/**
+	 * The raid whose party board this click belongs to, or null. A button inside one of the boards'
+	 * interfaces names its raid; the boards themselves are scene objects, so a Make party option on one is
+	 * tied to the raid by where the player is standing.
+	 */
+	private Activity raidBoardClick(MenuOptionClicked event)
+	{
+		if (isWidgetOp(event))
+		{
+			return raidBoardOf(WidgetUtil.componentToInterface(event.getParam1()));
+		}
+		String option = event.getMenuOption();
+		if (option != null && option.toLowerCase().startsWith("make"))
+		{
+			Activity near = Activity.nearby(mapRegions);
+			return near != null && near.isRaid() ? near : null;
+		}
+		return null;
+	}
+
+	private static boolean isWidgetOp(MenuOptionClicked event)
+	{
+		MenuAction action = event.getMenuAction();
+		return action == MenuAction.CC_OP || action == MenuAction.CC_OP_LOW_PRIORITY;
+	}
+
+	/** The component a widget click landed on; -1 for a click on the scene, whose param is not a component. */
+	private static int raidBoardComponent(MenuOptionClicked event)
+	{
+		return isWidgetOp(event) ? event.getParam1() : -1;
+	}
+
+	/** The raid whose party board, party-details or lobby interface {@code group} is, or null. */
+	private static Activity raidBoardOf(int group)
+	{
+		switch (group)
+		{
+			case InterfaceID.TOB_PARTYLIST:
+			case InterfaceID.TOB_PARTYDETAILS:
+				return Activity.THEATRE_OF_BLOOD;
+			case InterfaceID.TOA_PARTYLIST:
+			case InterfaceID.TOA_PARTYDETAILS:
+			case InterfaceID.TOA_LOBBY:
+				return Activity.TOMBS_OF_AMASCUT;
+			case InterfaceID.RAIDS_LOBBY_PARTYLIST:
+			case InterfaceID.RAIDS_LOBBY_PARTYDETAILS:
+			case InterfaceID.RAIDS_SIDEPANEL:
+				return Activity.CHAMBERS_OF_XERIC;
+			default:
+				return null;
+		}
+	}
+
+
+	/** Identity of the raid-party card. One party is made at a time, so it needs no per-party key. */
+	private static final Object RAID_CARD_KEY = new Object();
+
+	private enum RaidAnswer
+	{
+		ADVERTISE,
+		DISMISS,
+		DONT_ASK
+	}
+
+	/**
+	 * The player just made a raid party in-game. Per the setting: advertise it outright, ask on the
+	 * surfaces {@link InviteDisplay} names, or leave it alone. Client thread.
+	 */
+	private void onRaidPartyDetected(RaidPartyDetected detected)
+	{
+		RaidPartyAutoCreate mode = config.raidPartyAutoCreate();
+		InviteDisplay display = config.raidPartyPromptDisplay();
+		OSPartyPanel currentPanel = panel;
+		boolean inParty = liveParty.isInParty() || (currentPanel != null && currentPanel.currentAd() != null);
+		log.debug("Raid party detected: {} (setting {}, prompt {}, in a party {}, connected {})", detected, mode,
+			display, inParty, apiClient.isApiConnected());
+		if (mode == null || mode == RaidPartyAutoCreate.OFF || currentPanel == null || inParty)
 		{
 			return;
 		}
-		PartyInvite next = invitePromptQueue.poll();
-		if (next != null)
+		if (!apiClient.isApiConnected())
 		{
-			openInvitePrompt(next);
+			chat("Not connected to OSParty, so your " + detected.label() + " party can't be advertised.", true);
+			return;
+		}
+		if (mode == RaidPartyAutoCreate.ALWAYS)
+		{
+			SwingUtilities.invokeLater(() -> advertiseRaidParty(detected, null));
+			return;
+		}
+		if (display == null || display == InviteDisplay.DISABLED)
+		{
+			return;
+		}
+		// A party made after disbanding the last one supersedes its offer; a card still up for the old one
+		// would answer for a party that no longer exists.
+		cards.dismiss(RAID_CARD_KEY);
+		openRaidOffer.set(detected);
+		if (display.showsInGame())
+		{
+			cards.offer(raidPartyCard(detected));
+		}
+		if (display.showsSidebar())
+		{
+			SwingUtilities.invokeLater(() ->
+			{
+				if (panel != null)
+				{
+					panel.addRaidPartyOffer(detected,
+						() -> resolveRaidOffer(detected, RaidAnswer.ADVERTISE, null, false),
+						() -> resolveRaidOffer(detected, RaidAnswer.DISMISS, null, false));
+				}
+				flashInviteButton();
+			});
 		}
 	}
 
-	/** Open the chatbox Accept/Decline prompt for a received invite; Accept joins via the invite code. */
-	private void openInvitePrompt(PartyInvite invite)
+	/** The queued card asking about one raid party, skipped once it was answered on the sidebar. */
+	private ChatboxCards.Card raidPartyCard(RaidPartyDetected detected)
 	{
-		Advertisement ad = invite.getAd();
-		String key = ad.getId();
-		if (key == null || !activeInvites.containsKey(key))
+		return new ChatboxCards.Card()
 		{
-			return; // resolved via the sidebar banner before we got to it
-		}
-		Activity activity = Activity.fromId(ad.getActivity());
-		String label = activity != null ? activity.getDisplayName() + " party" : "their party";
+			@Override
+			public ChatboxCards.Priority priority()
+			{
+				return ChatboxCards.Priority.ACTION;
+			}
 
-		promptOpen = true;
-		openInviteId = key;
-		chatboxPanelManager.openTextMenuInput(inviterName(invite) + " invites you to " + label)
-			.option("Accept", () ->
+			@Override
+			public Object key()
 			{
-				promptOpen = false;
-				openInviteId = null;
-				resolveInvite(invite, true);
-			})
-			.option("Decline", () ->
+				return RAID_CARD_KEY;
+			}
+
+			@Override
+			public boolean isStale()
 			{
-				promptOpen = false;
-				openInviteId = null;
-				resolveInvite(invite, false);
-			})
-			.onClose(() ->
+				return openRaidOffer.get() != detected || liveParty.isInParty();
+			}
+
+			@Override
+			public PartyPrompt open()
 			{
-				promptOpen = false;
-				openInviteId = null;
-			})
-			.build();
+				partyCard = RaidPartyPrompt.open(chatboxPanelManager, latest(detected), () ->
+					{
+						OSPartyPanel currentPanel = panel;
+						return currentPanel == null
+							? Collections.<Role>emptyList() : currentPanel.raidRoleOptions(latest(detected));
+					},
+					role -> resolveRaidOffer(detected, RaidAnswer.ADVERTISE, role, true),
+					() -> resolveRaidOffer(detected, RaidAnswer.DISMISS, null, true),
+					() -> resolveRaidOffer(detected, RaidAnswer.DONT_ASK, null, true),
+					() -> partyCard = null);
+				return partyCard;
+			}
+		};
+	}
+
+	/**
+	 * The party as the game has it now rather than as it was when it appeared: its mode, size and
+	 * invocations are chosen after it is made, so they are read when the host answers. Client thread.
+	 */
+	private RaidPartyDetected latest(RaidPartyDetected detected)
+	{
+		RaidPartyDetected fresh = raidPartyWatcher.snapshot(detected.getActivity());
+		return fresh != null ? fresh : detected;
+	}
+
+	/**
+	 * Resolve the raid-party offer from either surface, clearing it off both. Settled once, by whichever
+	 * surface answers first; {@code inGame} leaves the card alone because it is closing itself.
+	 */
+	private void resolveRaidOffer(RaidPartyDetected detected, RaidAnswer answer, String hostRole, boolean inGame)
+	{
+		if (!openRaidOffer.compareAndSet(detected, null))
+		{
+			return;
+		}
+		if (!inGame)
+		{
+			clientThread.invoke(() -> cards.dismiss(RAID_CARD_KEY));
+		}
+		if (answer == RaidAnswer.DONT_ASK)
+		{
+			configManager.setConfiguration(OSPartyConfig.GROUP, OSPartyConfig.RAID_PARTY_AUTO_CREATE,
+				RaidPartyAutoCreate.OFF);
+			chat("OSParty won't ask about your raid parties again. Turn it back on under Hosting in the plugin settings.",
+				false);
+		}
+		SwingUtilities.invokeLater(() ->
+		{
+			if (panel != null)
+			{
+				panel.removeRaidPartyOffer();
+			}
+			stopInviteFlash();
+		});
+		if (answer == RaidAnswer.ADVERTISE)
+		{
+			// The answer is the moment the host has finished setting the party up, so this is when its
+			// mode, size and invocations are read -- on the client thread, whichever surface answered.
+			clientThread.invoke(() ->
+			{
+				RaidPartyDetected fresh = latest(detected);
+				SwingUtilities.invokeLater(() -> advertiseRaidParty(fresh, hostRole));
+			});
+		}
+	}
+
+	/** Run the create; when the form still needs a role from the player, point them at it. EDT only. */
+	private void advertiseRaidParty(RaidPartyDetected detected, String hostRole)
+	{
+		OSPartyPanel currentPanel = panel;
+		if (currentPanel == null)
+		{
+			return;
+		}
+		if (!currentPanel.createFromRaid(detected, hostRole))
+		{
+			chat("Pick the role you'll fill on the OSParty Party tab, then press Create party.", false);
+			flashInviteButton();
+		}
+	}
+
+	/**
+	 * A party turned up while the player has <em>Find me a party</em> on. Surfaced per
+	 * {@link InviteDisplay}, the same way a friend's invite is, because it asks the same thing.
+	 */
+	private void onMatchFound(MatchOffer offer)
+	{
+		InviteDisplay mode = config.matchDisplay();
+		Advertisement ad = offer.ad();
+		if (mode == null || mode == InviteDisplay.DISABLED || ad == null || ad.getId() == null)
+		{
+			return;
+		}
+		openMatchId = ad.getId();
+		desktopNotify(ad.getHost() + " is running " + activityLabel(ad) + ".");
+		if (mode.showsInGame())
+		{
+			cards.offer(matchCardFor(offer));
+		}
+		if (mode.showsSidebar())
+		{
+			SwingUtilities.invokeLater(() ->
+			{
+				if (panel != null)
+				{
+					panel.addMatch(offer,
+						found -> resolveMatch(found, Answer.JOIN, false),
+						found -> resolveMatch(found, Answer.DISMISS, false));
+				}
+				flashInviteButton();
+			});
+		}
+	}
+
+	/** The queued card offering one found party, skipped once the player stops looking or answers it. */
+	private ChatboxCards.Card matchCardFor(MatchOffer offer)
+	{
+		String key = offer.ad().getId();
+		return new ChatboxCards.Card()
+		{
+			@Override
+			public ChatboxCards.Priority priority()
+			{
+				return ChatboxCards.Priority.MATCH;
+			}
+
+			@Override
+			public Object key()
+			{
+				return key;
+			}
+
+			@Override
+			public boolean isStale()
+			{
+				return !key.equals(openMatchId);
+			}
+
+			@Override
+			public PartyPrompt open()
+			{
+				partyCard = MatchPrompt.open(chatboxPanelManager, offer,
+					() ->
+					{
+						// Turn the page first so the card never blanks while the application goes out.
+						MatchPrompt.showRequesting(partyCard, offer.ad());
+						resolveMatch(offer, Answer.JOIN, true);
+					},
+					() -> resolveMatch(offer, Answer.DISMISS, true),
+					() -> resolveMatch(offer, Answer.STOP_LOOKING, true),
+					() ->
+					{
+						partyCard = null;
+						answerRole(null);
+					});
+				return partyCard;
+			}
+		};
+	}
+
+	private enum Answer
+	{
+		JOIN,
+		DISMISS,
+		STOP_LOOKING
+	}
+
+	/**
+	 * Resolve a match offer from either surface, clearing it off both. {@code inGame} keeps the card
+	 * that asked open, because a Request turns that same card to the role question.
+	 */
+	private void resolveMatch(MatchOffer offer, Answer answer, boolean inGame)
+	{
+		String key = offer.ad().getId();
+		openMatchId = null;
+		SwingUtilities.invokeLater(() ->
+		{
+			if (panel != null)
+			{
+				panel.removeInvite(key);
+			}
+			stopInviteFlash();
+		});
+		if (!inGame)
+		{
+			clientThread.invoke(() -> cards.dismiss(key));
+		}
+		switch (answer)
+		{
+			case JOIN:
+				offer.join(inGameRoleChooser, message -> chat(message, false));
+				break;
+			case DISMISS:
+				offer.dismiss();
+				break;
+			case STOP_LOOKING:
+				offer.stopLooking();
+				break;
+		}
+	}
+
+	private static String activityLabel(Advertisement ad)
+	{
+		Activity activity = Activity.fromId(ad.getActivity());
+		return activity == null ? "a party" : activity.displayName(ad.isHardMode(), ad.getInvocation());
 	}
 
 	/** Accept an invite: join the party by its invite code, reusing the standard join flow. */
-	private void acceptInvite(PartyInvite invite)
+	private void acceptInvite(PartyInvite invite, boolean inGame)
 	{
 		Advertisement ad = invite.getAd();
 		String code = ad.getInviteCode();
@@ -1465,7 +1953,75 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			chat("Couldn't join that party - the invite is missing its code.", false);
 			return;
 		}
-		SwingUtilities.invokeLater(() -> currentPanel.joinByInviteCode(code, message -> chat(message, false)));
+		RoleChooser chooser = inGame ? inGameRoleChooser : null;
+		SwingUtilities.invokeLater(() ->
+			currentPanel.joinByInviteCode(code, message -> chat(message, false), chooser));
+	}
+
+	/**
+	 * Asks which role we'll fill in-game, so an invite taken in-game is finished there. The question is
+	 * drawn onto the card the player accepted on, which is still up, rather than opening a second one.
+	 */
+	private final RoleChooser inGameRoleChooser = new RoleChooser()
+	{
+		@Override
+		public void choose(Advertisement ad, Activity activity, List<Role> options,
+			java.util.function.Consumer<String> onPicked)
+		{
+			clientThread.invoke(() ->
+			{
+				pendingRolePick = role ->
+				{
+					if (role == null)
+					{
+						chat("Didn't join " + ad.getHost() + "'s party - no role picked.", false);
+					}
+					onPicked.accept(role);
+				};
+				PartyPrompt card = partyCard;
+				if (card != null && cards.current() == card)
+				{
+					InvitePrompt.showRolePicker(card, ad, activity, options, OSPartyPlugin.this::answerRole);
+				}
+				else
+				{
+					partyCard = InvitePrompt.openRolePicker(chatboxPanelManager, ad, activity, options,
+						OSPartyPlugin.this::answerRole, () ->
+						{
+							partyCard = null;
+							answerRole(null);
+						});
+				}
+			});
+		}
+
+		@Override
+		public void dismiss()
+		{
+			clientThread.invoke(() ->
+			{
+				PartyPrompt card = partyCard;
+				if (card != null && cards.current() == card)
+				{
+					chatboxPanelManager.close();
+				}
+			});
+		}
+	};
+
+	/**
+	 * Settle the outstanding role question exactly once, however it was answered: a pick, Cancel, or
+	 * the card being closed out from under it.
+	 */
+	private void answerRole(String role)
+	{
+		java.util.function.Consumer<String> pending = pendingRolePick;
+		if (pending == null)
+		{
+			return;
+		}
+		pendingRolePick = null;
+		pending.accept(role);
 	}
 
 	/** Flash the OSParty sidebar button until the panel is opened. No-op if the panel is already open. EDT only. */
@@ -1533,7 +2089,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 			.panel(panel)
 			.build();
 		navButtonAlert = NavigationButton.builder()
-			.tooltip("OSParty — needs your attention")
+			.tooltip("OSParty: needs your attention")
 			.icon(withInviteBadge(navIcon))
 			.priority(priority)
 			.panel(panel)

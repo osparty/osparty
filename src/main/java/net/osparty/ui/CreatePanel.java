@@ -12,6 +12,7 @@ import net.osparty.model.AdvertisementRequest;
 import net.osparty.model.Role;
 import net.osparty.party.LivePartyBackend;
 import net.osparty.party.PartyStatus;
+import net.osparty.tools.RaidPartyDetected;
 import com.google.gson.Gson;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -21,6 +22,7 @@ import java.awt.Font;
 import java.awt.Insets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -149,6 +151,12 @@ class CreatePanel extends ScrollableColumn
 
 	private static final String LOGIN_HINT = "Log in to create a party.";
 	private boolean creating;
+	/** How long to wait for the similar-party lookup before just creating. An older server never answers it. */
+	private static final int SIMILAR_LOOKUP_TIMEOUT_MS = 1500;
+	/** Where to ask about similar parties. Null until the plugin registers a surface for it. */
+	private Consumer<SimilarParties> similarHandler;
+	/** Applies to a party we suggested instead; args are (ad, roleChooser). Set by the plugin. */
+	private BiConsumer<Advertisement, RoleChooser> applyToHandler;
 
 	/** True while the form is editing an existing hosted party rather than creating one. */
 	private boolean editing;
@@ -378,6 +386,10 @@ class CreatePanel extends ScrollableColumn
 		createRow.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
 		createRow.add(createButton, BorderLayout.CENTER);
 		add(createRow);
+
+		// Sits directly under Create, where the click that raises it was made. Hidden until there is one.
+		similarPanel.setVisible(false);
+		add(similarPanel);
 
 		statusLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		statusLabel.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
@@ -689,12 +701,12 @@ class CreatePanel extends ScrollableColumn
 		if (minKc > 0 && kc.isKnown(false) && kc.killCount < minKc)
 		{
 			return "You have " + kc.killCount + " " + activity.getDisplayName() + " KC, below the "
-				+ minKc + " you're asking for — you must meet your own requirement.";
+				+ minKc + " you're asking for. You must meet your own requirement.";
 		}
 		if (minHardKc > 0 && kc.isKnown(true) && kc.hardModeKillCount < minHardKc)
 		{
 			return "You have " + kc.hardModeKillCount + " " + activity.getHardModeLabel() + " KC, below the "
-				+ minHardKc + " you're asking for — you must meet your own requirement.";
+				+ minHardKc + " you're asking for. You must meet your own requirement.";
 		}
 		return null;
 	}
@@ -727,7 +739,7 @@ class CreatePanel extends ScrollableColumn
 		}
 		else if (kc.unavailable)
 		{
-			showKcMessage("Hiscores are unavailable — your own KC can't be checked right now, so this "
+			showKcMessage("Hiscores are unavailable, so your own KC can't be checked right now. This "
 				+ "party will be created without verifying it.", false);
 		}
 		else if ((minKc > 0 && kc.killCount < 0) || (minHardKc > 0 && kc.hardModeKillCount < 0))
@@ -1217,6 +1229,15 @@ class CreatePanel extends ScrollableColumn
 
 	private void create()
 	{
+		create(true);
+	}
+
+	/**
+	 * {@code checkSimilar} is false when the party already exists in-game: its host is not shopping for a
+	 * group, so offering someone else's party to join instead would only stack a second question.
+	 */
+	private void create(boolean checkSimilar)
+	{
 		if (partyState.isInParty())
 		{
 			setError("Leave your current party before creating one.");
@@ -1242,7 +1263,7 @@ class CreatePanel extends ScrollableColumn
 			return;
 		}
 
-		if (!hostMeetsOwnKc(activity, player, form.minKc, form.minHardKc, this::create))
+		if (!hostMeetsOwnKc(activity, player, form.minKc, form.minHardKc, () -> create(checkSimilar)))
 		{
 			return;
 		}
@@ -1258,6 +1279,119 @@ class CreatePanel extends ScrollableColumn
 
 		// Remember these settings so the form is pre-filled next time.
 		saveLastPreset(captureForm(null));
+
+		if (checkSimilar && config.similarPartyCheck() && similarHandler != null)
+		{
+			askAboutSimilar(activity, form, requiredRoles, hostRole);
+			return;
+		}
+		doCreate(activity, form, requiredRoles, hostRole);
+	}
+
+	/**
+	 * Look for a party already running this before advertising beside it. The answer is the user's, not
+	 * ours: everything joinable is offered, and creating anyway is one click.
+	 *
+	 * <p>Bounded by a timeout because an older server does not know the lookup and will never answer it.
+	 * Timing out creates the party, which is what they asked for in the first place.
+	 */
+	private void askAboutSimilar(Activity activity, FormValues form, List<String> requiredRoles, String hostRole)
+	{
+		createButton.setEnabled(false);
+		setStatus("Checking for parties already running this…");
+
+		java.util.concurrent.atomic.AtomicBoolean answered = new java.util.concurrent.atomic.AtomicBoolean();
+		Timer timeout = new Timer(SIMILAR_LOOKUP_TIMEOUT_MS, e ->
+		{
+			if (answered.compareAndSet(false, true))
+			{
+				doCreate(activity, form, requiredRoles, hostRole);
+			}
+		});
+		timeout.setRepeats(false);
+		timeout.start();
+
+		boardService.fetchSimilarParties(activity.getId(), form.hardMode, matches ->
+			SwingUtilities.invokeLater(() ->
+			{
+				if (!answered.compareAndSet(false, true))
+				{
+					return;
+				}
+				timeout.stop();
+				if (matches == null || matches.isEmpty())
+				{
+					doCreate(activity, form, requiredRoles, hostRole);
+					return;
+				}
+				createButton.setEnabled(true);
+				setStatus("");
+				similarHandler.accept(similarOffer(activity, form, requiredRoles, hostRole, matches));
+			}));
+	}
+
+	private SimilarParties similarOffer(Activity activity, FormValues form, List<String> requiredRoles,
+		String hostRole, List<Advertisement> matches)
+	{
+		// The question is up on two surfaces at once and each takes the other down, but a double answer
+		// would create two parties, so it is settled here rather than trusted to the dismissals.
+		java.util.concurrent.atomic.AtomicBoolean answered = new java.util.concurrent.atomic.AtomicBoolean();
+		return new SimilarParties()
+		{
+			@Override
+			public List<Advertisement> matches()
+			{
+				return matches;
+			}
+
+			@Override
+			public void requestJoin(Advertisement ad, RoleChooser chooser)
+			{
+				once(() ->
+				{
+					setStatus("Asking " + ad.getHost() + " to let you in…");
+					applyToHandler.accept(ad, chooser);
+				});
+			}
+
+			@Override
+			public void createAnyway()
+			{
+				once(() -> doCreate(activity, form, requiredRoles, hostRole));
+			}
+
+			@Override
+			public void createAndStopAsking()
+			{
+				once(() ->
+				{
+					configManager.setConfiguration(OSPartyConfig.GROUP, OSPartyConfig.SIMILAR_PARTY_CHECK, false);
+					doCreate(activity, form, requiredRoles, hostRole);
+				});
+			}
+
+			private void once(Runnable action)
+			{
+				SwingUtilities.invokeLater(() ->
+				{
+					if (answered.compareAndSet(false, true))
+					{
+						action.run();
+					}
+				});
+			}
+		};
+	}
+
+	private void doCreate(Activity activity, FormValues form, List<String> requiredRoles, String hostRole)
+	{
+		String player = playerNameSupplier.get();
+		if (player == null)
+		{
+			setError("Log in before creating a party.");
+			createButton.setEnabled(true);
+			return;
+		}
 
 		creating = true;
 		createButton.setEnabled(false);
@@ -1281,7 +1415,7 @@ class CreatePanel extends ScrollableColumn
 				error -> SwingUtilities.invokeLater(() -> {
 					creating = false;
 					createButton.setEnabled(true);
-					setError("Create failed — " + net.osparty.api.PartyErrors.friendly(error));
+					setError("Create failed: " + net.osparty.api.PartyErrors.friendly(error));
 				}));
 		});
 	}
@@ -1298,11 +1432,11 @@ class CreatePanel extends ScrollableColumn
 		liveParty.hostParty(passphrase, host, ad.getActivity(), capacity, false, hostRole, hostLearner, hostTeacher);
 		if (ad.isPrivateAd() && ad.getInviteCode() != null)
 		{
-			setSuccess("Private party created — invite code " + ad.getInviteCode() + " (also on the Party tab).");
+			setSuccess("Private party created. Invite code " + ad.getInviteCode() + " (also on the Party tab).");
 		}
 		else
 		{
-			setSuccess("Party created — manage it on the Party tab.");
+			setSuccess("Party created. Manage it on the Party tab.");
 		}
 		partyState.setHosting(ad, hostKey);
 	}
@@ -1337,6 +1471,88 @@ class CreatePanel extends ScrollableColumn
 	}
 
 	/** Wire the join-by-code apply (owned by the Search tab); {@code (code, statusSink)}. */
+	/**
+	 * Inline "this is already running" prompt, directly under the Create button. EDT only.
+	 *
+	 * <p>A capped column, like every other child of this BoxLayout: a plain JPanel would default to
+	 * centre alignment and to an unbounded height, and one misaligned child shifts the whole tab.
+	 */
+	private final JPanel similarPanel = PanelWidgets.cappedColumn();
+
+	/**
+	 * Show the inline prompt. Every button finishes the create the player started, so there is no way to
+	 * leave it up: each one hides it again.
+	 */
+	void showSimilar(SimilarParties similar, RoleChooser chooser, Runnable onAnswered)
+	{
+		similarPanel.removeAll();
+		List<Advertisement> matches = similar.matches();
+		Advertisement best = matches.get(0);
+
+		JPanel box = PanelWidgets.cappedRow(new BorderLayout(0, 4));
+		box.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		box.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(1, 0, 0, 0, ColorScheme.BRAND_ORANGE),
+			BorderFactory.createEmptyBorder(8, 8, 8, 8)));
+
+		Activity activity = Activity.fromId(best.getActivity());
+		String label = activity == null ? "this" : activity.displayName(best.isHardMode(), best.getInvocation());
+		StringBuilder text = new StringBuilder("<html><body style='width:170px'>");
+		text.append(matches.size() == 1 ? "<b>" + best.getHost() + "</b> is already running " + label
+			: "<b>" + matches.size() + " parties</b> are already running " + label);
+		text.append(" (").append(best.getSize()).append('/').append(best.getCapacity()).append(')');
+		text.append(". Join instead of starting another?</body></html>");
+		JLabel blurb = new JLabel(text.toString());
+		blurb.setForeground(Color.WHITE);
+		blurb.setFont(FontManager.getRunescapeSmallFont());
+		box.add(blurb, BorderLayout.NORTH);
+
+		JPanel buttons = new JPanel(new java.awt.GridLayout(3, 1, 0, 4));
+		buttons.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		buttons.add(answerButton("Request join to " + best.getHost(), onAnswered,
+			() -> similar.requestJoin(best, chooser)));
+		buttons.add(answerButton("Create anyway", onAnswered, similar::createAnyway));
+		buttons.add(answerButton("Create, don't ask again", onAnswered, similar::createAndStopAsking));
+		box.add(buttons, BorderLayout.SOUTH);
+
+		similarPanel.add(box);
+		similarPanel.setVisible(true);
+		similarPanel.revalidate();
+		similarPanel.repaint();
+	}
+
+	private JButton answerButton(String label, Runnable onAnswered, Runnable action)
+	{
+		JButton button = new JButton(label);
+		button.setFocusPainted(false);
+		button.setFont(FontManager.getRunescapeSmallFont());
+		button.addActionListener(e ->
+		{
+			hideSimilar();
+			if (onAnswered != null)
+			{
+				onAnswered.run();
+			}
+			action.run();
+		});
+		return button;
+	}
+
+	void hideSimilar()
+	{
+		similarPanel.removeAll();
+		similarPanel.setVisible(false);
+		similarPanel.revalidate();
+		similarPanel.repaint();
+	}
+
+	/** Register where a "this is already running" prompt is shown, and how to apply to one of them. */
+	void setSimilarHandlers(Consumer<SimilarParties> handler, BiConsumer<Advertisement, RoleChooser> applyTo)
+	{
+		this.similarHandler = handler;
+		this.applyToHandler = applyTo;
+	}
+
 	void setJoinByCodeHandler(BiConsumer<String, Consumer<String>> handler)
 	{
 		this.joinByCodeHandler = handler;
@@ -1421,7 +1637,7 @@ class CreatePanel extends ScrollableColumn
 			if (fillIdx < 0)
 			{
 				setError("Add at least one " + mine.getDisplayName()
-					+ " slot — that's the role you'll fill.");
+					+ " slot; that's the role you'll fill.");
 				return null;
 			}
 			requiredRoles = new ArrayList<>(requiredRoles);
@@ -1451,7 +1667,7 @@ class CreatePanel extends ScrollableColumn
 		activityDropdown.setEnabled(false);
 		createButton.setText("Save changes");
 		createButton.setEnabled(true);
-		setStatus("Editing your party — the activity can't be changed.");
+		setStatus("Editing your party. The activity can't be changed.");
 	}
 
 	/** The party those messages pointed at is gone, so drop them rather than leave a dead pointer to the Party tab. */
@@ -1475,6 +1691,132 @@ class CreatePanel extends ScrollableColumn
 		applyPreset(loadLastPreset());
 		applyRecommendation();
 		updateLoginState();
+	}
+
+	// ---- advertise an in-game raid party -------------------------------------
+
+	/**
+	 * The preset the raid form starts from: the last-used one when it was for this raid, else the form's
+	 * defaults, with whatever the game said about the party laid over it. The game's word is final on the
+	 * mode, the invocation level and the size, because those were just chosen at the board.
+	 */
+	private AdvertisementPreset raidPreset(RaidPartyDetected detected)
+	{
+		Activity activity = detected.getActivity();
+		AdvertisementPreset preset = loadLastPreset();
+		if (preset == null || !activity.getId().equals(preset.getActivityId()))
+		{
+			preset = new AdvertisementPreset();
+			preset.setLootRule(LootRule.UNSPECIFIED.name());
+			preset.setIncludeLayout(true);
+			preset.setCapacity(Math.max(1, config.defaultCapacity()));
+		}
+		preset.setName(null);
+		preset.setActivityId(activity.getId());
+		if (detected.getHardMode() != null)
+		{
+			preset.setHardMode(detected.getHardMode());
+		}
+		if (activity.usesInvocation() && detected.getInvocation() > 0)
+		{
+			preset.setInvocation(detected.getInvocation());
+		}
+		if (detected.getPreferredSize() > 0)
+		{
+			preset.setCapacity(detected.getPreferredSize());
+		}
+		if (isCox(activity))
+		{
+			// The board's scaling is authoritative -- it is what the board-sync holds the ad to anyway.
+			preset.setCoxScale(detected.getCoxScale());
+		}
+		preset.setCapacity(Math.max(activity.getMinPartySize(),
+			Math.min(activity.getMaxPartySize(), preset.getCapacity())));
+		return preset;
+	}
+
+	/** The roles the host could fill in the party the raid form would create. Reads config only, so any thread. */
+	List<Role> raidRoleOptions(RaidPartyDetected detected)
+	{
+		Activity activity = detected.getActivity();
+		if (!activity.hasRoles())
+		{
+			return Collections.emptyList();
+		}
+		AdvertisementPreset preset = raidPreset(detected);
+		return activity.roles(preset.isHardMode(), preset.getCapacity());
+	}
+
+	/**
+	 * Advertise the raid party the player just made in-game: fill the form as {@link #raidPreset} says,
+	 * settle the host's role, then create exactly as the button would. {@code hostRoleId} is the answer to
+	 * the role question when it was asked; otherwise the preset's role stands, and a role activity with no
+	 * usable one leaves the form up for the player to pick from.
+	 *
+	 * @return whether the create was started
+	 */
+	boolean createFromRaid(RaidPartyDetected detected, String hostRoleId)
+	{
+		if (detected == null || editing || partyState.isInParty())
+		{
+			return false;
+		}
+		Activity activity = detected.getActivity();
+		AdvertisementPreset preset = raidPreset(detected);
+		if (hostRoleId != null)
+		{
+			preset.setHostRole(hostRoleId);
+		}
+		applyPreset(preset);
+		if (activity.hasRoles())
+		{
+			int capacity = (Integer) capacitySpinner.getValue();
+			// A composition saved for another size or mode cannot be advertised at this one; Fill-only can.
+			if (!roleCountSpinners.isEmpty() && captureRequiredRoles(activity, capacity).size() != capacity)
+			{
+				fillOnlyRoles(capacity);
+			}
+			Role wanted = Role.fromId(preset.getHostRole());
+			Role offered = wanted == null ? null : nearestOffered(wanted);
+			if (offered == null || !isOffered(offered))
+			{
+				if (!rolesExpanded)
+				{
+					toggleRolesSection();
+				}
+				setStatus("Pick the role you'll fill, then press Create party to advertise your "
+					+ detected.label() + " party.");
+				return false;
+			}
+			myRoleDropdown.setSelectedItem(offered);
+		}
+		create(false);
+		return true;
+	}
+
+	/** CoX only: every slot Fill, so the composition sums to the size whatever it summed to before. */
+	private void fillOnlyRoles(int capacity)
+	{
+		String fillId = currentFillRoleId();
+		rebuildingRoles = true;
+		for (Map.Entry<String, JSpinner> entry : roleCountSpinners.entrySet())
+		{
+			entry.getValue().setValue(entry.getKey().equals(fillId) ? capacity : 0);
+		}
+		rebuildingRoles = false;
+		updateRoleTotal();
+	}
+
+	private boolean isOffered(Role role)
+	{
+		for (int i = 0; i < myRoleDropdown.getItemCount(); i++)
+		{
+			if (myRoleDropdown.getItemAt(i) == role)
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** Map a hosted {@link Advertisement} onto an {@link AdvertisementPreset} so {@link #applyPreset} can fill the form. */
@@ -1556,7 +1898,7 @@ class CreatePanel extends ScrollableColumn
 			ignored -> SwingUtilities.invokeLater(() -> onEdited(ad, edit, form.advertiseLayout)),
 			error -> SwingUtilities.invokeLater(() -> {
 				createButton.setEnabled(true);
-				setError("Edit failed — " + net.osparty.api.PartyErrors.friendly(error));
+				setError("Edit failed: " + net.osparty.api.PartyErrors.friendly(error));
 			}));
 	}
 

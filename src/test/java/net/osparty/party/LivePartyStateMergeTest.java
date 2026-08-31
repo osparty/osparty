@@ -182,7 +182,7 @@ public class LivePartyStateMergeTest
 			}
 		}
 		// The vitals frame is built by hand rather than projected, so check it against both lists.
-		for (String vital : new String[]{"hp", "pr", "sp", "re"})
+		for (String vital : new String[]{"hp", "pr", "sp", "re", "vg"})
 		{
 			for (String other : LiveStateCodec.ITEM_FIELDS)
 			{
@@ -193,6 +193,33 @@ public class LivePartyStateMergeTest
 				assertFalse("field in both vitals and profile: " + vital, vital.equals(other));
 			}
 		}
+	}
+
+	/**
+	 * Vengeance is named on the wire only on the tick it flips, so a peer has to keep the last value it was
+	 * told through every vitals frame that says nothing about it.
+	 */
+	@Test
+	public void vengeanceHoldsUntilAFrameSaysOtherwise()
+	{
+		PlayerUpdate self = new PlayerUpdate();
+		self.setVengeance(true);
+		assertTrue(LiveStateCodec.toWire(gson.toJsonTree(self).getAsJsonObject()).get("vg").getAsBoolean());
+
+		JsonObject up = new JsonObject();
+		up.addProperty("vg", true);
+		JsonObject held = LiveStateCodec.merge(null, up);
+		assertTrue(gson.fromJson(LiveStateCodec.fromWire(held), PlayerUpdate.class).isVengeance());
+
+		JsonObject vitals = new JsonObject();
+		vitals.addProperty("hp", 40);
+		held = LiveStateCodec.merge(held, vitals);
+		assertTrue(gson.fromJson(LiveStateCodec.fromWire(held), PlayerUpdate.class).isVengeance());
+
+		JsonObject spent = new JsonObject();
+		spent.addProperty("vg", false);
+		held = LiveStateCodec.merge(held, spent);
+		assertFalse(gson.fromJson(LiveStateCodec.fromWire(held), PlayerUpdate.class).isVengeance());
 	}
 
 	@Test
@@ -233,7 +260,6 @@ public class LivePartyStateMergeTest
 	{
 		PlayerUpdate update = new PlayerUpdate();
 		update.setName("Zezima");
-		update.setAccountHash(4242L);
 		update.setWorld(301);
 		update.setCurrentHp(99);
 		update.setEquipment(new int[]{4151, 11802});

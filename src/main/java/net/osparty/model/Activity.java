@@ -21,6 +21,8 @@ public enum Activity
 	NEX("nex", "Nex", 1, 40, null, 11601, 11345),
 	NIGHTMARE("nightmare", "The Nightmare", 1, 80, null, 15515, 15256),
 	CORPOREAL_BEAST("corp", "Corporeal Beast", 1, 30, null, 11844, 11842),
+	// The kings' lair, the Waterbirth dungeon above it, and the island where a trip gathers.
+	DAGANNOTH_KINGS("dks", "Dagannoth Kings", 1, 100, null, 11589, 10142, 9886, 10042),
 	BARBARIAN_ASSAULT("ba", "Barbarian Assault", 5, 5, null, 10039, 10322, 7508, 7509),
 	ZALCANO("zalcano", "Zalcano", 1, 30, null, 13150, 12126),
 	VOLCANIC_MINE("volcanicmine", "Volcanic Mine", 1, 30, null, 15263, 15262, 15163),

@@ -42,4 +42,17 @@ public class LivePartyFrameWireTest
 		assertEquals(4, roster.members.get(0).memberId);
 		assertEquals("PENDING", roster.members.get(0).status);
 	}
+
+	@Test
+	public void chatCarriesTheSenderTheServerStamped()
+	{
+		LivePartyChannel.Frame chat = gson.fromJson(
+			"{\"t\":\"chat\",\"m\":7,\"name\":\"Bob\",\"text\":\"gz\"}", LivePartyChannel.Frame.class);
+		assertEquals(Long.valueOf(7), chat.memberId);
+		assertEquals("Bob", chat.name);
+		assertEquals("gz", chat.text);
+
+		// The line we send carries only the text: who it came from is the server's to say.
+		assertEquals("{\"t\":\"chat\",\"text\":\"gz\"}", gson.toJson(new LiveFrames.ChatFrame("gz")));
+	}
 }
