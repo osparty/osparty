@@ -83,6 +83,7 @@ import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.HitsplatApplied;
 import net.runelite.api.events.NpcDespawned;
+import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.gameval.InterfaceID;
@@ -189,6 +190,9 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 
 	@Inject
 	private PartyChat partyChat;
+
+	@Inject
+	private PartyShare partyShare;
 
 	@Inject
 	private CoxRaidScanner coxRaidScanner;
@@ -438,6 +442,17 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		// Turning the toggle off has to take any offer already on screen with it.
 		panel.setOnLookingChanged(() -> clientThread.invoke(() -> cards.dismiss(openMatchId)));
 		apiClient.setInviteListener(this::onPartyInvite);
+		partyShare.setSelfName(this::getPlayerName);
+		// A chat-line apply is an invite-style join: checked and role-picked in-game, reported to the chatbox.
+		partyShare.setOnApply(ad -> SwingUtilities.invokeLater(() ->
+		{
+			OSPartyPanel currentPanel = panel;
+			if (currentPanel != null)
+			{
+				currentPanel.applyTo(ad, message -> chat(message, false), inGameRoleChooser);
+			}
+		}));
+		panel.setShareToChatHandler(this::sharePartyToChat);
 		raidPartyWatcher.setListener(this::onRaidPartyDetected);
 		// A hosted raid ad follows the in-game board (CoX scale, ToA invocation level) while the setting is on.
 		raidBoardSync.setHostedAd(() ->
@@ -461,6 +476,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 		liveParty.leave();
 		liveParty.unregister();
 		partyChat.reset();
+		partyShare.reset();
 		// These live on singletons that outlast the plugin, so a restart would otherwise stack callbacks
 		// onto a dead instance. Every setter tolerates null.
 		apiClient.setInviteListener(null);
@@ -770,6 +786,12 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	public void onChatboxInput(ChatboxInput event)
 	{
 		partyChat.onChatboxInput(event);
+	}
+
+	@Subscribe
+	public void onChatMessage(ChatMessage event)
+	{
+		partyShare.onChatMessage(event);
 	}
 
 	@Subscribe
@@ -1262,6 +1284,7 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 	@Subscribe
 	public void onMenuEntryAdded(MenuEntryAdded event)
 	{
+		partyShare.onMenuEntryAdded(event);
 		// Anchor on the friend row's "Message" option, scoped to the friends-list interface.
 		if (!"Message".equals(event.getOption())
 			|| WidgetUtil.componentToInterface(event.getActionParam1()) != InterfaceID.FRIENDS)
@@ -1332,6 +1355,19 @@ public class OSPartyPlugin extends Plugin implements HostApplicationHandler
 				chat(friend + " isn't online in OSParty.", false);
 			}
 		});
+	}
+
+	/** The Party tab's share button: one {@code !party} line into public chat, for OSParty users to click. */
+	private void sharePartyToChat()
+	{
+		OSPartyPanel currentPanel = panel;
+		Advertisement ad = currentPanel == null ? null : currentPanel.hostedAd();
+		if (ad == null)
+		{
+			chat("You're not hosting a party to share.", false);
+			return;
+		}
+		partyShare.shareToChat(ad);
 	}
 
 	/** @return whether the OSRS friend named {@code normalizedName} is currently online (world &gt; 0). */

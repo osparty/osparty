@@ -501,6 +501,18 @@ public interface OSPartyConfig extends Config
 		return PartyChatChannel.FRIENDS_CHAT;
 	}
 
+	@ConfigItem(
+		keyName = "partyShareLinks",
+		name = "Clickable !party lines",
+		description = "When a hosting player says \"!party\" in chat, redraw that line as their party and let you apply straight from it. Share your own with the Party tab's share button, or just type !party.",
+		position = 4,
+		section = CHAT
+	)
+	default boolean partyShareLinks()
+	{
+		return true;
+	}
+
 	// ---- Map pings ----
 
 	@ConfigItem(
